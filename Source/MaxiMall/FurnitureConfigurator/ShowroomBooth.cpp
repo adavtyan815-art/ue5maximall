@@ -124,20 +124,17 @@ void AShowroomBooth::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
 
-    // Capture baseline transforms if they haven't been captured yet.
-    // In the editor, this locks in the designer's placed positions before we apply any product visuals.
-    if (!bBaselineTransformsCaptured)
+    // Always capture the designer's placed positions at the start of construction
+    // before we apply any product visuals or offsets.
+    if (SinkMesh)
     {
-        if (SinkMesh)
-        {
-            BaselineSinkTransform = SinkMesh->GetRelativeTransform();
-        }
-        if (FaucetMesh)
-        {
-            BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
-        }
-        bBaselineTransformsCaptured = true;
+        BaselineSinkTransform = SinkMesh->GetRelativeTransform();
     }
+    if (FaucetMesh)
+    {
+        BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
+    }
+    bBaselineTransformsCaptured = true;
 
     InitializeDefaultBooth();
 }
