@@ -8,6 +8,7 @@
 #include "Engine/World.h"
 #include "Camera/CameraComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "EngineUtils.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -18,6 +19,8 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
     // Player controllers replicate by default — that's fine, only the
     // ActivePreviewActor property is explicitly excluded from replication.
     ActivePreviewActor = nullptr;
+    CurrentTargetBooth = nullptr;
+    CurrentTargetComponent = EFurnitureComponentType::None;
     
     // Default to the C++ base class so it is not empty in the Editor by default
     PreviewActorClass = AFurniturePreviewActor::StaticClass();
@@ -32,7 +35,7 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
 // Preview Management
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBooth)
+void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBooth, EFurnitureComponentType FocusComponent)
 {
     if (!IsLocalController())
     {
@@ -44,6 +47,8 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         UE_LOG(LogTemp, Warning, TEXT("[PreviewController] OpenFurniturePreview called with null TargetBooth."));
         return;
     }
+
+    CurrentTargetComponent = FocusComponent;
 
     // Capture the current control rotation before entering preview mode (if not already in preview)
     if (!ActivePreviewActor)
@@ -86,6 +91,16 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     // Print runtime spawn class details for debugging/exposure validation
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
+    // Isolate target booth by hiding all other booths in the level for the local player
+    for (TActorIterator<AShowroomBooth> It(World); It; ++It)
+    {
+        AShowroomBooth* Booth = *It;
+        if (Booth && Booth != TargetBooth)
+        {
+            Booth->SetActorHiddenInGame(true);
+        }
+    }
+
     ActivePreviewActor = World->SpawnActor<AFurniturePreviewActor>(
         SpawnClass,
         PreviewStagingLocation,
@@ -98,11 +113,64 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         return;
     }
 
-    // Store booth configuration state locally for isolated modifications
-    LocalPreviewState = TargetBooth->ActiveState;
-
     // ── 4. Load the product snapshot into the preview actor ───────────────
-    ActivePreviewActor->LoadProductPreview(ProductSnapshot, LocalPreviewState, TargetBooth);
+    ActivePreviewActor->LoadProductPreview(ProductSnapshot, TargetBooth->ActiveState, TargetBooth);
+
+    // Apply component-level visibility isolation inside the preview viewport
+    if (CurrentTargetComponent != EFurnitureComponentType::None)
+    {
+        // Hide all meshes by default
+        if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
+        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(false);
+        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(false);
+        if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(false);
+        if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(false);
+        if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
+        if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
+        if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
+
+        // Show only the selected component mesh
+        switch (CurrentTargetComponent)
+        {
+        case EFurnitureComponentType::Cabinet:
+            if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
+            break;
+        case EFurnitureComponentType::Closet:
+            if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
+            break;
+        case EFurnitureComponentType::Doors:
+            if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+            {
+                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+            }
+            else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+            {
+                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
+            }
+            break;
+        case EFurnitureComponentType::Countertop:
+            if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
+            break;
+        case EFurnitureComponentType::Sink:
+            if (ProductSnapshot.CountertopType == ECountertopType::SurfaceMounted)
+            {
+                if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
+            }
+            break;
+        case EFurnitureComponentType::Faucet:
+            if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(true);
+            break;
+        case EFurnitureComponentType::Mirror:
+            if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(true);
+            break;
+        default:
+            break;
+        }
+
+        // Focus camera orbit on the isolated component
+        ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);
+    }
 
     // Bind to the booth's product change delegate to keep the preview actor in sync dynamically
     CurrentTargetBooth = TargetBooth;
@@ -127,11 +195,26 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
         return;
     }
 
+    // Restore visibility of all showroom booths in the level for the local player
+    UWorld* World = GetWorld();
+    if (World)
+    {
+        for (TActorIterator<AShowroomBooth> It(World); It; ++It)
+        {
+            AShowroomBooth* Booth = *It;
+            if (Booth)
+            {
+                Booth->SetActorHiddenInGame(false);
+            }
+        }
+    }
+
     if (CurrentTargetBooth)
     {
         CurrentTargetBooth->OnProductChanged.RemoveAll(this);
         CurrentTargetBooth = nullptr;
     }
+    CurrentTargetComponent = EFurnitureComponentType::None;
 
     if (!ActivePreviewActor)
     {
@@ -198,8 +281,7 @@ bool AMaxiMallPreviewController::IsPreviewActive() const
 // Booth Interaction Wrappers
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AMaxiMallPreviewController::RequestBoothProductChange(AShowroomBooth* TargetBooth,
-                                                            FName NewProductID)
+void AMaxiMallPreviewController::RequestBoothProductChange(AShowroomBooth* TargetBooth, FName NewProductID)
 {
     if (!TargetBooth)
     {
@@ -209,19 +291,6 @@ void AMaxiMallPreviewController::RequestBoothProductChange(AShowroomBooth* Targe
     // Delegate entirely to the booth. The booth handles authority checks
     // and server RPC forwarding internally.
     TargetBooth->RequestProductChange(NewProductID);
-
-    // If the preview is open, refresh it with the new product data.
-    // This is purely a local visual update — no extra networking.
-    if (ActivePreviewActor && TargetBooth == CurrentTargetBooth)
-    {
-        FFurnitureProductRow UpdatedSnapshot;
-        if (TargetBooth->GetActiveProductData(UpdatedSnapshot))
-        {
-            // Sync local preview state with the new product's default state
-            TargetBooth->InitializeDefaultStateForProduct(LocalPreviewState, NewProductID, UpdatedSnapshot);
-            ActivePreviewActor->LoadProductPreview(UpdatedSnapshot, LocalPreviewState, TargetBooth);
-        }
-    }
 }
 
 void AMaxiMallPreviewController::RequestBoothDoorToggle(AShowroomBooth* TargetBooth,
@@ -283,6 +352,7 @@ bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBoo
                 OutComponentType = EFurnitureComponentType::Mirror;
             }
 
+            CurrentTargetComponent = OutComponentType;
             return (OutComponentType != EFurnitureComponentType::None);
         }
     }
@@ -337,86 +407,63 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
         FFurnitureProductRow ProductSnapshot;
         if (Booth->GetActiveProductData(ProductSnapshot))
         {
-            // Sync local preview state with booth's replicated selections on remote changes
-            LocalPreviewState = Booth->ActiveState;
-            ActivePreviewActor->LoadProductPreview(ProductSnapshot, LocalPreviewState, Booth);
+            ActivePreviewActor->LoadProductPreview(ProductSnapshot, Booth->ActiveState, Booth);
+
+            // Maintain component visibility isolation if active
+            if (CurrentTargetComponent != EFurnitureComponentType::None)
+            {
+                // Hide all meshes by default
+                if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
+                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(false);
+                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(false);
+                if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(false);
+                if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(false);
+                if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
+                if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
+                if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
+
+                // Show only the selected component mesh
+                switch (CurrentTargetComponent)
+                {
+                case EFurnitureComponentType::Cabinet:
+                    if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
+                    break;
+                case EFurnitureComponentType::Closet:
+                    if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
+                    break;
+                case EFurnitureComponentType::Doors:
+                    if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+                    {
+                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+                    }
+                    else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+                    {
+                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+                        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
+                    }
+                    break;
+                case EFurnitureComponentType::Countertop:
+                    if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
+                    break;
+                case EFurnitureComponentType::Sink:
+                    if (ProductSnapshot.CountertopType == ECountertopType::SurfaceMounted)
+                    {
+                        if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
+                    }
+                    break;
+                case EFurnitureComponentType::Faucet:
+                    if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(true);
+                    break;
+                case EFurnitureComponentType::Mirror:
+                    if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(true);
+                    break;
+                default:
+                    break;
+                }
+
+                // Focus camera orbit on the isolated component
+                ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);
+            }
         }
     }
-}
-
-void AMaxiMallPreviewController::ApplyLocalComponentSelection(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
-{
-    if (!IsLocalController())
-    {
-        return;
-    }
-
-    if (!ActivePreviewActor || !CurrentTargetBooth)
-    {
-        return;
-    }
-
-    // Update the local preview state for the specified component type
-    switch (ComponentType)
-    {
-    case EFurnitureComponentType::Cabinet:
-        LocalPreviewState.CabinetState.SelectedSizeID = SizeID;
-        LocalPreviewState.CabinetState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Closet:
-        LocalPreviewState.ClosetState.SelectedSizeID = SizeID;
-        LocalPreviewState.ClosetState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Doors:
-        LocalPreviewState.DoorState.SelectedSizeID = SizeID;
-        LocalPreviewState.DoorState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Countertop:
-        LocalPreviewState.CountertopState.SelectedSizeID = SizeID;
-        LocalPreviewState.CountertopState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Sink:
-        LocalPreviewState.SinkState.SelectedSizeID = SizeID;
-        LocalPreviewState.SinkState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Faucet:
-        LocalPreviewState.FaucetState.SelectedSizeID = SizeID;
-        LocalPreviewState.FaucetState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Mirror:
-        LocalPreviewState.MirrorState.SelectedSizeID = SizeID;
-        LocalPreviewState.MirrorState.SelectedColorID = ColorID;
-        break;
-    default:
-        break;
-    }
-
-    // Refresh the local preview actor with the new selections
-    FFurnitureProductRow ProductSnapshot;
-    if (CurrentTargetBooth->GetActiveProductData(ProductSnapshot))
-    {
-        ActivePreviewActor->LoadProductPreview(ProductSnapshot, LocalPreviewState, CurrentTargetBooth);
-    }
-}
-
-void AMaxiMallPreviewController::CommitPreviewConfiguration()
-{
-    if (!IsLocalController())
-    {
-        return;
-    }
-
-    if (!CurrentTargetBooth)
-    {
-        return;
-    }
-
-    // Request the updated selections on the authoritative showroom booth (which forwards RPC to server)
-    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Cabinet, LocalPreviewState.CabinetState.SelectedSizeID, LocalPreviewState.CabinetState.SelectedColorID);
-    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Closet, LocalPreviewState.ClosetState.SelectedSizeID, LocalPreviewState.ClosetState.SelectedColorID);
-    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Doors, LocalPreviewState.DoorState.SelectedSizeID, LocalPreviewState.DoorState.SelectedColorID);
-    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Countertop, LocalPreviewState.CountertopState.SelectedSizeID, LocalPreviewState.CountertopState.SelectedColorID);
-    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Sink, LocalPreviewState.SinkState.SelectedSizeID, LocalPreviewState.SinkState.SelectedColorID);
-    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Faucet, LocalPreviewState.FaucetState.SelectedSizeID, LocalPreviewState.FaucetState.SelectedColorID);
-    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Mirror, LocalPreviewState.MirrorState.SelectedSizeID, LocalPreviewState.MirrorState.SelectedColorID);
 }
