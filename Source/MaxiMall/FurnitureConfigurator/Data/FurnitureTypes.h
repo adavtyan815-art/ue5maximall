@@ -58,6 +58,22 @@ enum class EDoorSlotState : uint8
     Open         UMETA(DisplayName = "Open"),
 };
 
+/**
+ * Identifies a specific dynamic visual component of the modular furniture set.
+ */
+UENUM(BlueprintType)
+enum class EFurnitureComponentType : uint8
+{
+    None             UMETA(DisplayName = "None"),
+    Cabinet          UMETA(DisplayName = "Cabinet"),
+    Closet           UMETA(DisplayName = "Closet"),
+    Doors            UMETA(DisplayName = "Doors"),
+    Countertop       UMETA(DisplayName = "Countertop"),
+    Sink             UMETA(DisplayName = "Sink"),
+    Faucet           UMETA(DisplayName = "Faucet"),
+    Mirror           UMETA(DisplayName = "Mirror"),
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPPORTING SUB-STRUCTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,6 +111,105 @@ struct MAXIMALL_API FFurnitureMeshMaterials
     /** Per-slot material overrides. Empty = keep mesh defaults. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mesh")
     TArray<FFurnitureMaterialSlot> MaterialOverrides;
+};
+
+/**
+ * A size option for a component, mapping a SizeID to a specific static mesh.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureSizeOption
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Size Option")
+    FName SizeID;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Size Option")
+    FText DisplayName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Size Option")
+    TSoftObjectPtr<UStaticMesh> Mesh;
+};
+
+/**
+ * A color/material option for a component, mapping a ColorID to material overrides.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureColorOption
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option")
+    FName ColorID;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option")
+    FText DisplayName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option")
+    TArray<FFurnitureMaterialSlot> MaterialOverrides;
+};
+
+/**
+ * Wraps size and color/material options for a component.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureComponentOptions
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component Options")
+    TArray<FFurnitureSizeOption> Sizes;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component Options")
+    TArray<FFurnitureColorOption> Colors;
+};
+
+/**
+ * Holds the current user selection for a single subcomponent.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureComponentState
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component State")
+    FName SelectedSizeID;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component State")
+    FName SelectedColorID;
+};
+
+/**
+ * Replicated configuration state tracking choices for all subcomponents of a booth.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FShowroomBoothConfigState
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
+    FName ProductID;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
+    FFurnitureComponentState CabinetState;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
+    FFurnitureComponentState ClosetState;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
+    FFurnitureComponentState DoorState;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
+    FFurnitureComponentState CountertopState;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
+    FFurnitureComponentState SinkState;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
+    FFurnitureComponentState FaucetState;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
+    FFurnitureComponentState MirrorState;
 };
 
 /**
@@ -169,7 +284,7 @@ struct MAXIMALL_API FFaucetPlacementOffset
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * FFurnitureProductRow — One row per distinct product SKU in the DataTable.
+ * FFurnitureProductRow — One row per distinct product category/set in the DataTable.
  *
  * The DataTable RowName serves as the ProductID (FName key).
  * Designers populate every field inside the Editor's DataTable editor.
@@ -195,9 +310,15 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     // ── Cabinet Body ──────────────────────────────────────────────────────
 
-    /** Main cabinet body mesh + material overrides. */
+    /** Main cabinet body options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Cabinet")
-    FFurnitureMeshMaterials CabinetBody;
+    FFurnitureComponentOptions CabinetOptions;
+
+    // ── Closet Body ───────────────────────────────────────────────────────
+
+    /** Closet options. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Closet")
+    FFurnitureComponentOptions ClosetOptions;
 
     // ── Doors ─────────────────────────────────────────────────────────────
 
@@ -205,9 +326,9 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Doors")
     EDoorCount DoorCount = EDoorCount::TwoDoors;
 
-    /** Mesh + materials shared by both door slots (same geometry per pair). */
+    /** Mesh and material options shared by both door slots. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Doors")
-    FFurnitureMeshMaterials DoorMesh;
+    FFurnitureComponentOptions DoorOptions;
 
     /**
      * Per-slot positional config. Index 0 = left/single door. Index 1 = right door.
@@ -221,9 +342,9 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     // ── Countertop ────────────────────────────────────────────────────────
 
-    /** Countertop mesh + material overrides. */
+    /** Countertop options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop")
-    FFurnitureMeshMaterials CountertopMesh;
+    FFurnitureComponentOptions CountertopOptions;
 
     /**
      * Structural type — determines Sink component visibility and placement.
@@ -235,12 +356,9 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     // ── Sink ──────────────────────────────────────────────────────────────
 
-    /**
-     * Standalone sink mesh + materials. Used only when CountertopType == SurfaceMounted.
-     * Ignored for BuiltIn — the sink geometry lives inside CountertopMesh.
-     */
+    /** Standalone sink options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink")
-    FFurnitureMeshMaterials SinkMesh;
+    FFurnitureComponentOptions SinkOptions;
 
     /**
      * Positional offset of the Sink component relative to the Countertop's local origin.
@@ -251,9 +369,9 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     // ── Faucet ────────────────────────────────────────────────────────────
 
-    /** Faucet mesh + material overrides. */
+    /** Faucet options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet")
-    FFurnitureMeshMaterials FaucetMesh;
+    FFurnitureComponentOptions FaucetOptions;
 
     /**
      * Positional offset of the Faucet component relative to the Countertop's local origin.
@@ -264,7 +382,7 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     // ── Mirror ────────────────────────────────────────────────────────────
 
-    /** Mirror mesh + material overrides. */
+    /** Mirror options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror")
-    FFurnitureMeshMaterials MirrorMesh;
+    FFurnitureComponentOptions MirrorOptions;
 };

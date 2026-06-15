@@ -73,6 +73,11 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     ConfigurePreviewMesh(FaucetMesh.Get());
     ConfigurePreviewMesh(MirrorMesh.Get());
 
+    // ── Closet ────────────────────────────────────────────────────────────
+    ClosetMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Closet"));
+    ClosetMesh->SetupAttachment(PreviewRoot);
+    ConfigurePreviewMesh(ClosetMesh.Get());
+
     // Set default parameter values explicitly in constructor body for CDO persistence
     PitchMin = -80.f;
     PitchMax = 80.f;
@@ -150,14 +155,17 @@ void AFurniturePreviewActor::BeginPlay()
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& ProductData)
+void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState)
 {
     // ── Cabinet ───────────────────────────────────────────────────────────
-    ApplyMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetBody);
+    ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetOptions, ActiveState.CabinetState);
+
+    // ── Closet ────────────────────────────────────────────────────────────
+    ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ProductData.ClosetOptions, ActiveState.ClosetState);
 
     // ── Doors ─────────────────────────────────────────────────────────────
-    ApplyMeshAndMaterials(DoorMeshSlot0.Get(), ProductData.DoorMesh);
-    ApplyMeshAndMaterials(DoorMeshSlot1.Get(), ProductData.DoorMesh);
+    ApplyComponentMeshAndMaterials(DoorMeshSlot0.Get(), ProductData.DoorOptions, ActiveState.DoorState);
+    ApplyComponentMeshAndMaterials(DoorMeshSlot1.Get(), ProductData.DoorOptions, ActiveState.DoorState);
 
     switch (ProductData.DoorCount)
     {
@@ -166,7 +174,10 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         DoorMeshSlot1->SetVisibility(false);
         break;
     case EDoorCount::OneDoor:
-        DoorMeshSlot0->SetVisibility(true);
+        if (DoorMeshSlot0->GetStaticMesh())
+        {
+            DoorMeshSlot0->SetVisibility(true);
+        }
         if (ProductData.DoorSlots.IsValidIndex(0))
         {
             DoorMeshSlot0->SetRelativeLocation(ProductData.DoorSlots[0].ClosedPositionOffset);
@@ -174,12 +185,18 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         DoorMeshSlot1->SetVisibility(false);
         break;
     case EDoorCount::TwoDoors:
-        DoorMeshSlot0->SetVisibility(true);
+        if (DoorMeshSlot0->GetStaticMesh())
+        {
+            DoorMeshSlot0->SetVisibility(true);
+        }
         if (ProductData.DoorSlots.IsValidIndex(0))
         {
             DoorMeshSlot0->SetRelativeLocation(ProductData.DoorSlots[0].ClosedPositionOffset);
         }
-        DoorMeshSlot1->SetVisibility(true);
+        if (DoorMeshSlot1->GetStaticMesh())
+        {
+            DoorMeshSlot1->SetVisibility(true);
+        }
         if (ProductData.DoorSlots.IsValidIndex(1))
         {
             DoorMeshSlot1->SetRelativeLocation(ProductData.DoorSlots[1].ClosedPositionOffset);
@@ -188,13 +205,12 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Countertop ────────────────────────────────────────────────────────
-    ApplyMeshAndMaterials(CountertopMesh.Get(), ProductData.CountertopMesh);
+    ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ProductData.CountertopOptions, ActiveState.CountertopState);
 
     // ── Sink ──────────────────────────────────────────────────────────────
     if (ProductData.CountertopType == ECountertopType::SurfaceMounted)
     {
-        ApplyMeshAndMaterials(SinkMesh.Get(), ProductData.SinkMesh);
-        SinkMesh->SetVisibility(true);
+        ApplyComponentMeshAndMaterials(SinkMesh.Get(), ProductData.SinkOptions, ActiveState.SinkState);
 
         const FSinkPlacementOffset& SO = ProductData.SinkOffset;
         SinkMesh->SetRelativeLocation(SO.RelativeLocation);
@@ -203,11 +219,13 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
     else
     {
+        SinkMesh->SetStaticMesh(nullptr);
         SinkMesh->SetVisibility(false);
+        SinkMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
     // ── Faucet ────────────────────────────────────────────────────────────
-    ApplyMeshAndMaterials(FaucetMesh.Get(), ProductData.FaucetMesh);
+    ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ProductData.FaucetOptions, ActiveState.FaucetState);
     {
         const FFaucetPlacementOffset& FO = ProductData.FaucetOffset;
         FaucetMesh->SetRelativeLocation(FO.RelativeLocation);
@@ -216,7 +234,67 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Mirror ────────────────────────────────────────────────────────────
-    ApplyMeshAndMaterials(MirrorMesh.Get(), ProductData.MirrorMesh);
+    ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ProductData.MirrorOptions, ActiveState.MirrorState);
+}
+
+void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType ComponentType)
+{
+    UStaticMeshComponent* TargetComponent = nullptr;
+    float DefaultZoomDistance = 250.f;
+
+    switch (ComponentType)
+    {
+    case EFurnitureComponentType::Cabinet:
+        TargetComponent = CabinetMesh.Get();
+        DefaultZoomDistance = 250.f;
+        break;
+    case EFurnitureComponentType::Closet:
+        TargetComponent = ClosetMesh.Get();
+        DefaultZoomDistance = 250.f;
+        break;
+    case EFurnitureComponentType::Doors:
+        TargetComponent = DoorMeshSlot0.Get();
+        DefaultZoomDistance = 200.f;
+        break;
+    case EFurnitureComponentType::Countertop:
+        TargetComponent = CountertopMesh.Get();
+        DefaultZoomDistance = 200.f;
+        break;
+    case EFurnitureComponentType::Sink:
+        TargetComponent = SinkMesh.Get();
+        DefaultZoomDistance = 150.f;
+        break;
+    case EFurnitureComponentType::Faucet:
+        TargetComponent = FaucetMesh.Get();
+        DefaultZoomDistance = 100.f;
+        break;
+    case EFurnitureComponentType::Mirror:
+        TargetComponent = MirrorMesh.Get();
+        DefaultZoomDistance = 150.f;
+        break;
+    case EFurnitureComponentType::None:
+    default:
+        break;
+    }
+
+    if (SpringArm)
+    {
+        if (TargetComponent && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
+        {
+            FVector WorldLoc = TargetComponent->GetComponentLocation();
+            FVector LocalFocusLoc = GetActorTransform().InverseTransformPosition(WorldLoc);
+            SpringArm->SetRelativeLocation(LocalFocusLoc);
+            SpringArm->TargetArmLength = DefaultZoomDistance;
+            CurrentZoomLength = DefaultZoomDistance;
+        }
+        else
+        {
+            SpringArm->SetRelativeLocation(FVector::ZeroVector);
+            SpringArm->TargetArmLength = 250.f;
+            CurrentZoomLength = 250.f;
+        }
+        UpdateLightIntensityForZoom();
+    }
 }
 
 void AFurniturePreviewActor::SetupBackdrop(UStaticMesh* InMesh, UMaterialInterface* InMaterial)
@@ -276,26 +354,87 @@ void AFurniturePreviewActor::ResetRotation()
 // Private Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AFurniturePreviewActor::ApplyMeshAndMaterials(UStaticMeshComponent* Target,
-                                                    const FFurnitureMeshMaterials& Config)
+void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
+                                                            const FFurnitureComponentOptions& Options,
+                                                            const FFurnitureComponentState& State)
 {
     if (!Target)
     {
         return;
     }
 
-    if (UStaticMesh* LoadedMesh = Config.Mesh.Get())
+    const FFurnitureSizeOption* SelectedSize = nullptr;
+    if (Options.Sizes.Num() > 0)
     {
-        Target->SetStaticMesh(LoadedMesh);
+        for (const FFurnitureSizeOption& SizeOpt : Options.Sizes)
+        {
+            if (SizeOpt.SizeID == State.SelectedSizeID)
+            {
+                SelectedSize = &SizeOpt;
+                break;
+            }
+        }
+        if (!SelectedSize)
+        {
+            SelectedSize = &Options.Sizes[0];
+        }
     }
 
-    for (const FFurnitureMaterialSlot& SlotOverride : Config.MaterialOverrides)
+    const FFurnitureColorOption* SelectedColor = nullptr;
+    if (Options.Colors.Num() > 0)
     {
-        UMaterialInterface* LoadedMat = SlotOverride.Material.Get();
-        if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+        for (const FFurnitureColorOption& ColorOpt : Options.Colors)
         {
-            Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
+            if (ColorOpt.ColorID == State.SelectedColorID)
+            {
+                SelectedColor = &ColorOpt;
+                break;
+            }
         }
+        if (!SelectedColor)
+        {
+            SelectedColor = &Options.Colors[0];
+        }
+    }
+
+    if (!SelectedSize || SelectedSize->Mesh.IsNull() || SelectedSize->Mesh.ToSoftObjectPath().ToString().IsEmpty())
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        return;
+    }
+
+    UStaticMesh* LoadedMesh = SelectedSize->Mesh.LoadSynchronous();
+    if (LoadedMesh)
+    {
+        Target->SetStaticMesh(LoadedMesh);
+        Target->SetVisibility(true);
+        Target->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+        const int32 NumMaterials = Target->GetNumMaterials();
+        for (int32 i = 0; i < NumMaterials; ++i)
+        {
+            Target->SetMaterial(i, nullptr);
+        }
+
+        if (SelectedColor)
+        {
+            for (const FFurnitureMaterialSlot& SlotOverride : SelectedColor->MaterialOverrides)
+            {
+                UMaterialInterface* LoadedMat = SlotOverride.Material.LoadSynchronous();
+                if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+                {
+                    Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
+                }
+            }
+        }
+    }
+    else
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 }
 

@@ -115,6 +115,28 @@ public:
               meta = (DisplayName = "Handle Preview Zoom Input"))
     void HandlePreviewZoomInput(float DeltaZoom);
 
+    /**
+     * Traces from the mouse position under the cursor, finding if a showroom booth was hit
+     * and which subcomponent was hit.
+     */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction",
+              meta = (DisplayName = "Trace Furniture Component"))
+    bool TraceFurnitureComponent(AShowroomBooth*& OutBooth, EFurnitureComponentType& OutComponentType, UPrimitiveComponent*& OutHitComponent);
+
+    /**
+     * Handles double-click mouse interactions for doors/drawers.
+     */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction",
+              meta = (DisplayName = "Handle Double-Click Interaction"))
+    void HandleDoubleClickInteraction();
+
+    /**
+     * Sets the local preview focus on a specific subcomponent.
+     */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview",
+              meta = (DisplayName = "Focus Preview On Component"))
+    void FocusPreviewOnComponent(EFurnitureComponentType ComponentType);
+
     // ─────────────────────────────────────────────────────────────────────
     // BOOTH INTERACTION API
     // These are convenience wrappers callable from any Blueprint without
@@ -216,4 +238,12 @@ private:
 
     /** Caches the player's control rotation before entering preview mode to restore it on exit. */
     FRotator SavedControlRotation;
+
+    /** The showroom booth currently being inspected/previewed. */
+    UPROPERTY()
+    TObjectPtr<AShowroomBooth> CurrentTargetBooth;
+
+    /** Delegate callback called when the target showroom booth's configuration changes. */
+    UFUNCTION()
+    void OnTargetBoothProductChanged(AShowroomBooth* Booth, FName NewProductID);
 };

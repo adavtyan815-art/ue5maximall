@@ -7,6 +7,7 @@
 #include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
 #include "Engine/World.h"
 #include "Camera/CameraComponent.h"
+#include "Components/PrimitiveComponent.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -93,7 +94,11 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     }
 
     // ── 4. Load the product snapshot into the preview actor ───────────────
-    ActivePreviewActor->LoadProductPreview(ProductSnapshot);
+    ActivePreviewActor->LoadProductPreview(ProductSnapshot, TargetBooth->ActiveState);
+
+    // Bind to the booth's product change delegate to keep the preview actor in sync dynamically
+    CurrentTargetBooth = TargetBooth;
+    CurrentTargetBooth->OnProductChanged.AddDynamic(this, &AMaxiMallPreviewController::OnTargetBoothProductChanged);
 
     // Load and assign the backdrop static mesh and material dynamically
     UStaticMesh* LoadedBackdropMesh = BackdropMeshAsset.LoadSynchronous();
@@ -109,6 +114,12 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
 
 void AMaxiMallPreviewController::CloseFurniturePreview()
 {
+    if (CurrentTargetBooth)
+    {
+        CurrentTargetBooth->OnProductChanged.RemoveAll(this);
+        CurrentTargetBooth = nullptr;
+    }
+
     if (!ActivePreviewActor)
     {
         return;
@@ -193,7 +204,7 @@ void AMaxiMallPreviewController::RequestBoothProductChange(AShowroomBooth* Targe
         FFurnitureProductRow UpdatedSnapshot;
         if (TargetBooth->GetActiveProductData(UpdatedSnapshot))
         {
-            ActivePreviewActor->LoadProductPreview(UpdatedSnapshot);
+            ActivePreviewActor->LoadProductPreview(UpdatedSnapshot, TargetBooth->ActiveState);
         }
     }
 }
@@ -207,4 +218,103 @@ void AMaxiMallPreviewController::RequestBoothDoorToggle(AShowroomBooth* TargetBo
     }
 
     TargetBooth->RequestDoorToggle(SlotIndex);
+}
+
+bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBooth, EFurnitureComponentType& OutComponentType, UPrimitiveComponent*& OutHitComponent)
+{
+    OutBooth = nullptr;
+    OutComponentType = EFurnitureComponentType::None;
+    OutHitComponent = nullptr;
+
+    FHitResult HitResult;
+    // Trace under the mouse cursor using visibility channel
+    if (GetHitResultUnderCursor(ECC_Visibility, false, HitResult))
+    {
+        AShowroomBooth* HitBooth = Cast<AShowroomBooth>(HitResult.GetActor());
+        if (HitBooth)
+        {
+            OutBooth = HitBooth;
+            OutHitComponent = HitResult.GetComponent();
+
+            if (OutHitComponent == HitBooth->MainCabinet.Get())
+            {
+                OutComponentType = EFurnitureComponentType::Cabinet;
+            }
+            else if (OutHitComponent == HitBooth->ClosetMesh.Get())
+            {
+                OutComponentType = EFurnitureComponentType::Closet;
+            }
+            else if (OutHitComponent == HitBooth->DoorMeshSlot0.Get() || OutHitComponent == HitBooth->DoorMeshSlot1.Get())
+            {
+                OutComponentType = EFurnitureComponentType::Doors;
+            }
+            else if (OutHitComponent == HitBooth->CountertopMesh.Get())
+            {
+                OutComponentType = EFurnitureComponentType::Countertop;
+            }
+            else if (OutHitComponent == HitBooth->SinkMesh.Get())
+            {
+                OutComponentType = EFurnitureComponentType::Sink;
+            }
+            else if (OutHitComponent == HitBooth->FaucetMesh.Get())
+            {
+                OutComponentType = EFurnitureComponentType::Faucet;
+            }
+            else if (OutHitComponent == HitBooth->MirrorMesh.Get())
+            {
+                OutComponentType = EFurnitureComponentType::Mirror;
+            }
+
+            return (OutComponentType != EFurnitureComponentType::None);
+        }
+    }
+    return false;
+}
+
+void AMaxiMallPreviewController::HandleDoubleClickInteraction()
+{
+    AShowroomBooth* HitBooth = nullptr;
+    EFurnitureComponentType ComponentType = EFurnitureComponentType::None;
+    UPrimitiveComponent* HitComponent = nullptr;
+
+    if (TraceFurnitureComponent(HitBooth, ComponentType, HitComponent))
+    {
+        if (ComponentType == EFurnitureComponentType::Doors)
+        {
+            int32 SlotIndex = -1;
+            if (HitComponent == HitBooth->DoorMeshSlot0.Get())
+            {
+                SlotIndex = 0;
+            }
+            else if (HitComponent == HitBooth->DoorMeshSlot1.Get())
+            {
+                SlotIndex = 1;
+            }
+
+            if (SlotIndex != -1)
+            {
+                RequestBoothDoorToggle(HitBooth, SlotIndex);
+            }
+        }
+    }
+}
+
+void AMaxiMallPreviewController::FocusPreviewOnComponent(EFurnitureComponentType ComponentType)
+{
+    if (ActivePreviewActor)
+    {
+        ActivePreviewActor->SetFocusComponent(ComponentType);
+    }
+}
+
+void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Booth, FName NewProductID)
+{
+    if (ActivePreviewActor && Booth && Booth == CurrentTargetBooth)
+    {
+        FFurnitureProductRow ProductSnapshot;
+        if (Booth->GetActiveProductData(ProductSnapshot))
+        {
+            ActivePreviewActor->LoadProductPreview(ProductSnapshot, Booth->ActiveState);
+        }
+    }
 }

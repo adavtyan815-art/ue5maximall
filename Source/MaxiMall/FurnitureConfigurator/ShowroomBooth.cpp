@@ -3,7 +3,6 @@
 
 #include "FurnitureConfigurator/ShowroomBooth.h"
 
-#include "FurnitureConfigurator/BoothProximityComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/DataTable.h"
 #include "Net/UnrealNetwork.h"          // DOREPLIFETIME, DOREPLIFETIME_CONDITION
@@ -54,12 +53,12 @@ AShowroomBooth::AShowroomBooth()
     MirrorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MirrorMesh"));
     MirrorMesh->SetupAttachment(BoothRoot);
 
-    // ── Proximity Trigger ─────────────────────────────────────────────────
-    ProximityVolume = CreateDefaultSubobject<UBoothProximityComponent>(TEXT("ProximityVolume"));
-    ProximityVolume->SetupAttachment(BoothRoot);
+    // ── Closet ────────────────────────────────────────────────────────────
+    ClosetMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ClosetMesh"));
+    ClosetMesh->SetupAttachment(BoothRoot);
 
     // ── Default state ─────────────────────────────────────────────────────
-    ActiveProductID = NAME_None;
+    ActiveState.ProductID = NAME_None;
     bBaselineTransformsCaptured = false;
 
     // Pre-size to exactly 2 slots. Never grows beyond this.
@@ -97,14 +96,13 @@ void AShowroomBooth::BeginPlay()
 
     // ── 3. Apply the initial product ──────────────────────────────────────
     //    Only the server sets the authoritative replicated state.
-    //    Clients receive ActiveProductID via initial replication and their
-    //    OnRep_ActiveProductID fires, rebuilding visuals from that value.
+    //    Clients receive ActiveState via initial replication and their OnRep_ActiveState fires.
     if (HasAuthority() && InitialProductID != NAME_None)
     {
         const FFurnitureProductRow* Row = FindProductRow(InitialProductID);
         if (Row)
         {
-            ActiveProductID = InitialProductID;
+            InitializeDefaultStateForProduct(ActiveState, InitialProductID, *Row);
 
             // Apply visuals immediately on the server (and listen-server host).
             ApplyProductData(*Row);
@@ -204,6 +202,11 @@ void AShowroomBooth::InitializeDefaultBooth()
         UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] '%s': MirrorMesh component is null!"), *GetName());
         return;
     }
+    if (!ClosetMesh)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] '%s': ClosetMesh component is null!"), *GetName());
+        return;
+    }
 
     // Safely apply product visuals
     ApplyProductData(*ProductRow);
@@ -217,8 +220,8 @@ void AShowroomBooth::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 {
     Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-    // ActiveProductID — replicated to all connected clients.
-    DOREPLIFETIME(AShowroomBooth, ActiveProductID);
+    // ActiveState — replicated to all connected clients.
+    DOREPLIFETIME(AShowroomBooth, ActiveState);
 
     // DoorStates — replicated to all connected clients.
     DOREPLIFETIME(AShowroomBooth, DoorStates);
@@ -231,7 +234,7 @@ void AShowroomBooth::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 void AShowroomBooth::RequestProductChange(FName NewProductID)
 {
     // Prevent no-op updates that would generate unnecessary network traffic.
-    if (NewProductID == ActiveProductID)
+    if (NewProductID == ActiveState.ProductID)
     {
         return;
     }
@@ -265,7 +268,7 @@ void AShowroomBooth::RequestDoorToggle(int32 SlotIndex)
 
 bool AShowroomBooth::GetActiveProductData(FFurnitureProductRow& OutData) const
 {
-    const FFurnitureProductRow* Row = FindProductRow(ActiveProductID);
+    const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
     if (Row)
     {
         OutData = *Row;
@@ -296,8 +299,6 @@ bool AShowroomBooth::IsValidProductID(FName ProductID) const
 
 bool AShowroomBooth::Server_ApplyProductChange_Validate(FName NewProductID)
 {
-    // Reject requests referencing products that don't exist in the catalog.
-    // This prevents clients from injecting arbitrary asset references.
     return IsValidProductID(NewProductID);
 }
 
@@ -306,32 +307,85 @@ void AShowroomBooth::Server_ApplyProductChange_Implementation(FName NewProductID
     const FFurnitureProductRow* Row = FindProductRow(NewProductID);
     if (!Row)
     {
-        // Validate should have caught this, but guard anyway.
         return;
     }
 
-    // Write the authoritative state. Replication engine propagates this to clients.
-    ActiveProductID = NewProductID;
+    InitializeDefaultStateForProduct(ActiveState, NewProductID, *Row);
 
-    // Apply visuals on the server immediately (required for listen-server correctness
-    // and to prevent a one-frame visual gap on the server machine).
+    // Apply visuals on the server immediately
     ApplyProductData(*Row);
 
-    // Notify any tracked pawn in the proximity zone.
-    if (ProximityVolume)
+    // Broadcast the delegate on the server
+    OnProductChanged.Broadcast(this, ActiveState.ProductID);
+}
+
+// ── Component Selection ───────────────────────────────────────────────────────
+
+void AShowroomBooth::RequestComponentSelection(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+{
+    if (HasAuthority())
     {
-        ProximityVolume->NotifyProductChanged(ActiveProductID);
+        Server_ApplyComponentSelection_Implementation(ComponentType, SizeID, ColorID);
+    }
+    else
+    {
+        Server_ApplyComponentSelection(ComponentType, SizeID, ColorID);
+    }
+}
+
+bool AShowroomBooth::Server_ApplyComponentSelection_Validate(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+{
+    return true;
+}
+
+void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+{
+    switch (ComponentType)
+    {
+    case EFurnitureComponentType::Cabinet:
+        ActiveState.CabinetState.SelectedSizeID = SizeID;
+        ActiveState.CabinetState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Closet:
+        ActiveState.ClosetState.SelectedSizeID = SizeID;
+        ActiveState.ClosetState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Doors:
+        ActiveState.DoorState.SelectedSizeID = SizeID;
+        ActiveState.DoorState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Countertop:
+        ActiveState.CountertopState.SelectedSizeID = SizeID;
+        ActiveState.CountertopState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Sink:
+        ActiveState.SinkState.SelectedSizeID = SizeID;
+        ActiveState.SinkState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Faucet:
+        ActiveState.FaucetState.SelectedSizeID = SizeID;
+        ActiveState.FaucetState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Mirror:
+        ActiveState.MirrorState.SelectedSizeID = SizeID;
+        ActiveState.MirrorState.SelectedColorID = ColorID;
+        break;
+    default:
+        break;
     }
 
-    // Broadcast the delegate on the server so server-side listeners are notified.
-    OnProductChanged.Broadcast(this, ActiveProductID);
+    const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
+    if (Row)
+    {
+        ApplyProductData(*Row);
+        OnProductChanged.Broadcast(this, ActiveState.ProductID);
+    }
 }
 
 // ── Door Toggle ───────────────────────────────────────────────────────────────
 
 bool AShowroomBooth::Server_ToggleDoor_Validate(int32 SlotIndex)
 {
-    // Only permit interaction on valid slot indices.
     return DoorStates.IsValidIndex(SlotIndex);
 }
 
@@ -344,19 +398,16 @@ void AShowroomBooth::Server_ToggleDoor_Implementation(int32 SlotIndex)
 
     const EDoorSlotState Current = DoorStates[SlotIndex];
 
-    // Only toggle slots that are physically present.
     if (Current == EDoorSlotState::NotPresent)
     {
         return;
     }
 
-    // Toggle: Closed ↔ Open.
     DoorStates[SlotIndex] = (Current == EDoorSlotState::Closed)
         ? EDoorSlotState::Open
         : EDoorSlotState::Closed;
 
-    // Apply the new state visually on the server.
-    const FFurnitureProductRow* Row = FindProductRow(ActiveProductID);
+    const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
     if (Row)
     {
         const FDoorSlotConfig SlotCfg = Row->DoorSlots.IsValidIndex(SlotIndex) ? Row->DoorSlots[SlotIndex] : FDoorSlotConfig();
@@ -364,43 +415,37 @@ void AShowroomBooth::Server_ToggleDoor_Implementation(int32 SlotIndex)
         ApplyDoorSlotVisual(Slot, DoorStates[SlotIndex], SlotCfg);
     }
 
-    // Broadcast on the server.
     OnDoorStateChanged.Broadcast(this, SlotIndex, DoorStates[SlotIndex]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RepNotify Callbacks (fire on ALL clients including listen-server client)
+// RepNotify Callbacks (fire on ALL clients)
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AShowroomBooth::OnRep_ActiveProductID()
+void AShowroomBooth::OnRep_ActiveState()
 {
-    // Look up the product row and rebuild all visuals.
-    const FFurnitureProductRow* Row = FindProductRow(ActiveProductID);
+    const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
     if (Row)
     {
         ApplyProductData(*Row);
-
-        // Broadcast the event delegate so Blueprint listeners are notified.
-        OnProductChanged.Broadcast(this, ActiveProductID);
+        OnProductChanged.Broadcast(this, ActiveState.ProductID);
     }
     else
     {
         UE_LOG(LogTemp, Warning,
             TEXT("[ShowroomBooth] OnRep: ProductID '%s' not found in catalog on client '%s'."),
-            *ActiveProductID.ToString(), *GetName());
+            *ActiveState.ProductID.ToString(), *GetName());
     }
 }
 
 void AShowroomBooth::OnRep_DoorStates()
 {
-    // Rebuild door visuals from the replicated state array.
-    const FFurnitureProductRow* Row = FindProductRow(ActiveProductID);
+    const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
     if (!Row)
     {
         return;
     }
 
-    // Slot 0
     if (DoorStates.IsValidIndex(0))
     {
         const FDoorSlotConfig Cfg0 = Row->DoorSlots.IsValidIndex(0) ? Row->DoorSlots[0] : FDoorSlotConfig();
@@ -408,7 +453,6 @@ void AShowroomBooth::OnRep_DoorStates()
         OnDoorStateChanged.Broadcast(this, 0, DoorStates[0]);
     }
 
-    // Slot 1
     if (DoorStates.IsValidIndex(1))
     {
         const FDoorSlotConfig Cfg1 = Row->DoorSlots.IsValidIndex(1) ? Row->DoorSlots[1] : FDoorSlotConfig();
@@ -416,7 +460,6 @@ void AShowroomBooth::OnRep_DoorStates()
         OnDoorStateChanged.Broadcast(this, 1, DoorStates[1]);
     }
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal Visual Application
 // ─────────────────────────────────────────────────────────────────────────────
@@ -424,83 +467,131 @@ void AShowroomBooth::OnRep_DoorStates()
 void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
 {
     // ── 1. Cabinet ────────────────────────────────────────────────────────
-    ApplyMeshAndMaterials(MainCabinet.Get(), Data.CabinetBody);
+    ApplyComponentMeshAndMaterials(MainCabinet.Get(), Data.CabinetOptions, ActiveState.CabinetState);
 
-    // ── 2. Doors ──────────────────────────────────────────────────────────
+    // ── 2. Closet ─────────────────────────────────────────────────────────
+    ApplyComponentMeshAndMaterials(ClosetMesh.Get(), Data.ClosetOptions, ActiveState.ClosetState);
+
+    // ── 3. Doors ──────────────────────────────────────────────────────────
     ApplyDoorConfiguration(Data);
 
-    // ── 3. Countertop ─────────────────────────────────────────────────────
-    ApplyMeshAndMaterials(CountertopMesh.Get(), Data.CountertopMesh);
+    // ── 4. Countertop ─────────────────────────────────────────────────────
+    ApplyComponentMeshAndMaterials(CountertopMesh.Get(), Data.CountertopOptions, ActiveState.CountertopState);
 
-    // ── 4. Sink (visibility + mesh driven by CountertopType) ──────────────
+    // ── 5. Sink (visibility + mesh driven by CountertopType) ──────────────
     if (Data.CountertopType == ECountertopType::BuiltIn)
     {
-        // Sink geometry is baked into the countertop mesh. Hide the standalone.
         if (SinkMesh)
         {
+            SinkMesh->SetStaticMesh(nullptr);
             SinkMesh->SetVisibility(false);
             SinkMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         }
     }
     else // SurfaceMounted
     {
-        // Apply the standalone sink mesh and make it visible.
-        ApplyMeshAndMaterials(SinkMesh.Get(), Data.SinkMesh);
-        if (SinkMesh)
-        {
-            SinkMesh->SetVisibility(true);
-            SinkMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        }
+        ApplyComponentMeshAndMaterials(SinkMesh.Get(), Data.SinkOptions, ActiveState.SinkState);
     }
 
-    // ── 5. Faucet ─────────────────────────────────────────────────────────
-    ApplyMeshAndMaterials(FaucetMesh.Get(), Data.FaucetMesh);
-    if (FaucetMesh)
-    {
-        FaucetMesh->SetVisibility(true);
-        FaucetMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-    }
+    // ── 6. Faucet ─────────────────────────────────────────────────────────
+    ApplyComponentMeshAndMaterials(FaucetMesh.Get(), Data.FaucetOptions, ActiveState.FaucetState);
 
-    // ── 6. Mirror ─────────────────────────────────────────────────────────
-    ApplyMeshAndMaterials(MirrorMesh.Get(), Data.MirrorMesh);
+    // ── 7. Mirror ─────────────────────────────────────────────────────────
+    ApplyComponentMeshAndMaterials(MirrorMesh.Get(), Data.MirrorOptions, ActiveState.MirrorState);
 
-    // ── 7. Recalculate Sink + Faucet positions relative to Countertop ─────
+    // ── 8. Recalculate Sink + Faucet positions relative to Countertop ─────
     RecalculateDependentTransforms(Data);
 }
 
-void AShowroomBooth::ApplyMeshAndMaterials(UStaticMeshComponent* Target,
-                                            const FFurnitureMeshMaterials& Config)
+void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
+                                                    const FFurnitureComponentOptions& Options,
+                                                    const FFurnitureComponentState& State)
 {
     if (!Target)
     {
         return;
     }
 
-    // Apply the mesh if a soft reference is set and the asset is loaded.
-    // TSoftObjectPtr::Get() returns null if not loaded — safe to call.
-    if (UStaticMesh* LoadedMesh = Config.Mesh.Get())
+    const FFurnitureSizeOption* SelectedSize = nullptr;
+    if (Options.Sizes.Num() > 0)
     {
-        Target->SetStaticMesh(LoadedMesh);
+        for (const FFurnitureSizeOption& SizeOpt : Options.Sizes)
+        {
+            if (SizeOpt.SizeID == State.SelectedSizeID)
+            {
+                SelectedSize = &SizeOpt;
+                break;
+            }
+        }
+        if (!SelectedSize)
+        {
+            SelectedSize = &Options.Sizes[0];
+        }
     }
 
-    // Apply per-slot material overrides.
-    for (const FFurnitureMaterialSlot& SlotOverride : Config.MaterialOverrides)
+    const FFurnitureColorOption* SelectedColor = nullptr;
+    if (Options.Colors.Num() > 0)
     {
-        UMaterialInterface* LoadedMat = SlotOverride.Material.Get();
-        if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+        for (const FFurnitureColorOption& ColorOpt : Options.Colors)
         {
-            Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
+            if (ColorOpt.ColorID == State.SelectedColorID)
+            {
+                SelectedColor = &ColorOpt;
+                break;
+            }
         }
+        if (!SelectedColor)
+        {
+            SelectedColor = &Options.Colors[0];
+        }
+    }
+
+    if (!SelectedSize || SelectedSize->Mesh.IsNull() || SelectedSize->Mesh.ToSoftObjectPath().ToString().IsEmpty())
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        return;
+    }
+
+    UStaticMesh* LoadedMesh = SelectedSize->Mesh.LoadSynchronous();
+    if (LoadedMesh)
+    {
+        Target->SetStaticMesh(LoadedMesh);
+        Target->SetVisibility(true);
+        Target->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+        const int32 NumMaterials = Target->GetNumMaterials();
+        for (int32 i = 0; i < NumMaterials; ++i)
+        {
+            Target->SetMaterial(i, nullptr);
+        }
+
+        if (SelectedColor)
+        {
+            for (const FFurnitureMaterialSlot& SlotOverride : SelectedColor->MaterialOverrides)
+            {
+                UMaterialInterface* LoadedMat = SlotOverride.Material.LoadSynchronous();
+                if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+                {
+                    Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
+                }
+            }
+        }
+    }
+    else
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 }
 
 void AShowroomBooth::ApplyDoorConfiguration(const FFurnitureProductRow& Data)
 {
-    // Apply the door mesh to both slots first (regardless of visibility).
-    ApplyMeshAndMaterials(DoorMeshSlot0.Get(), Data.DoorMesh);
-    ApplyMeshAndMaterials(DoorMeshSlot1.Get(), Data.DoorMesh);
+    ApplyComponentMeshAndMaterials(DoorMeshSlot0.Get(), Data.DoorOptions, ActiveState.DoorState);
+    ApplyComponentMeshAndMaterials(DoorMeshSlot1.Get(), Data.DoorOptions, ActiveState.DoorState);
 
-    // Determine the initial door slot states from EDoorCount.
     EDoorSlotState Slot0State = EDoorSlotState::NotPresent;
     EDoorSlotState Slot1State = EDoorSlotState::NotPresent;
 
@@ -523,8 +614,6 @@ void AShowroomBooth::ApplyDoorConfiguration(const FFurnitureProductRow& Data)
         break;
     }
 
-    // Only the server writes to the replicated DoorStates array.
-    // Clients receive the correct state via OnRep_DoorStates.
     if (HasAuthority())
     {
         DoorStates[0] = Slot0State;
@@ -631,4 +720,38 @@ const FFurnitureProductRow* AShowroomBooth::FindProductRow(FName RowName) const
     }
 
     return ProductCatalog->FindRow<FFurnitureProductRow>(RowName, TEXT("ShowroomBooth"), /*bWarnIfNotFound=*/true);
+}
+
+void AShowroomBooth::InitializeDefaultStateForProduct(FShowroomBoothConfigState& State, FName ProductID, const FFurnitureProductRow& Row)
+{
+    State.ProductID = ProductID;
+
+    auto GetDefaultSize = [](const FFurnitureComponentOptions& Opts) -> FName {
+        return (Opts.Sizes.Num() > 0) ? Opts.Sizes[0].SizeID : NAME_None;
+    };
+
+    auto GetDefaultColor = [](const FFurnitureComponentOptions& Opts) -> FName {
+        return (Opts.Colors.Num() > 0) ? Opts.Colors[0].ColorID : NAME_None;
+    };
+
+    State.CabinetState.SelectedSizeID = GetDefaultSize(Row.CabinetOptions);
+    State.CabinetState.SelectedColorID = GetDefaultColor(Row.CabinetOptions);
+
+    State.ClosetState.SelectedSizeID = GetDefaultSize(Row.ClosetOptions);
+    State.ClosetState.SelectedColorID = GetDefaultColor(Row.ClosetOptions);
+
+    State.DoorState.SelectedSizeID = GetDefaultSize(Row.DoorOptions);
+    State.DoorState.SelectedColorID = GetDefaultColor(Row.DoorOptions);
+
+    State.CountertopState.SelectedSizeID = GetDefaultSize(Row.CountertopOptions);
+    State.CountertopState.SelectedColorID = GetDefaultColor(Row.CountertopOptions);
+
+    State.SinkState.SelectedSizeID = GetDefaultSize(Row.SinkOptions);
+    State.SinkState.SelectedColorID = GetDefaultColor(Row.SinkOptions);
+
+    State.FaucetState.SelectedSizeID = GetDefaultSize(Row.FaucetOptions);
+    State.FaucetState.SelectedColorID = GetDefaultColor(Row.FaucetOptions);
+
+    State.MirrorState.SelectedSizeID = GetDefaultSize(Row.MirrorOptions);
+    State.MirrorState.SelectedColorID = GetDefaultColor(Row.MirrorOptions);
 }

@@ -72,6 +72,9 @@ public:
     UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
     TObjectPtr<UStaticMeshComponent> MirrorMesh;
 
+    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    TObjectPtr<UStaticMeshComponent> ClosetMesh;
+
     /** SpringArm component to handle orbit distance and rotation. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Preview | Camera")
     TObjectPtr<USpringArmComponent> SpringArm;
@@ -122,7 +125,14 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Load Product Preview"))
-    void LoadProductPreview(const FFurnitureProductRow& ProductData);
+    void LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState);
+
+    /**
+     * Inspect and focus the camera orbit around a specific model component.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Preview | Control",
+              meta = (DisplayName = "Set Focus Component"))
+    void SetFocusComponent(EFurnitureComponentType ComponentType);
 
     /** Configures the static mesh and material for the studio background. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control")
@@ -171,9 +181,10 @@ private:
     /** Current accumulated pitch (vertical) rotation in degrees. */
     float CurrentPitch = 0.f;
 
-    /** Helper — applies mesh and material config to a target component. */
-    void ApplyMeshAndMaterials(UStaticMeshComponent* Target,
-                               const FFurnitureMeshMaterials& Config);
+    /** Helper — applies dynamic size and color selections to a target mesh component. */
+    void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
+                                        const FFurnitureComponentOptions& Options,
+                                        const FFurnitureComponentState& State);
 
     /** Dynamically adjusts the camera-mounted FillLight intensity to compensate for distance attenuation. */
     void UpdateLightIntensityForZoom();

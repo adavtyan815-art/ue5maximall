@@ -127,13 +127,9 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
     TObjectPtr<UStaticMeshComponent> MirrorMesh;
 
-    /**
-     * Proximity volume — detects pawns entering/leaving the booth footprint.
-     * Fires IBoothInteractionInterface events on overlapping pawns.
-     * Resize this box in the Editor Details panel per-booth.
-     */
+    /** Closet mesh component. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
-    TObjectPtr<UBoothProximityComponent> ProximityVolume;
+    TObjectPtr<UStaticMeshComponent> ClosetMesh;
 
     // ─────────────────────────────────────────────────────────────────────
     // CONFIGURATION (Designer-set in Editor)
@@ -166,12 +162,11 @@ public:
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * The RowName from ProductCatalog that is currently displayed.
-     * Replicated with RepNotify so all clients rebuild visuals on change.
+     * Authoritative configuration state of the showroom booth (replicated).
      */
-    UPROPERTY(ReplicatedUsing = OnRep_ActiveProductID, BlueprintReadOnly,
+    UPROPERTY(ReplicatedUsing = OnRep_ActiveState, BlueprintReadOnly,
               Category = "Booth | State")
-    FName ActiveProductID;
+    FShowroomBoothConfigState ActiveState;
 
     /**
      * Per-slot door state. Max 2 entries (indices 0 and 1).
@@ -199,6 +194,13 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Booth | Interaction",
               meta = (DisplayName = "Request Product Change"))
     void RequestProductChange(FName NewProductID);
+
+    /**
+     * Request a size or color selection change on a specific subcomponent.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Booth | Interaction",
+              meta = (DisplayName = "Request Component Selection"))
+    void RequestComponentSelection(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
 
     /**
      * Toggles the open/closed state of a single door slot.
@@ -249,9 +251,9 @@ protected:
     // REPLICATION CALLBACKS
     // ─────────────────────────────────────────────────────────────────────
 
-    /** Called on every client (and listen-server client) when ActiveProductID changes. */
+    /** Called on every client (and listen-server client) when ActiveState changes. */
     UFUNCTION()
-    void OnRep_ActiveProductID();
+    void OnRep_ActiveState();
 
     /** Called on every client (and listen-server client) when DoorStates changes. */
     UFUNCTION()
@@ -263,7 +265,6 @@ protected:
 
     /**
      * Server-authoritative product change.
-     * Validates the request, updates ActiveProductID, replication does the rest.
      */
     UFUNCTION(Server, Reliable, WithValidation,
               meta = (DisplayName = "[Server] Apply Product Change"))
@@ -272,8 +273,16 @@ protected:
     void Server_ApplyProductChange_Implementation(FName NewProductID);
 
     /**
+     * Server-authoritative component selection change.
+     */
+    UFUNCTION(Server, Reliable, WithValidation,
+              meta = (DisplayName = "[Server] Apply Component Selection"))
+    void Server_ApplyComponentSelection(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+    bool Server_ApplyComponentSelection_Validate(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+    void Server_ApplyComponentSelection_Implementation(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+
+    /**
      * Server-authoritative door toggle.
-     * Validates slot index and current door presence before writing state.
      */
     UFUNCTION(Server, Reliable, WithValidation,
               meta = (DisplayName = "[Server] Toggle Door"))
@@ -301,14 +310,16 @@ protected:
     void ApplyProductData(const FFurnitureProductRow& Data);
 
     /**
-     * Applies mesh and per-slot material overrides to a target component.
-     * Safe to call with an empty MaterialOverrides array (keeps mesh defaults).
-     *
-     * @param Target    The component to update.
-     * @param Config    Mesh + material override data from the product row.
+     * Applies dynamic size and color selections to a target mesh component.
      */
-    void ApplyMeshAndMaterials(UStaticMeshComponent* Target,
-                               const FFurnitureMeshMaterials& Config);
+    void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
+                                        const FFurnitureComponentOptions& Options,
+                                        const FFurnitureComponentState& State);
+
+    /**
+     * Initializes default selections for a configuration state.
+     */
+    void InitializeDefaultStateForProduct(FShowroomBoothConfigState& State, FName ProductID, const FFurnitureProductRow& Row);
 
     /**
      * Drives door slot visibility and collision from active product data.
