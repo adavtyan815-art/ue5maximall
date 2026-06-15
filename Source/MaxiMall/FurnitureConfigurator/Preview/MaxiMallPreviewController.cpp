@@ -6,6 +6,7 @@
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
 #include "Engine/World.h"
+#include "Camera/CameraComponent.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -111,6 +112,14 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
     if (!ActivePreviewActor)
     {
         return;
+    }
+
+    // Disable exposure/post-processing overrides on the preview camera before destroying it
+    // to prevent exposure settings from leaking/persisting on the player's camera manager
+    if (ActivePreviewActor->Camera)
+    {
+        ActivePreviewActor->Camera->PostProcessBlendWeight = 0.f;
+        ActivePreviewActor->Camera->PostProcessSettings = FPostProcessSettings();
     }
 
     // Restore viewport view target to player pawn instantly

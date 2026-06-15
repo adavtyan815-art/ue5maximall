@@ -73,6 +73,13 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     ConfigurePreviewMesh(FaucetMesh.Get());
     ConfigurePreviewMesh(MirrorMesh.Get());
 
+    // Set default parameter values explicitly in constructor body for CDO persistence
+    PitchMin = -80.f;
+    PitchMax = 80.f;
+    BaseFillIntensity = 40000.f;
+    ReferenceZoomDistance = 250.f;
+    CurrentZoomLength = 250.f;
+
     // ── Spring Arm & Camera ───────────────────────────────────────────────
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
     SpringArm->SetupAttachment(PreviewRoot);
@@ -87,8 +94,8 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // Lock auto-exposure on the camera by default to prevent transition flashes (customizable in BP details)
     Camera->PostProcessSettings.bOverride_AutoExposureMinBrightness = true;
     Camera->PostProcessSettings.bOverride_AutoExposureMaxBrightness = true;
-    Camera->PostProcessSettings.AutoExposureMinBrightness = 1.0f;
-    Camera->PostProcessSettings.AutoExposureMaxBrightness = 1.0f;
+    Camera->PostProcessSettings.AutoExposureMinBrightness = 3.0f;
+    Camera->PostProcessSettings.AutoExposureMaxBrightness = 3.0f;
 
     // ── Studio Backdrop ───────────────────────────────────────────────────
     BackdropMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BackdropMesh"));
