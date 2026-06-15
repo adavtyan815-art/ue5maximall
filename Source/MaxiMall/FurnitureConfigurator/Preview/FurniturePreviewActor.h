@@ -125,7 +125,7 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Load Product Preview"))
-    void LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState);
+    void LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState, class AShowroomBooth* SourceBooth);
 
     /**
      * Inspect and focus the camera orbit around a specific model component.

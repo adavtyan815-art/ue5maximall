@@ -233,6 +233,19 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Booth | Query")
     bool IsValidProductID(FName ProductID) const;
 
+    /**
+     * Initializes default selections for a configuration state.
+     */
+    void InitializeDefaultStateForProduct(FShowroomBoothConfigState& State, FName ProductID, const FFurnitureProductRow& Row);
+
+    /** Getter for BaselineSinkTransform. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Booth | Transforms")
+    FTransform GetBaselineSinkTransform() const { return BaselineSinkTransform; }
+
+    /** Getter for BaselineFaucetTransform. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Booth | Transforms")
+    FTransform GetBaselineFaucetTransform() const { return BaselineFaucetTransform; }
+
     // ─────────────────────────────────────────────────────────────────────
     // DELEGATES (Blueprint-Assignable)
     // ─────────────────────────────────────────────────────────────────────
@@ -315,11 +328,6 @@ protected:
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                         const FFurnitureComponentOptions& Options,
                                         const FFurnitureComponentState& State);
-
-    /**
-     * Initializes default selections for a configuration state.
-     */
-    void InitializeDefaultStateForProduct(FShowroomBoothConfigState& State, FName ProductID, const FFurnitureProductRow& Row);
 
     /**
      * Drives door slot visibility and collision from active product data.

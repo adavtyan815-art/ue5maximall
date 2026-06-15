@@ -2,6 +2,7 @@
 // FurniturePreviewActor.cpp
 
 #include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
+#include "FurnitureConfigurator/ShowroomBooth.h"
 
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
@@ -155,8 +156,28 @@ void AFurniturePreviewActor::BeginPlay()
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState)
+void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState, AShowroomBooth* SourceBooth)
 {
+    if (SourceBooth)
+    {
+        if (CabinetMesh && SourceBooth->MainCabinet)
+        {
+            CabinetMesh->SetRelativeTransform(SourceBooth->MainCabinet->GetRelativeTransform());
+        }
+        if (ClosetMesh && SourceBooth->ClosetMesh)
+        {
+            ClosetMesh->SetRelativeTransform(SourceBooth->ClosetMesh->GetRelativeTransform());
+        }
+        if (CountertopMesh && SourceBooth->CountertopMesh)
+        {
+            CountertopMesh->SetRelativeTransform(SourceBooth->CountertopMesh->GetRelativeTransform());
+        }
+        if (MirrorMesh && SourceBooth->MirrorMesh)
+        {
+            MirrorMesh->SetRelativeTransform(SourceBooth->MirrorMesh->GetRelativeTransform());
+        }
+    }
+
     // ── Cabinet ───────────────────────────────────────────────────────────
     ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetOptions, ActiveState.CabinetState);
 
@@ -213,9 +234,14 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         ApplyComponentMeshAndMaterials(SinkMesh.Get(), ProductData.SinkOptions, ActiveState.SinkState);
 
         const FSinkPlacementOffset& SO = ProductData.SinkOffset;
-        SinkMesh->SetRelativeLocation(SO.RelativeLocation);
-        SinkMesh->SetRelativeRotation(SO.RelativeRotation);
-        SinkMesh->SetRelativeScale3D(SO.RelativeScale);
+        FTransform ProductDelta;
+        ProductDelta.SetLocation(SO.RelativeLocation);
+        ProductDelta.SetRotation(SO.RelativeRotation.Quaternion());
+        ProductDelta.SetScale3D(SO.RelativeScale);
+
+        const FTransform BaselineSink = SourceBooth ? SourceBooth->GetBaselineSinkTransform() : FTransform::Identity;
+        const FTransform FinalSinkTransform = ProductDelta * BaselineSink;
+        SinkMesh->SetRelativeTransform(FinalSinkTransform);
     }
     else
     {
@@ -228,9 +254,14 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ProductData.FaucetOptions, ActiveState.FaucetState);
     {
         const FFaucetPlacementOffset& FO = ProductData.FaucetOffset;
-        FaucetMesh->SetRelativeLocation(FO.RelativeLocation);
-        FaucetMesh->SetRelativeRotation(FO.RelativeRotation);
-        FaucetMesh->SetRelativeScale3D(FO.RelativeScale);
+        FTransform ProductDelta;
+        ProductDelta.SetLocation(FO.RelativeLocation);
+        ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
+        ProductDelta.SetScale3D(FO.RelativeScale);
+
+        const FTransform BaselineFaucet = SourceBooth ? SourceBooth->GetBaselineFaucetTransform() : FTransform::Identity;
+        const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucet;
+        FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
     }
 
     // ── Mirror ────────────────────────────────────────────────────────────

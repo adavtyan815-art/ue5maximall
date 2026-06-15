@@ -34,6 +34,11 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
 
 void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBooth)
 {
+    if (!IsLocalController())
+    {
+        return;
+    }
+
     if (!TargetBooth)
     {
         UE_LOG(LogTemp, Warning, TEXT("[PreviewController] OpenFurniturePreview called with null TargetBooth."));
@@ -93,8 +98,11 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         return;
     }
 
+    // Store booth configuration state locally for isolated modifications
+    LocalPreviewState = TargetBooth->ActiveState;
+
     // ── 4. Load the product snapshot into the preview actor ───────────────
-    ActivePreviewActor->LoadProductPreview(ProductSnapshot, TargetBooth->ActiveState);
+    ActivePreviewActor->LoadProductPreview(ProductSnapshot, LocalPreviewState, TargetBooth);
 
     // Bind to the booth's product change delegate to keep the preview actor in sync dynamically
     CurrentTargetBooth = TargetBooth;
@@ -114,6 +122,11 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
 
 void AMaxiMallPreviewController::CloseFurniturePreview()
 {
+    if (!IsLocalController())
+    {
+        return;
+    }
+
     if (CurrentTargetBooth)
     {
         CurrentTargetBooth->OnProductChanged.RemoveAll(this);
@@ -199,12 +212,14 @@ void AMaxiMallPreviewController::RequestBoothProductChange(AShowroomBooth* Targe
 
     // If the preview is open, refresh it with the new product data.
     // This is purely a local visual update — no extra networking.
-    if (ActivePreviewActor)
+    if (ActivePreviewActor && TargetBooth == CurrentTargetBooth)
     {
         FFurnitureProductRow UpdatedSnapshot;
         if (TargetBooth->GetActiveProductData(UpdatedSnapshot))
         {
-            ActivePreviewActor->LoadProductPreview(UpdatedSnapshot, TargetBooth->ActiveState);
+            // Sync local preview state with the new product's default state
+            TargetBooth->InitializeDefaultStateForProduct(LocalPreviewState, NewProductID, UpdatedSnapshot);
+            ActivePreviewActor->LoadProductPreview(UpdatedSnapshot, LocalPreviewState, TargetBooth);
         }
     }
 }
@@ -235,6 +250,9 @@ bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBoo
         {
             OutBooth = HitBooth;
             OutHitComponent = HitResult.GetComponent();
+
+            // Lock in the targeted showroom booth
+            CurrentTargetBooth = HitBooth;
 
             if (OutHitComponent == HitBooth->MainCabinet.Get())
             {
@@ -309,12 +327,96 @@ void AMaxiMallPreviewController::FocusPreviewOnComponent(EFurnitureComponentType
 
 void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Booth, FName NewProductID)
 {
+    if (!IsLocalController())
+    {
+        return;
+    }
+
     if (ActivePreviewActor && Booth && Booth == CurrentTargetBooth)
     {
         FFurnitureProductRow ProductSnapshot;
         if (Booth->GetActiveProductData(ProductSnapshot))
         {
-            ActivePreviewActor->LoadProductPreview(ProductSnapshot, Booth->ActiveState);
+            // Sync local preview state with booth's replicated selections on remote changes
+            LocalPreviewState = Booth->ActiveState;
+            ActivePreviewActor->LoadProductPreview(ProductSnapshot, LocalPreviewState, Booth);
         }
     }
+}
+
+void AMaxiMallPreviewController::ApplyLocalComponentSelection(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+{
+    if (!IsLocalController())
+    {
+        return;
+    }
+
+    if (!ActivePreviewActor || !CurrentTargetBooth)
+    {
+        return;
+    }
+
+    // Update the local preview state for the specified component type
+    switch (ComponentType)
+    {
+    case EFurnitureComponentType::Cabinet:
+        LocalPreviewState.CabinetState.SelectedSizeID = SizeID;
+        LocalPreviewState.CabinetState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Closet:
+        LocalPreviewState.ClosetState.SelectedSizeID = SizeID;
+        LocalPreviewState.ClosetState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Doors:
+        LocalPreviewState.DoorState.SelectedSizeID = SizeID;
+        LocalPreviewState.DoorState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Countertop:
+        LocalPreviewState.CountertopState.SelectedSizeID = SizeID;
+        LocalPreviewState.CountertopState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Sink:
+        LocalPreviewState.SinkState.SelectedSizeID = SizeID;
+        LocalPreviewState.SinkState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Faucet:
+        LocalPreviewState.FaucetState.SelectedSizeID = SizeID;
+        LocalPreviewState.FaucetState.SelectedColorID = ColorID;
+        break;
+    case EFurnitureComponentType::Mirror:
+        LocalPreviewState.MirrorState.SelectedSizeID = SizeID;
+        LocalPreviewState.MirrorState.SelectedColorID = ColorID;
+        break;
+    default:
+        break;
+    }
+
+    // Refresh the local preview actor with the new selections
+    FFurnitureProductRow ProductSnapshot;
+    if (CurrentTargetBooth->GetActiveProductData(ProductSnapshot))
+    {
+        ActivePreviewActor->LoadProductPreview(ProductSnapshot, LocalPreviewState, CurrentTargetBooth);
+    }
+}
+
+void AMaxiMallPreviewController::CommitPreviewConfiguration()
+{
+    if (!IsLocalController())
+    {
+        return;
+    }
+
+    if (!CurrentTargetBooth)
+    {
+        return;
+    }
+
+    // Request the updated selections on the authoritative showroom booth (which forwards RPC to server)
+    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Cabinet, LocalPreviewState.CabinetState.SelectedSizeID, LocalPreviewState.CabinetState.SelectedColorID);
+    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Closet, LocalPreviewState.ClosetState.SelectedSizeID, LocalPreviewState.ClosetState.SelectedColorID);
+    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Doors, LocalPreviewState.DoorState.SelectedSizeID, LocalPreviewState.DoorState.SelectedColorID);
+    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Countertop, LocalPreviewState.CountertopState.SelectedSizeID, LocalPreviewState.CountertopState.SelectedColorID);
+    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Sink, LocalPreviewState.SinkState.SelectedSizeID, LocalPreviewState.SinkState.SelectedColorID);
+    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Faucet, LocalPreviewState.FaucetState.SelectedSizeID, LocalPreviewState.FaucetState.SelectedColorID);
+    CurrentTargetBooth->RequestComponentSelection(EFurnitureComponentType::Mirror, LocalPreviewState.MirrorState.SelectedSizeID, LocalPreviewState.MirrorState.SelectedColorID);
 }

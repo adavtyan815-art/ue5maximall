@@ -137,6 +137,20 @@ public:
               meta = (DisplayName = "Focus Preview On Component"))
     void FocusPreviewOnComponent(EFurnitureComponentType ComponentType);
 
+    /** The showroom booth currently being inspected/previewed. Locked in via TraceFurnitureComponent. */
+    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Preview")
+    TObjectPtr<AShowroomBooth> CurrentTargetBooth;
+
+    /** Applies a component selection change to the local preview state only. */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview",
+              meta = (DisplayName = "Apply Local Component Selection"))
+    void ApplyLocalComponentSelection(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+
+    /** Saves the accumulated local preview selections back to the main showroom booth. */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview",
+              meta = (DisplayName = "Commit Preview Configuration"))
+    void CommitPreviewConfiguration();
+
     // ─────────────────────────────────────────────────────────────────────
     // BOOTH INTERACTION API
     // These are convenience wrappers callable from any Blueprint without
@@ -239,9 +253,8 @@ private:
     /** Caches the player's control rotation before entering preview mode to restore it on exit. */
     FRotator SavedControlRotation;
 
-    /** The showroom booth currently being inspected/previewed. */
-    UPROPERTY()
-    TObjectPtr<AShowroomBooth> CurrentTargetBooth;
+    /** Tracks the local configuration state while in the isolated preview. */
+    FShowroomBoothConfigState LocalPreviewState;
 
     /** Delegate callback called when the target showroom booth's configuration changes. */
     UFUNCTION()
