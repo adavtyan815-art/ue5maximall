@@ -1,0 +1,30 @@
+# Exclude Visual Studio and build targets
+.vs/
+*.sln
+*.suo
+*.user
+*.userprefs
+*.db
+*.opendb
+*.VC.db
+
+# Exclude Unreal directories
+Binaries/
+Build/
+Intermediate/
+Saved/
+DerivedDataCache/
+
+# Exclude backups and upgrade logs
+Backup/
+Backup1/
+Backup2/
+UpgradeLog*.htm
+
+# Exclude plugins build directories
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+
+# System files
+.DS_Store
+Thumbs.db
