@@ -124,19 +124,21 @@ void AShowroomBooth::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
 
-    // Always capture the designer's placed positions at the start of construction
-    // before we apply any product visuals or offsets.
-    if (SinkMesh)
+    // Only run editor-side visualization and baseline capturing in the editor viewport (not in game/PIE)
+    if (GetWorld() && !GetWorld()->IsGameWorld())
     {
-        BaselineSinkTransform = SinkMesh->GetRelativeTransform();
-    }
-    if (FaucetMesh)
-    {
-        BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
-    }
-    bBaselineTransformsCaptured = true;
+        if (SinkMesh)
+        {
+            BaselineSinkTransform = SinkMesh->GetRelativeTransform();
+        }
+        if (FaucetMesh)
+        {
+            BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
+        }
+        bBaselineTransformsCaptured = true;
 
-    InitializeDefaultBooth();
+        InitializeDefaultBooth();
+    }
 }
 
 void AShowroomBooth::InitializeDefaultBooth()
@@ -662,35 +664,51 @@ void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& 
     // stay correct regardless of how the designer positioned the countertop.
 
     // ── Sink ──────────────────────────────────────────────────────────────
-    if (SinkMesh && Data.CountertopType == ECountertopType::SurfaceMounted)
+    if (SinkMesh)
     {
-        // Build the target relative transform from the product data offset.
-        // The baseline transform is the editor-placed starting position;
-        // the product offset is a DELTA on top of it for fitting variation.
-        const FSinkPlacementOffset& SO = Data.SinkOffset;
+        if (GetWorld() && !GetWorld()->IsGameWorld())
+        {
+            // In the editor, keep the mesh at its baseline (placed) transform
+            SinkMesh->SetRelativeTransform(BaselineSinkTransform);
+        }
+        else if (Data.CountertopType == ECountertopType::SurfaceMounted)
+        {
+            // Build the target relative transform from the product data offset.
+            // The baseline transform is the editor-placed starting position;
+            // the product offset is a DELTA on top of it for fitting variation.
+            const FSinkPlacementOffset& SO = Data.SinkOffset;
 
-        FTransform ProductDelta;
-        ProductDelta.SetLocation(SO.RelativeLocation);
-        ProductDelta.SetRotation(SO.RelativeRotation.Quaternion());
-        ProductDelta.SetScale3D(SO.RelativeScale);
+            FTransform ProductDelta;
+            ProductDelta.SetLocation(SO.RelativeLocation);
+            ProductDelta.SetRotation(SO.RelativeRotation.Quaternion());
+            ProductDelta.SetScale3D(SO.RelativeScale);
 
-        // Combine: editor baseline + product-specific delta.
-        const FTransform FinalSinkTransform = ProductDelta * BaselineSinkTransform;
-        SinkMesh->SetRelativeTransform(FinalSinkTransform);
+            // Combine: editor baseline + product-specific delta.
+            const FTransform FinalSinkTransform = ProductDelta * BaselineSinkTransform;
+            SinkMesh->SetRelativeTransform(FinalSinkTransform);
+        }
     }
 
     // ── Faucet ────────────────────────────────────────────────────────────
     if (FaucetMesh)
     {
-        const FFaucetPlacementOffset& FO = Data.FaucetOffset;
+        if (GetWorld() && !GetWorld()->IsGameWorld())
+        {
+            // In the editor, keep the mesh at its baseline (placed) transform
+            FaucetMesh->SetRelativeTransform(BaselineFaucetTransform);
+        }
+        else
+        {
+            const FFaucetPlacementOffset& FO = Data.FaucetOffset;
 
-        FTransform ProductDelta;
-        ProductDelta.SetLocation(FO.RelativeLocation);
-        ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
-        ProductDelta.SetScale3D(FO.RelativeScale);
+            FTransform ProductDelta;
+            ProductDelta.SetLocation(FO.RelativeLocation);
+            ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
+            ProductDelta.SetScale3D(FO.RelativeScale);
 
-        const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucetTransform;
-        FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+            const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucetTransform;
+            FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+        }
     }
 }
 

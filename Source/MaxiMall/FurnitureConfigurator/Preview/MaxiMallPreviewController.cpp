@@ -31,6 +31,19 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
     BackdropMaterialAsset = FSoftObjectPath(TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
 }
 
+void AMaxiMallPreviewController::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // Ensure we start in Game Only input mode with mouse cursor hidden for the local player controller
+    if (IsLocalController())
+    {
+        FInputModeGameOnly InputMode;
+        SetInputMode(InputMode);
+        bShowMouseCursor = false;
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Preview Management
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,6 +62,13 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     }
 
     CurrentTargetComponent = FocusComponent;
+
+    // Safety check: Ensure we have a possessed pawn before allowing preview mode
+    if (!GetPawn())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[PreviewController] OpenFurniturePreview called before possessing a pawn. Ignoring."));
+        return;
+    }
 
     // Capture the current control rotation before entering preview mode (if not already in preview)
     if (!ActivePreviewActor)
@@ -91,13 +111,14 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     // Print runtime spawn class details for debugging/exposure validation
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
-    // Isolate target booth by hiding all other booths in the level for the local player
+    // Isolate target booth by hiding all other booths in the level locally for this player only
+    HiddenActors.Empty();
     for (TActorIterator<AShowroomBooth> It(World); It; ++It)
     {
         AShowroomBooth* Booth = *It;
         if (Booth && Booth != TargetBooth)
         {
-            Booth->SetActorHiddenInGame(true);
+            HiddenActors.Add(Booth);
         }
     }
 
@@ -195,19 +216,8 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
         return;
     }
 
-    // Restore visibility of all showroom booths in the level for the local player
-    UWorld* World = GetWorld();
-    if (World)
-    {
-        for (TActorIterator<AShowroomBooth> It(World); It; ++It)
-        {
-            AShowroomBooth* Booth = *It;
-            if (Booth)
-            {
-                Booth->SetActorHiddenInGame(false);
-            }
-        }
-    }
+    // Restore visibility of all showroom booths in the level for the local player locally
+    HiddenActors.Empty();
 
     if (CurrentTargetBooth)
     {

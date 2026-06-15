@@ -48,6 +48,8 @@ public:
 
     AMaxiMallPreviewController();
 
+    virtual void BeginPlay() override;
+
     // ─────────────────────────────────────────────────────────────────────
     // PREVIEW MANAGEMENT
     // ─────────────────────────────────────────────────────────────────────
