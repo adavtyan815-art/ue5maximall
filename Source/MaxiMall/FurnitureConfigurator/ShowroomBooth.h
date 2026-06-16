@@ -388,5 +388,11 @@ private:
     FTransform BaselineFaucetTransform;
 
     UPROPERTY()
+    FTransform BaselineDoor0Transform;
+
+    UPROPERTY()
+    FTransform BaselineDoor1Transform;
+
+    UPROPERTY()
     bool bBaselineTransformsCaptured;
 };

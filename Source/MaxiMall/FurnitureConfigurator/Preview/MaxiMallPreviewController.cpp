@@ -16,6 +16,8 @@
 #include "FurnitureConfigurator/UI/ViewmodeOverlayWidget.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/SViewport.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/GameViewportClient.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -435,11 +437,15 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
                 if (FSlateApplication::IsInitialized())
                 {
                     FSlateApplication::Get().ReleaseAllPointerCapture();
-                    TSharedPtr<SViewport> GameViewportWidget = FSlateApplication::Get().GetGameViewport();
-                    if (GameViewportWidget.IsValid())
+                    ULocalPlayer* LocalPlayer = StrongThis->GetLocalPlayer();
+                    if (LocalPlayer && LocalPlayer->ViewportClient)
                     {
-                        FSlateApplication::Get().SetUserFocus(0, GameViewportWidget.ToSharedRef());
-                        FSlateApplication::Get().SetKeyboardFocus(GameViewportWidget.ToSharedRef());
+                        TSharedPtr<SViewport> GameViewportWidget = LocalPlayer->ViewportClient->GetGameViewportWidget();
+                        if (GameViewportWidget.IsValid())
+                        {
+                            FSlateApplication::Get().SetUserFocus(LocalPlayer->GetControllerId(), GameViewportWidget.ToSharedRef());
+                            FSlateApplication::Get().SetKeyboardFocus(GameViewportWidget.ToSharedRef());
+                        }
                     }
                 }
             }
@@ -832,11 +838,15 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
                 if (FSlateApplication::IsInitialized())
                 {
                     FSlateApplication::Get().ReleaseAllPointerCapture();
-                    TSharedPtr<SViewport> GameViewportWidget = FSlateApplication::Get().GetGameViewport();
-                    if (GameViewportWidget.IsValid())
+                    ULocalPlayer* LocalPlayer = StrongThis->GetLocalPlayer();
+                    if (LocalPlayer && LocalPlayer->ViewportClient)
                     {
-                        FSlateApplication::Get().SetUserFocus(0, GameViewportWidget.ToSharedRef());
-                        FSlateApplication::Get().SetKeyboardFocus(GameViewportWidget.ToSharedRef());
+                        TSharedPtr<SViewport> GameViewportWidget = LocalPlayer->ViewportClient->GetGameViewportWidget();
+                        if (GameViewportWidget.IsValid())
+                        {
+                            FSlateApplication::Get().SetUserFocus(LocalPlayer->GetControllerId(), GameViewportWidget.ToSharedRef());
+                            FSlateApplication::Get().SetKeyboardFocus(GameViewportWidget.ToSharedRef());
+                        }
                     }
                 }
             }

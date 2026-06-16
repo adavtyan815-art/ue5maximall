@@ -85,6 +85,14 @@ void AShowroomBooth::BeginPlay()
     {
         BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
     }
+    if (DoorMeshSlot0)
+    {
+        BaselineDoor0Transform = DoorMeshSlot0->GetRelativeTransform();
+    }
+    if (DoorMeshSlot1)
+    {
+        BaselineDoor1Transform = DoorMeshSlot1->GetRelativeTransform();
+    }
     bBaselineTransformsCaptured = true;
 
     // ── 2. Initialize the door state array (guarantee 2 entries) ──────────
@@ -130,6 +138,14 @@ void AShowroomBooth::OnConstruction(const FTransform& Transform)
         if (FaucetMesh)
         {
             BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
+        }
+        if (DoorMeshSlot0)
+        {
+            BaselineDoor0Transform = DoorMeshSlot0->GetRelativeTransform();
+        }
+        if (DoorMeshSlot1)
+        {
+            BaselineDoor1Transform = DoorMeshSlot1->GetRelativeTransform();
         }
         bBaselineTransformsCaptured = true;
 
@@ -643,15 +659,32 @@ void AShowroomBooth::ApplyDoorSlotVisual(UStaticMeshComponent* Slot,
     Slot->SetVisibility(true);
     Slot->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 
-    // Set local position to the product-defined closed position offset.
-    FVector TargetLocation = SlotCfg.ClosedPositionOffset;
+    // Determine the baseline transform for this door slot
+    FTransform BaselineTransform = FTransform::Identity;
+    if (Slot == DoorMeshSlot0.Get())
+    {
+        BaselineTransform = BaselineDoor0Transform;
+    }
+    else if (Slot == DoorMeshSlot1.Get())
+    {
+        BaselineTransform = BaselineDoor1Transform;
+    }
+
+    // Safety check: ensure scale is not zero
+    if (BaselineTransform.GetScale3D().IsNearlyZero())
+    {
+        BaselineTransform.SetScale3D(FVector::OneVector);
+    }
+
+    FVector TargetLocation = BaselineTransform.GetLocation();
 
     // Compute the open/closed rotation.
-    // Closed = no yaw delta.  Open = add the product-defined yaw delta.
+    // Closed = no yaw delta.  Open = add the product-defined yaw delta on top of the baseline rotation.
     const float YawDelta = (State == EDoorSlotState::Open) ? SlotCfg.OpenYawDelta : 0.f;
-    FRotator TargetRotation = FRotator(0.f, YawDelta, 0.f);
+    FRotator TargetRotation = BaselineTransform.Rotator() + FRotator(0.f, YawDelta, 0.f);
 
     Slot->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
+    Slot->SetRelativeScale3D(BaselineTransform.GetScale3D());
 }
 
 void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& Data)

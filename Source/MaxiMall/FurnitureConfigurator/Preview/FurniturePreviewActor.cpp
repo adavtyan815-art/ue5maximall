@@ -219,7 +219,11 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             {
                 DoorMeshSlot0->SetVisibility(true);
             }
-            if (ProductData.DoorSlots.IsValidIndex(0))
+            if (SourceBooth && SourceBooth->DoorMeshSlot0)
+            {
+                DoorMeshSlot0->SetRelativeTransform(SourceBooth->DoorMeshSlot0->GetRelativeTransform());
+            }
+            else if (ProductData.DoorSlots.IsValidIndex(0))
             {
                 DoorMeshSlot0->SetRelativeLocation(ProductData.DoorSlots[0].ClosedPositionOffset);
             }
@@ -230,7 +234,11 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             {
                 DoorMeshSlot0->SetVisibility(true);
             }
-            if (ProductData.DoorSlots.IsValidIndex(0))
+            if (SourceBooth && SourceBooth->DoorMeshSlot0)
+            {
+                DoorMeshSlot0->SetRelativeTransform(SourceBooth->DoorMeshSlot0->GetRelativeTransform());
+            }
+            else if (ProductData.DoorSlots.IsValidIndex(0))
             {
                 DoorMeshSlot0->SetRelativeLocation(ProductData.DoorSlots[0].ClosedPositionOffset);
             }
@@ -238,7 +246,11 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             {
                 DoorMeshSlot1->SetVisibility(true);
             }
-            if (ProductData.DoorSlots.IsValidIndex(1))
+            if (SourceBooth && SourceBooth->DoorMeshSlot1)
+            {
+                DoorMeshSlot1->SetRelativeTransform(SourceBooth->DoorMeshSlot1->GetRelativeTransform());
+            }
+            else if (ProductData.DoorSlots.IsValidIndex(1))
             {
                 DoorMeshSlot1->SetRelativeLocation(ProductData.DoorSlots[1].ClosedPositionOffset);
             }
