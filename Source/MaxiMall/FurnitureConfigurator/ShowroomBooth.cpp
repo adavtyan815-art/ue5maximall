@@ -76,20 +76,16 @@ void AShowroomBooth::BeginPlay()
     Super::BeginPlay();
 
     // ── 1. Capture baseline transforms (editor-established layout) ─────────
-    //    These are captured BEFORE any product is applied so that
-    //    RecalculateDependentTransforms can use them as delta anchors.
-    if (!bBaselineTransformsCaptured)
+    //    Always capture these on BeginPlay to ensure we use the actual editor-placed transforms as baseline
+    if (SinkMesh)
     {
-        if (SinkMesh)
-        {
-            BaselineSinkTransform = SinkMesh->GetRelativeTransform();
-        }
-        if (FaucetMesh)
-        {
-            BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
-        }
-        bBaselineTransformsCaptured = true;
+        BaselineSinkTransform = SinkMesh->GetRelativeTransform();
     }
+    if (FaucetMesh)
+    {
+        BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
+    }
+    bBaselineTransformsCaptured = true;
 
     // ── 2. Initialize the door state array (guarantee 2 entries) ──────────
     InitializeDoorStateArray();

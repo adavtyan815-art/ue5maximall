@@ -15,6 +15,7 @@
 #include "FurnitureConfigurator/UI/ConfiguratorMainWidget.h"
 #include "FurnitureConfigurator/UI/ViewmodeOverlayWidget.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Widgets/SViewport.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -167,6 +168,7 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     }
 
     // Disable character look/move inputs to prevent character movement/rotation during preview
+    ResetIgnoreInputFlags();
     SetIgnoreLookInput(true);
     SetIgnoreMoveInput(true);
 
@@ -385,6 +387,7 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
     if (PreviousBooth && MainWidgetInstance)
     {
         // Maintain ignore look/move inputs when returning to the main configurator UI
+        ResetIgnoreInputFlags();
         SetIgnoreLookInput(true);
         SetIgnoreMoveInput(true);
 
@@ -421,6 +424,7 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
             if (AMaxiMallPreviewController* StrongThis = WeakThis.Get())
             {
                 // Restore character look/move inputs
+                StrongThis->ResetIgnoreInputFlags();
                 StrongThis->SetIgnoreLookInput(false);
                 StrongThis->SetIgnoreMoveInput(false);
 
@@ -431,7 +435,12 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
                 if (FSlateApplication::IsInitialized())
                 {
                     FSlateApplication::Get().ReleaseAllPointerCapture();
-                    FSlateApplication::Get().SetAllUserFocusToGameViewport();
+                    TSharedPtr<SViewport> GameViewportWidget = FSlateApplication::Get().GetGameViewport();
+                    if (GameViewportWidget.IsValid())
+                    {
+                        FSlateApplication::Get().SetUserFocus(0, GameViewportWidget.ToSharedRef());
+                        FSlateApplication::Get().SetKeyboardFocus(GameViewportWidget.ToSharedRef());
+                    }
                 }
             }
         });
@@ -701,6 +710,7 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         if (!Booth) return;
 
         // Disable character look/move inputs to prevent character movement/rotation during configuration
+        ResetIgnoreInputFlags();
         SetIgnoreLookInput(true);
         SetIgnoreMoveInput(true);
 
@@ -801,6 +811,7 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
             if (AMaxiMallPreviewController* StrongThis = WeakThis.Get())
             {
                 // Restore character look/move inputs
+                StrongThis->ResetIgnoreInputFlags();
                 StrongThis->SetIgnoreLookInput(false);
                 StrongThis->SetIgnoreMoveInput(false);
 
@@ -821,7 +832,12 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
                 if (FSlateApplication::IsInitialized())
                 {
                     FSlateApplication::Get().ReleaseAllPointerCapture();
-                    FSlateApplication::Get().SetAllUserFocusToGameViewport();
+                    TSharedPtr<SViewport> GameViewportWidget = FSlateApplication::Get().GetGameViewport();
+                    if (GameViewportWidget.IsValid())
+                    {
+                        FSlateApplication::Get().SetUserFocus(0, GameViewportWidget.ToSharedRef());
+                        FSlateApplication::Get().SetKeyboardFocus(GameViewportWidget.ToSharedRef());
+                    }
                 }
             }
         });
