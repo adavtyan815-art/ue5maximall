@@ -31,6 +31,7 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
     CurrentTargetBooth = nullptr;
     CurrentTargetComponent = EFurnitureComponentType::None;
     HoveredComponent = nullptr;
+    bIsClosingUI = false;
     
     // Default to the C++ base class so it is not empty in the Editor by default
     PreviewActorClass = AFurniturePreviewActor::StaticClass();
@@ -49,6 +50,16 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
 void AMaxiMallPreviewController::BeginPlay()
 {
     Super::BeginPlay();
+
+    // Ensure we start with the consistent mouse cursor behavior (visible by default, hides when clicking/capturing)
+    if (IsLocalController())
+    {
+        FInputModeGameAndUI InputMode;
+        InputMode.SetHideCursorDuringCapture(true);
+        InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        SetInputMode(InputMode);
+        bShowMouseCursor = true;
+    }
 }
 
 void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
@@ -419,6 +430,8 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
         CurrentTargetBooth = nullptr;
         CurrentTargetComponent = EFurnitureComponentType::None;
 
+        bIsClosingUI = true;
+
         // Defer input mode and focus restoration to the next tick to prevent Slate capture stealing focus
         TWeakObjectPtr<AMaxiMallPreviewController> WeakThis(this);
         GetWorld()->GetTimerManager().SetTimerForNextTick([WeakThis]()
@@ -430,9 +443,11 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
                 StrongThis->SetIgnoreLookInput(false);
                 StrongThis->SetIgnoreMoveInput(false);
 
-                FInputModeGameOnly InputMode;
+                FInputModeGameAndUI InputMode;
+                InputMode.SetHideCursorDuringCapture(true);
+                InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
                 StrongThis->SetInputMode(InputMode);
-                StrongThis->bShowMouseCursor = false;
+                StrongThis->bShowMouseCursor = true;
 
                 if (FSlateApplication::IsInitialized())
                 {
@@ -442,6 +457,8 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
                         FSlateApplication::Get().SetUserFocusToGameViewport(LocalPlayer->GetControllerId());
                     }
                 }
+
+                StrongThis->bIsClosingUI = false;
             }
         });
     }
@@ -520,6 +537,12 @@ bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBoo
     OutBooth = nullptr;
     OutComponentType = EFurnitureComponentType::None;
     OutHitComponent = nullptr;
+
+    // Block interaction if UI is currently closing, if a preview is active, or if the configurator UI is already open on the viewport
+    if (bIsClosingUI || IsPreviewActive() || (MainWidgetInstance && MainWidgetInstance->IsInViewport()))
+    {
+        return false;
+    }
 
     FHitResult HitResult;
     // Trace under the mouse cursor using visibility channel
@@ -693,13 +716,6 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
 
 void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen)
 {
-    if (GEngine)
-    {
-        GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Cyan, FString::Printf(TEXT("ToggleConfiguratorUI entry. Local: %s, bOpen: %s"), 
-            IsLocalController() ? TEXT("Yes") : TEXT("No"), 
-            bOpen ? TEXT("True") : TEXT("False")));
-    }
-
     if (!IsLocalController())
     {
         return;
@@ -713,12 +729,6 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         ResetIgnoreInputFlags();
         SetIgnoreLookInput(true);
         SetIgnoreMoveInput(true);
-
-        if (GEngine)
-        {
-            GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Yellow, FString::Printf(TEXT("ToggleConfiguratorUI: MainWidgetClass: %s"), 
-                MainWidgetClass ? *MainWidgetClass->GetName() : TEXT("Null")));
-        }
 
         if (!MainWidgetClass)
         {
@@ -740,11 +750,6 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         if (!MainWidgetInstance && MainWidgetClass)
         {
             MainWidgetInstance = CreateWidget<UUserWidget>(this, MainWidgetClass);
-            if (GEngine)
-            {
-                GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Green, FString::Printf(TEXT("Created MainWidgetInstance: %s"), 
-                    MainWidgetInstance ? TEXT("Success") : TEXT("Failed")));
-            }
         }
 
         if (MainWidgetInstance)
@@ -754,28 +759,10 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
             {
                 MainWidget->SetupWidget(this, Booth, Component);
             }
-            else
-            {
-                if (GEngine)
-                {
-                    GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red, TEXT("Failed to Cast MainWidgetInstance to UConfiguratorMainWidget!"));
-                }
-            }
 
             if (!MainWidgetInstance->IsInViewport())
             {
                 MainWidgetInstance->AddToViewport();
-                if (GEngine)
-                {
-                    GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Green, TEXT("Added MainWidgetInstance to Viewport!"));
-                }
-            }
-            else
-            {
-                if (GEngine)
-                {
-                    GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Orange, TEXT("MainWidgetInstance was already in Viewport!"));
-                }
             }
 
             FInputModeGameAndUI InputMode;
@@ -788,10 +775,6 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         else
         {
             UE_LOG(LogTemp, Error, TEXT("[PreviewController] ToggleConfiguratorUI failed: MainWidgetInstance could not be created/found."));
-            if (GEngine)
-            {
-                GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red, TEXT("ToggleConfiguratorUI failed: MainWidgetInstance is Null!"));
-            }
         }
     }
     else
@@ -802,6 +785,8 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         }
         CurrentTargetBooth = nullptr;
         CurrentTargetComponent = EFurnitureComponentType::None;
+
+        bIsClosingUI = true;
 
         // Defer input mode change, widget removal, and viewport focus restoration to next tick
         // to prevent Slate mouse capture lockup when clicked from a button.
@@ -825,9 +810,11 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
                     StrongThis->ViewmodeOverlayInstance->RemoveFromParent();
                 }
 
-                FInputModeGameOnly InputMode;
+                FInputModeGameAndUI InputMode;
+                InputMode.SetHideCursorDuringCapture(true);
+                InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
                 StrongThis->SetInputMode(InputMode);
-                StrongThis->bShowMouseCursor = false;
+                StrongThis->bShowMouseCursor = true;
 
                 if (FSlateApplication::IsInitialized())
                 {
@@ -837,6 +824,8 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
                         FSlateApplication::Get().SetUserFocusToGameViewport(LocalPlayer->GetControllerId());
                     }
                 }
+
+                StrongThis->bIsClosingUI = false;
             }
         });
     }

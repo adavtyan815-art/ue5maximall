@@ -282,4 +282,7 @@ private:
     /** Weak pointer to the currently hovered interactable component for highlight feedback. */
     UPROPERTY()
     TWeakObjectPtr<UPrimitiveComponent> HoveredComponent;
+
+    /** Flag to prevent race-condition re-triggering of interactions in the same frame as closing the UI. */
+    bool bIsClosingUI = false;
 };

@@ -70,6 +70,7 @@ public:
     // ── Lifecycle ─────────────────────────────────────────────────────────
 
     virtual void BeginPlay() override;
+    virtual void PostInitializeComponents() override;
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
     virtual void OnConstruction(const FTransform& Transform) override;
 
@@ -386,18 +387,18 @@ private:
      * Stores the baseline (editor-established) relative transforms of all
      * six components, captured in BeginPlay or OnConstruction before any runtime change occurs.
      */
-    UPROPERTY()
+    UPROPERTY(Transient)
     FTransform BaselineSinkTransform;
 
-    UPROPERTY()
+    UPROPERTY(Transient)
     FTransform BaselineFaucetTransform;
 
-    UPROPERTY()
+    UPROPERTY(Transient)
     FTransform BaselineDoor0Transform;
 
-    UPROPERTY()
+    UPROPERTY(Transient)
     FTransform BaselineDoor1Transform;
 
-    UPROPERTY()
+    UPROPERTY(Transient)
     bool bBaselineTransformsCaptured;
 };
