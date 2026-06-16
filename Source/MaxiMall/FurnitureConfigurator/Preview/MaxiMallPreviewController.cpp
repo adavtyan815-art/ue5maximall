@@ -3,6 +3,7 @@
 
 #include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
 
+#include "Engine/Engine.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
 #include "Engine/World.h"
@@ -42,14 +43,6 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
 void AMaxiMallPreviewController::BeginPlay()
 {
     Super::BeginPlay();
-
-    // Ensure we start in Game Only input mode with mouse cursor hidden for the local player controller
-    if (IsLocalController())
-    {
-        FInputModeGameOnly InputMode;
-        SetInputMode(InputMode);
-        bShowMouseCursor = false;
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -151,59 +144,9 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     // ── 4. Load the product snapshot into the preview actor ───────────────
     ActivePreviewActor->LoadProductPreview(ProductSnapshot, TargetBooth->ActiveState, TargetBooth);
 
-    // Apply component-level visibility isolation inside the preview viewport
+    // Focus camera orbit on the isolated component
     if (CurrentTargetComponent != EFurnitureComponentType::None)
     {
-        // Hide all meshes by default
-        if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
-        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(false);
-        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(false);
-        if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(false);
-        if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(false);
-        if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
-        if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
-        if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
-
-        // Show only the selected component mesh
-        switch (CurrentTargetComponent)
-        {
-        case EFurnitureComponentType::Cabinet:
-            if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
-            break;
-        case EFurnitureComponentType::Closet:
-            if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
-            break;
-        case EFurnitureComponentType::Doors:
-            if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
-            {
-                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-            }
-            else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
-            {
-                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
-            }
-            break;
-        case EFurnitureComponentType::Countertop:
-            if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
-            break;
-        case EFurnitureComponentType::Sink:
-            if (ProductSnapshot.CountertopType == ECountertopType::SurfaceMounted)
-            {
-                if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
-            }
-            break;
-        case EFurnitureComponentType::Faucet:
-            if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(true);
-            break;
-        case EFurnitureComponentType::Mirror:
-            if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(true);
-            break;
-        default:
-            break;
-        }
-
-        // Focus camera orbit on the isolated component
         ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);
     }
 
@@ -494,59 +437,9 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
         {
             ActivePreviewActor->LoadProductPreview(ProductSnapshot, Booth->ActiveState, Booth);
 
-            // Maintain component visibility isolation if active
+            // Maintain camera focus on the isolated component
             if (CurrentTargetComponent != EFurnitureComponentType::None)
             {
-                // Hide all meshes by default
-                if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
-                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(false);
-                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(false);
-                if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(false);
-                if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(false);
-                if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
-                if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
-                if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
-
-                // Show only the selected component mesh
-                switch (CurrentTargetComponent)
-                {
-                case EFurnitureComponentType::Cabinet:
-                    if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
-                    break;
-                case EFurnitureComponentType::Closet:
-                    if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
-                    break;
-                case EFurnitureComponentType::Doors:
-                    if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
-                    {
-                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-                    }
-                    else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
-                    {
-                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-                        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
-                    }
-                    break;
-                case EFurnitureComponentType::Countertop:
-                    if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
-                    break;
-                case EFurnitureComponentType::Sink:
-                    if (ProductSnapshot.CountertopType == ECountertopType::SurfaceMounted)
-                    {
-                        if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
-                    }
-                    break;
-                case EFurnitureComponentType::Faucet:
-                    if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(true);
-                    break;
-                case EFurnitureComponentType::Mirror:
-                    if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(true);
-                    break;
-                default:
-                    break;
-                }
-
-                // Focus camera orbit on the isolated component
                 ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);
             }
         }
@@ -565,6 +458,13 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
 
 void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen)
 {
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Cyan, FString::Printf(TEXT("ToggleConfiguratorUI entry. Local: %s, bOpen: %s"), 
+            IsLocalController() ? TEXT("Yes") : TEXT("No"), 
+            bOpen ? TEXT("True") : TEXT("False")));
+    }
+
     if (!IsLocalController())
     {
         return;
@@ -573,6 +473,17 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
     if (bOpen)
     {
         if (!Booth) return;
+
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Yellow, FString::Printf(TEXT("ToggleConfiguratorUI: MainWidgetClass: %s"), 
+                MainWidgetClass ? *MainWidgetClass->GetName() : TEXT("Null")));
+        }
+
+        if (!MainWidgetClass)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[PreviewController] ToggleConfiguratorUI failed: MainWidgetClass is null! Please configure MainWidgetClass in your Player Controller defaults."));
+        }
 
         // If another configuration widget is open on a different booth, close it first
         if (MainWidgetInstance && CurrentTargetBooth && CurrentTargetBooth != Booth)
@@ -589,6 +500,11 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         if (!MainWidgetInstance && MainWidgetClass)
         {
             MainWidgetInstance = CreateWidget<UUserWidget>(this, MainWidgetClass);
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Green, FString::Printf(TEXT("Created MainWidgetInstance: %s"), 
+                    MainWidgetInstance ? TEXT("Success") : TEXT("Failed")));
+            }
         }
 
         if (MainWidgetInstance)
@@ -598,10 +514,28 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
             {
                 MainWidget->SetupWidget(this, Booth, Component);
             }
+            else
+            {
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red, TEXT("Failed to Cast MainWidgetInstance to UConfiguratorMainWidget!"));
+                }
+            }
 
             if (!MainWidgetInstance->IsInViewport())
             {
                 MainWidgetInstance->AddToViewport();
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Green, TEXT("Added MainWidgetInstance to Viewport!"));
+                }
+            }
+            else
+            {
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Orange, TEXT("MainWidgetInstance was already in Viewport!"));
+                }
             }
 
             FInputModeGameAndUI InputMode;
@@ -609,6 +543,14 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
             InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
             SetInputMode(InputMode);
             bShowMouseCursor = true;
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("[PreviewController] ToggleConfiguratorUI failed: MainWidgetInstance could not be created/found."));
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red, TEXT("ToggleConfiguratorUI failed: MainWidgetInstance is Null!"));
+            }
         }
     }
     else

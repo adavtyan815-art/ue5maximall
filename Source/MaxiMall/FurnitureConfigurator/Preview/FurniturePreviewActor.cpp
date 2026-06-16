@@ -100,8 +100,8 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // Lock auto-exposure on the camera by default to prevent transition flashes (customizable in BP details)
     Camera->PostProcessSettings.bOverride_AutoExposureMinBrightness = true;
     Camera->PostProcessSettings.bOverride_AutoExposureMaxBrightness = true;
-    Camera->PostProcessSettings.AutoExposureMinBrightness = 3.0f;
-    Camera->PostProcessSettings.AutoExposureMaxBrightness = 3.0f;
+    Camera->PostProcessSettings.AutoExposureMinBrightness = 1.0f;
+    Camera->PostProcessSettings.AutoExposureMaxBrightness = 1.0f;
 
     // ── Studio Backdrop ───────────────────────────────────────────────────
     BackdropMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BackdropMesh"));
@@ -179,57 +179,97 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Cabinet ───────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetOptions, ActiveState.CabinetState);
+    if (!SourceBooth || (SourceBooth->MainCabinet && SourceBooth->MainCabinet->GetStaticMesh() != nullptr))
+    {
+        ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetOptions, ActiveState.CabinetState);
+    }
+    else
+    {
+        CabinetMesh->SetStaticMesh(nullptr);
+        CabinetMesh->SetVisibility(false);
+        CabinetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
 
     // ── Closet ────────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ProductData.ClosetOptions, ActiveState.ClosetState);
+    if (!SourceBooth || (SourceBooth->ClosetMesh && SourceBooth->ClosetMesh->GetStaticMesh() != nullptr))
+    {
+        ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ProductData.ClosetOptions, ActiveState.ClosetState);
+    }
+    else
+    {
+        ClosetMesh->SetStaticMesh(nullptr);
+        ClosetMesh->SetVisibility(false);
+        ClosetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
 
     // ── Doors ─────────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(DoorMeshSlot0.Get(), ProductData.DoorOptions, ActiveState.DoorState);
-    ApplyComponentMeshAndMaterials(DoorMeshSlot1.Get(), ProductData.DoorOptions, ActiveState.DoorState);
-
-    switch (ProductData.DoorCount)
+    if (!SourceBooth || (SourceBooth->DoorMeshSlot0 && SourceBooth->DoorMeshSlot0->GetStaticMesh() != nullptr))
     {
-    case EDoorCount::NoDoors:
+        ApplyComponentMeshAndMaterials(DoorMeshSlot0.Get(), ProductData.DoorOptions, ActiveState.DoorState);
+        ApplyComponentMeshAndMaterials(DoorMeshSlot1.Get(), ProductData.DoorOptions, ActiveState.DoorState);
+
+        switch (ProductData.DoorCount)
+        {
+        case EDoorCount::NoDoors:
+            DoorMeshSlot0->SetVisibility(false);
+            DoorMeshSlot1->SetVisibility(false);
+            break;
+        case EDoorCount::OneDoor:
+            if (DoorMeshSlot0->GetStaticMesh())
+            {
+                DoorMeshSlot0->SetVisibility(true);
+            }
+            if (ProductData.DoorSlots.IsValidIndex(0))
+            {
+                DoorMeshSlot0->SetRelativeLocation(ProductData.DoorSlots[0].ClosedPositionOffset);
+            }
+            DoorMeshSlot1->SetVisibility(false);
+            break;
+        case EDoorCount::TwoDoors:
+            if (DoorMeshSlot0->GetStaticMesh())
+            {
+                DoorMeshSlot0->SetVisibility(true);
+            }
+            if (ProductData.DoorSlots.IsValidIndex(0))
+            {
+                DoorMeshSlot0->SetRelativeLocation(ProductData.DoorSlots[0].ClosedPositionOffset);
+            }
+            if (DoorMeshSlot1->GetStaticMesh())
+            {
+                DoorMeshSlot1->SetVisibility(true);
+            }
+            if (ProductData.DoorSlots.IsValidIndex(1))
+            {
+                DoorMeshSlot1->SetRelativeLocation(ProductData.DoorSlots[1].ClosedPositionOffset);
+            }
+            break;
+        }
+    }
+    else
+    {
+        DoorMeshSlot0->SetStaticMesh(nullptr);
         DoorMeshSlot0->SetVisibility(false);
+        DoorMeshSlot0->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        DoorMeshSlot1->SetStaticMesh(nullptr);
         DoorMeshSlot1->SetVisibility(false);
-        break;
-    case EDoorCount::OneDoor:
-        if (DoorMeshSlot0->GetStaticMesh())
-        {
-            DoorMeshSlot0->SetVisibility(true);
-        }
-        if (ProductData.DoorSlots.IsValidIndex(0))
-        {
-            DoorMeshSlot0->SetRelativeLocation(ProductData.DoorSlots[0].ClosedPositionOffset);
-        }
-        DoorMeshSlot1->SetVisibility(false);
-        break;
-    case EDoorCount::TwoDoors:
-        if (DoorMeshSlot0->GetStaticMesh())
-        {
-            DoorMeshSlot0->SetVisibility(true);
-        }
-        if (ProductData.DoorSlots.IsValidIndex(0))
-        {
-            DoorMeshSlot0->SetRelativeLocation(ProductData.DoorSlots[0].ClosedPositionOffset);
-        }
-        if (DoorMeshSlot1->GetStaticMesh())
-        {
-            DoorMeshSlot1->SetVisibility(true);
-        }
-        if (ProductData.DoorSlots.IsValidIndex(1))
-        {
-            DoorMeshSlot1->SetRelativeLocation(ProductData.DoorSlots[1].ClosedPositionOffset);
-        }
-        break;
+        DoorMeshSlot1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
     // ── Countertop ────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ProductData.CountertopOptions, ActiveState.CountertopState);
+    if (!SourceBooth || (SourceBooth->CountertopMesh && SourceBooth->CountertopMesh->GetStaticMesh() != nullptr))
+    {
+        ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ProductData.CountertopOptions, ActiveState.CountertopState);
+    }
+    else
+    {
+        CountertopMesh->SetStaticMesh(nullptr);
+        CountertopMesh->SetVisibility(false);
+        CountertopMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
 
     // ── Sink ──────────────────────────────────────────────────────────────
-    if (ProductData.CountertopType == ECountertopType::SurfaceMounted)
+    if (ProductData.CountertopType == ECountertopType::SurfaceMounted && 
+        (!SourceBooth || (SourceBooth->SinkMesh && SourceBooth->SinkMesh->GetStaticMesh() != nullptr)))
     {
         ApplyComponentMeshAndMaterials(SinkMesh.Get(), ProductData.SinkOptions, ActiveState.SinkState);
 
@@ -251,21 +291,39 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Faucet ────────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ProductData.FaucetOptions, ActiveState.FaucetState);
+    if (!SourceBooth || (SourceBooth->FaucetMesh && SourceBooth->FaucetMesh->GetStaticMesh() != nullptr))
     {
-        const FFaucetPlacementOffset& FO = ProductData.FaucetOffset;
-        FTransform ProductDelta;
-        ProductDelta.SetLocation(FO.RelativeLocation);
-        ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
-        ProductDelta.SetScale3D(FO.RelativeScale);
+        ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ProductData.FaucetOptions, ActiveState.FaucetState);
+        {
+            const FFaucetPlacementOffset& FO = ProductData.FaucetOffset;
+            FTransform ProductDelta;
+            ProductDelta.SetLocation(FO.RelativeLocation);
+            ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
+            ProductDelta.SetScale3D(FO.RelativeScale);
 
-        const FTransform BaselineFaucet = SourceBooth ? SourceBooth->GetBaselineFaucetTransform() : FTransform::Identity;
-        const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucet;
-        FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+            const FTransform BaselineFaucet = SourceBooth ? SourceBooth->GetBaselineFaucetTransform() : FTransform::Identity;
+            const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucet;
+            FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+        }
+    }
+    else
+    {
+        FaucetMesh->SetStaticMesh(nullptr);
+        FaucetMesh->SetVisibility(false);
+        FaucetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
     // ── Mirror ────────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ProductData.MirrorOptions, ActiveState.MirrorState);
+    if (!SourceBooth || (SourceBooth->MirrorMesh && SourceBooth->MirrorMesh->GetStaticMesh() != nullptr))
+    {
+        ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ProductData.MirrorOptions, ActiveState.MirrorState);
+    }
+    else
+    {
+        MirrorMesh->SetStaticMesh(nullptr);
+        MirrorMesh->SetVisibility(false);
+        MirrorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
 }
 
 void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType ComponentType)

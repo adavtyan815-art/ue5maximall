@@ -11,47 +11,107 @@ void UConfiguratorMainWidget::NativeConstruct()
 {
     Super::NativeConstruct();
 
-    // Bind strict buttons
+    // Bind strict buttons (clear existing bindings first to prevent double-binding ensures on reconstruction)
     if (Btn_Viewmode)
     {
+        Btn_Viewmode->OnClicked.RemoveAll(this);
         Btn_Viewmode->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnViewmodeClicked);
     }
     if (Btn_CloseUI)
     {
+        Btn_CloseUI->OnClicked.RemoveAll(this);
         Btn_CloseUI->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnCloseUIClicked);
     }
 
     // Bind active component combo selectors
     if (Combo_Size)
     {
+        Combo_Size->OnSelectionChanged.RemoveAll(this);
         Combo_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnSizeSelected);
     }
     if (Combo_Color)
     {
+        Combo_Color->OnSelectionChanged.RemoveAll(this);
         Combo_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnColorSelected);
     }
 
     // Bind specific component combo selectors (optional layout table)
-    if (Combo_Cabinet_Size) Combo_Cabinet_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnCabinetSizeChanged);
-    if (Combo_Cabinet_Color) Combo_Cabinet_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnCabinetColorChanged);
+    if (Combo_Cabinet_Size)
+    {
+        Combo_Cabinet_Size->OnSelectionChanged.RemoveAll(this);
+        Combo_Cabinet_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnCabinetSizeChanged);
+    }
+    if (Combo_Cabinet_Color)
+    {
+        Combo_Cabinet_Color->OnSelectionChanged.RemoveAll(this);
+        Combo_Cabinet_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnCabinetColorChanged);
+    }
 
-    if (Combo_Closet_Size) Combo_Closet_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnClosetSizeChanged);
-    if (Combo_Closet_Color) Combo_Closet_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnClosetColorChanged);
+    if (Combo_Closet_Size)
+    {
+        Combo_Closet_Size->OnSelectionChanged.RemoveAll(this);
+        Combo_Closet_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnClosetSizeChanged);
+    }
+    if (Combo_Closet_Color)
+    {
+        Combo_Closet_Color->OnSelectionChanged.RemoveAll(this);
+        Combo_Closet_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnClosetColorChanged);
+    }
 
-    if (Combo_Doors_Size) Combo_Doors_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnDoorsSizeChanged);
-    if (Combo_Doors_Color) Combo_Doors_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnDoorsColorChanged);
+    if (Combo_Doors_Size)
+    {
+        Combo_Doors_Size->OnSelectionChanged.RemoveAll(this);
+        Combo_Doors_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnDoorsSizeChanged);
+    }
+    if (Combo_Doors_Color)
+    {
+        Combo_Doors_Color->OnSelectionChanged.RemoveAll(this);
+        Combo_Doors_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnDoorsColorChanged);
+    }
 
-    if (Combo_Countertop_Size) Combo_Countertop_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnCountertopSizeChanged);
-    if (Combo_Countertop_Color) Combo_Countertop_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnCountertopColorChanged);
+    if (Combo_Countertop_Size)
+    {
+        Combo_Countertop_Size->OnSelectionChanged.RemoveAll(this);
+        Combo_Countertop_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnCountertopSizeChanged);
+    }
+    if (Combo_Countertop_Color)
+    {
+        Combo_Countertop_Color->OnSelectionChanged.RemoveAll(this);
+        Combo_Countertop_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnCountertopColorChanged);
+    }
 
-    if (Combo_Sink_Size) Combo_Sink_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnSinkSizeChanged);
-    if (Combo_Sink_Color) Combo_Sink_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnSinkColorChanged);
+    if (Combo_Sink_Size)
+    {
+        Combo_Sink_Size->OnSelectionChanged.RemoveAll(this);
+        Combo_Sink_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnSinkSizeChanged);
+    }
+    if (Combo_Sink_Color)
+    {
+        Combo_Sink_Color->OnSelectionChanged.RemoveAll(this);
+        Combo_Sink_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnSinkColorChanged);
+    }
 
-    if (Combo_Faucet_Size) Combo_Faucet_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnFaucetSizeChanged);
-    if (Combo_Faucet_Color) Combo_Faucet_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnFaucetColorChanged);
+    if (Combo_Faucet_Size)
+    {
+        Combo_Faucet_Size->OnSelectionChanged.RemoveAll(this);
+        Combo_Faucet_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnFaucetSizeChanged);
+    }
+    if (Combo_Faucet_Color)
+    {
+        Combo_Faucet_Color->OnSelectionChanged.RemoveAll(this);
+        Combo_Faucet_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnFaucetColorChanged);
+    }
 
-    if (Combo_Mirror_Size) Combo_Mirror_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnMirrorSizeChanged);
-    if (Combo_Mirror_Color) Combo_Mirror_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnMirrorColorChanged);
+    if (Combo_Mirror_Size)
+    {
+        Combo_Mirror_Size->OnSelectionChanged.RemoveAll(this);
+        Combo_Mirror_Size->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnMirrorSizeChanged);
+    }
+    if (Combo_Mirror_Color)
+    {
+        Combo_Mirror_Color->OnSelectionChanged.RemoveAll(this);
+        Combo_Mirror_Color->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnMirrorColorChanged);
+    }
 }
 
 void UConfiguratorMainWidget::SetupWidget(AMaxiMallPreviewController* InPC, AShowroomBooth* InBooth, EFurnitureComponentType InComponent)

@@ -10,6 +10,7 @@ void UViewmodeOverlayWidget::NativeConstruct()
 
     if (Btn_Back)
     {
+        Btn_Back->OnClicked.RemoveAll(this);
         Btn_Back->OnClicked.AddDynamic(this, &UViewmodeOverlayWidget::OnBackClicked);
     }
 }
