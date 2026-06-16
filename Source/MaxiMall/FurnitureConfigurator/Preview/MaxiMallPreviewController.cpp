@@ -257,12 +257,11 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
     // Restore visibility of all showroom booths in the level for the local player locally
     HiddenActors.Empty();
 
+    AShowroomBooth* PreviousBooth = CurrentTargetBooth;
     if (CurrentTargetBooth)
     {
         CurrentTargetBooth->OnProductChanged.RemoveAll(this);
-        CurrentTargetBooth = nullptr;
     }
-    CurrentTargetComponent = EFurnitureComponentType::None;
 
     if (!ActivePreviewActor)
     {
@@ -286,8 +285,12 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
         ViewmodeOverlayInstance->RemoveFromParent();
     }
 
-    if (CurrentTargetBooth && MainWidgetInstance)
+    if (PreviousBooth && MainWidgetInstance)
     {
+        CurrentTargetBooth = PreviousBooth;
+        // Re-bind the delegate since we removed it above
+        CurrentTargetBooth->OnProductChanged.AddUniqueDynamic(this, &AMaxiMallPreviewController::OnTargetBoothProductChanged);
+
         UConfiguratorMainWidget* MainWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance);
         if (MainWidget)
         {
@@ -306,6 +309,9 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
     }
     else
     {
+        CurrentTargetBooth = nullptr;
+        CurrentTargetComponent = EFurnitureComponentType::None;
+
         // Restore the control rotation to prevent rotation drift on exit
         SetControlRotation(SavedControlRotation);
 
@@ -577,6 +583,9 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         CurrentTargetBooth = Booth;
         CurrentTargetComponent = Component;
 
+        // Listen for booth configuration updates dynamically while UI is open
+        CurrentTargetBooth->OnProductChanged.AddUniqueDynamic(this, &AMaxiMallPreviewController::OnTargetBoothProductChanged);
+
         if (!MainWidgetInstance && MainWidgetClass)
         {
             MainWidgetInstance = CreateWidget<UUserWidget>(this, MainWidgetClass);
@@ -614,6 +623,10 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
             ViewmodeOverlayInstance->RemoveFromParent();
         }
 
+        if (CurrentTargetBooth)
+        {
+            CurrentTargetBooth->OnProductChanged.RemoveAll(this);
+        }
         CurrentTargetBooth = nullptr;
         CurrentTargetComponent = EFurnitureComponentType::None;
 
