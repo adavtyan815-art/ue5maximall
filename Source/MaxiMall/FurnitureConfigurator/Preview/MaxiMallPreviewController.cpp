@@ -436,16 +436,10 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
 
                 if (FSlateApplication::IsInitialized())
                 {
-                    FSlateApplication::Get().ReleaseAllPointerCapture();
                     ULocalPlayer* LocalPlayer = StrongThis->GetLocalPlayer();
-                    if (LocalPlayer && LocalPlayer->ViewportClient)
+                    if (LocalPlayer)
                     {
-                        TSharedPtr<SViewport> GameViewportWidget = LocalPlayer->ViewportClient->GetGameViewportWidget();
-                        if (GameViewportWidget.IsValid())
-                        {
-                            FSlateApplication::Get().SetUserFocus(LocalPlayer->GetControllerId(), GameViewportWidget.ToSharedRef());
-                            FSlateApplication::Get().SetKeyboardFocus(GameViewportWidget.ToSharedRef());
-                        }
+                        FSlateApplication::Get().SetUserFocusToGameViewport(LocalPlayer->GetControllerId());
                     }
                 }
             }
@@ -837,16 +831,10 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
 
                 if (FSlateApplication::IsInitialized())
                 {
-                    FSlateApplication::Get().ReleaseAllPointerCapture();
                     ULocalPlayer* LocalPlayer = StrongThis->GetLocalPlayer();
-                    if (LocalPlayer && LocalPlayer->ViewportClient)
+                    if (LocalPlayer)
                     {
-                        TSharedPtr<SViewport> GameViewportWidget = LocalPlayer->ViewportClient->GetGameViewportWidget();
-                        if (GameViewportWidget.IsValid())
-                        {
-                            FSlateApplication::Get().SetUserFocus(LocalPlayer->GetControllerId(), GameViewportWidget.ToSharedRef());
-                            FSlateApplication::Get().SetKeyboardFocus(GameViewportWidget.ToSharedRef());
-                        }
+                        FSlateApplication::Get().SetUserFocusToGameViewport(LocalPlayer->GetControllerId());
                     }
                 }
             }

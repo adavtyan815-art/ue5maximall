@@ -364,6 +364,11 @@ protected:
     void RecalculateDependentTransforms(const FFurnitureProductRow& Data);
 
     /**
+     * Safely captures baseline transforms on demand (resolves client race conditions).
+     */
+    void EnsureBaselineTransformsCaptured();
+
+    /**
      * Initializes DoorStates array to exactly 2 entries on BeginPlay.
      * Entries default to EDoorSlotState::NotPresent until a product is applied.
      */

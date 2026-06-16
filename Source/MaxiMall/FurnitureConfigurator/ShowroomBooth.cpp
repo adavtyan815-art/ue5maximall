@@ -73,27 +73,13 @@ AShowroomBooth::AShowroomBooth()
 
 void AShowroomBooth::BeginPlay()
 {
+    // Force recapture in game world to lock in the starting level layout
+    bBaselineTransformsCaptured = false;
+
     Super::BeginPlay();
 
-    // ── 1. Capture baseline transforms (editor-established layout) ─────────
-    //    Always capture these on BeginPlay to ensure we use the actual editor-placed transforms as baseline
-    if (SinkMesh)
-    {
-        BaselineSinkTransform = SinkMesh->GetRelativeTransform();
-    }
-    if (FaucetMesh)
-    {
-        BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
-    }
-    if (DoorMeshSlot0)
-    {
-        BaselineDoor0Transform = DoorMeshSlot0->GetRelativeTransform();
-    }
-    if (DoorMeshSlot1)
-    {
-        BaselineDoor1Transform = DoorMeshSlot1->GetRelativeTransform();
-    }
-    bBaselineTransformsCaptured = true;
+    // Ensure baseline transforms are captured from the starting level editor state
+    EnsureBaselineTransformsCaptured();
 
     // ── 2. Initialize the door state array (guarantee 2 entries) ──────────
     InitializeDoorStateArray();
@@ -120,6 +106,50 @@ void AShowroomBooth::BeginPlay()
     }
 }
 
+void AShowroomBooth::EnsureBaselineTransformsCaptured()
+{
+    // In game world, if already captured, do not recapture
+    if (bBaselineTransformsCaptured && GetWorld() && GetWorld()->IsGameWorld())
+    {
+        return;
+    }
+
+    if (SinkMesh)
+    {
+        BaselineSinkTransform = SinkMesh->GetRelativeTransform();
+    }
+    if (FaucetMesh)
+    {
+        BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
+    }
+    if (DoorMeshSlot0)
+    {
+        BaselineDoor0Transform = DoorMeshSlot0->GetRelativeTransform();
+    }
+    if (DoorMeshSlot1)
+    {
+        BaselineDoor1Transform = DoorMeshSlot1->GetRelativeTransform();
+    }
+    bBaselineTransformsCaptured = true;
+
+    UE_LOG(LogTemp, Log, TEXT("[ShowroomBooth] '%s' captured baseline transforms: Sink(%s), Faucet(%s), Door0(%s), Door1(%s)"),
+        *GetName(),
+        *BaselineSinkTransform.GetLocation().ToString(),
+        *BaselineFaucetTransform.GetLocation().ToString(),
+        *BaselineDoor0Transform.GetLocation().ToString(),
+        *BaselineDoor1Transform.GetLocation().ToString());
+
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Green, FString::Printf(TEXT("[ShowroomBooth] '%s' captured baselines: Sink(%s), Faucet(%s), Door0(%s), Door1(%s)"),
+            *GetName(),
+            *BaselineSinkTransform.GetLocation().ToString(),
+            *BaselineFaucetTransform.GetLocation().ToString(),
+            *BaselineDoor0Transform.GetLocation().ToString(),
+            *BaselineDoor1Transform.GetLocation().ToString()));
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // OnConstruction & InitializeDefaultBooth
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,24 +161,7 @@ void AShowroomBooth::OnConstruction(const FTransform& Transform)
     // Only run editor-side visualization and baseline capturing in the editor viewport (not in game/PIE)
     if (GetWorld() && !GetWorld()->IsGameWorld())
     {
-        if (SinkMesh)
-        {
-            BaselineSinkTransform = SinkMesh->GetRelativeTransform();
-        }
-        if (FaucetMesh)
-        {
-            BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
-        }
-        if (DoorMeshSlot0)
-        {
-            BaselineDoor0Transform = DoorMeshSlot0->GetRelativeTransform();
-        }
-        if (DoorMeshSlot1)
-        {
-            BaselineDoor1Transform = DoorMeshSlot1->GetRelativeTransform();
-        }
-        bBaselineTransformsCaptured = true;
-
+        EnsureBaselineTransformsCaptured();
         InitializeDefaultBooth();
     }
 }
@@ -477,6 +490,8 @@ void AShowroomBooth::OnRep_DoorStates()
 
 void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
 {
+    EnsureBaselineTransformsCaptured();
+
     // ── 1. Cabinet ────────────────────────────────────────────────────────
     ApplyComponentMeshAndMaterials(MainCabinet.Get(), Data.CabinetOptions, ActiveState.CabinetState);
 
@@ -676,6 +691,12 @@ void AShowroomBooth::ApplyDoorSlotVisual(UStaticMeshComponent* Slot,
         BaselineTransform.SetScale3D(FVector::OneVector);
     }
 
+    if (GetWorld() && !GetWorld()->IsGameWorld())
+    {
+        // In the editor, do not proceduralize transforms so we do not break native editor overrides
+        return;
+    }
+
     FVector TargetLocation = BaselineTransform.GetLocation();
 
     // Compute the open/closed rotation.
@@ -685,6 +706,21 @@ void AShowroomBooth::ApplyDoorSlotVisual(UStaticMeshComponent* Slot,
 
     Slot->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
     Slot->SetRelativeScale3D(BaselineTransform.GetScale3D());
+
+    UE_LOG(LogTemp, Log, TEXT("[ShowroomBooth] '%s' ApplyDoorSlotVisual Slot(%s) State(%d) -> Loc(%s) Rot(%s) Scale(%s) [BaselineLoc: %s]"),
+        *GetName(),
+        *Slot->GetName(),
+        (int32)State,
+        *TargetLocation.ToString(),
+        *TargetRotation.ToString(),
+        *BaselineTransform.GetScale3D().ToString(),
+        *BaselineTransform.GetLocation().ToString());
+
+    if (GEngine && GetWorld() && GetWorld()->IsGameWorld())
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Yellow, FString::Printf(TEXT("[ShowroomBooth] '%s' Applied Door (%s): Loc(%s) Baseline(%s)"),
+            *GetName(), *Slot->GetName(), *TargetLocation.ToString(), *BaselineTransform.GetLocation().ToString()));
+    }
 }
 
 void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& Data)
@@ -692,51 +728,64 @@ void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& 
     // All transforms are expressed in CountertopMesh local space so they
     // stay correct regardless of how the designer positioned the countertop.
 
-    // ── Sink ──────────────────────────────────────────────────────────────
-    if (SinkMesh)
+    if (GetWorld() && !GetWorld()->IsGameWorld())
     {
-        if (GetWorld() && !GetWorld()->IsGameWorld())
-        {
-            // In the editor, keep the mesh at its baseline (placed) transform
-            SinkMesh->SetRelativeTransform(BaselineSinkTransform);
-        }
-        else if (Data.CountertopType == ECountertopType::SurfaceMounted)
-        {
-            // Build the target relative transform from the product data offset.
-            // The baseline transform is the editor-placed starting position;
-            // the product offset is a DELTA on top of it for fitting variation.
-            const FSinkPlacementOffset& SO = Data.SinkOffset;
+        // In the editor, do not proceduralize transforms so we do not break native editor overrides
+        return;
+    }
 
-            FTransform ProductDelta;
-            ProductDelta.SetLocation(SO.RelativeLocation);
-            ProductDelta.SetRotation(SO.RelativeRotation.Quaternion());
-            ProductDelta.SetScale3D(SO.RelativeScale);
+    // ── Sink ──────────────────────────────────────────────────────────────
+    if (SinkMesh && Data.CountertopType == ECountertopType::SurfaceMounted)
+    {
+        const FSinkPlacementOffset& SO = Data.SinkOffset;
 
-            // Combine: editor baseline + product-specific delta.
-            const FTransform FinalSinkTransform = ProductDelta * BaselineSinkTransform;
-            SinkMesh->SetRelativeTransform(FinalSinkTransform);
+        FTransform ProductDelta;
+        ProductDelta.SetLocation(SO.RelativeLocation);
+        ProductDelta.SetRotation(SO.RelativeRotation.Quaternion());
+        ProductDelta.SetScale3D(SO.RelativeScale);
+
+        // Combine: editor baseline + product-specific delta.
+        const FTransform FinalSinkTransform = ProductDelta * BaselineSinkTransform;
+        SinkMesh->SetRelativeTransform(FinalSinkTransform);
+
+        UE_LOG(LogTemp, Log, TEXT("[ShowroomBooth] '%s' RecalculateDependentTransforms Sink -> Loc(%s) Rot(%s) Scale(%s) [BaselineLoc: %s]"),
+            *GetName(),
+            *FinalSinkTransform.GetLocation().ToString(),
+            *FinalSinkTransform.Rotator().ToString(),
+            *FinalSinkTransform.GetScale3D().ToString(),
+            *BaselineSinkTransform.GetLocation().ToString());
+
+        if (GEngine && GetWorld() && GetWorld()->IsGameWorld())
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Yellow, FString::Printf(TEXT("[ShowroomBooth] '%s' Applied Sink: Loc(%s) Baseline(%s)"),
+                *GetName(), *FinalSinkTransform.GetLocation().ToString(), *BaselineSinkTransform.GetLocation().ToString()));
         }
     }
 
     // ── Faucet ────────────────────────────────────────────────────────────
     if (FaucetMesh)
     {
-        if (GetWorld() && !GetWorld()->IsGameWorld())
-        {
-            // In the editor, keep the mesh at its baseline (placed) transform
-            FaucetMesh->SetRelativeTransform(BaselineFaucetTransform);
-        }
-        else
-        {
-            const FFaucetPlacementOffset& FO = Data.FaucetOffset;
+        const FFaucetPlacementOffset& FO = Data.FaucetOffset;
 
-            FTransform ProductDelta;
-            ProductDelta.SetLocation(FO.RelativeLocation);
-            ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
-            ProductDelta.SetScale3D(FO.RelativeScale);
+        FTransform ProductDelta;
+        ProductDelta.SetLocation(FO.RelativeLocation);
+        ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
+        ProductDelta.SetScale3D(FO.RelativeScale);
 
-            const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucetTransform;
-            FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+        const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucetTransform;
+        FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+
+        UE_LOG(LogTemp, Log, TEXT("[ShowroomBooth] '%s' RecalculateDependentTransforms Faucet -> Loc(%s) Rot(%s) Scale(%s) [BaselineLoc: %s]"),
+            *GetName(),
+            *FinalFaucetTransform.GetLocation().ToString(),
+            *FinalFaucetTransform.Rotator().ToString(),
+            *FinalFaucetTransform.GetScale3D().ToString(),
+            *BaselineFaucetTransform.GetLocation().ToString());
+
+        if (GEngine && GetWorld() && GetWorld()->IsGameWorld())
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Yellow, FString::Printf(TEXT("[ShowroomBooth] '%s' Applied Faucet: Loc(%s) Baseline(%s)"),
+                *GetName(), *FinalFaucetTransform.GetLocation().ToString(), *BaselineFaucetTransform.GetLocation().ToString()));
         }
     }
 }
