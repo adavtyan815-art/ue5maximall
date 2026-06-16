@@ -7,6 +7,7 @@
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "Camera/CameraComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "EngineUtils.h"
@@ -340,17 +341,12 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     // ── 6. Fire the Blueprint hook so the widget can animate in ───────────
     OnPreviewOpened();
 }
-
 void AMaxiMallPreviewController::CloseFurniturePreview()
 {
     if (!IsLocalController())
     {
         return;
     }
-
-    // Restore character look/move inputs
-    SetIgnoreLookInput(false);
-    SetIgnoreMoveInput(false);
 
     // Restore visibility of all showroom booths in the level for the local player locally
     HiddenActors.Empty();
@@ -388,6 +384,10 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
 
     if (PreviousBooth && MainWidgetInstance)
     {
+        // Maintain ignore look/move inputs when returning to the main configurator UI
+        SetIgnoreLookInput(true);
+        SetIgnoreMoveInput(true);
+
         CurrentTargetBooth = PreviousBooth;
         // Re-bind the delegate since we removed it above
         CurrentTargetBooth->OnProductChanged.AddUniqueDynamic(this, &AMaxiMallPreviewController::OnTargetBoothProductChanged);
@@ -414,14 +414,27 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
         CurrentTargetBooth = nullptr;
         CurrentTargetComponent = EFurnitureComponentType::None;
 
-        FInputModeGameOnly InputMode;
-        SetInputMode(InputMode);
-        bShowMouseCursor = false;
-
-        if (FSlateApplication::IsInitialized())
+        // Defer input mode and focus restoration to the next tick to prevent Slate capture stealing focus
+        TWeakObjectPtr<AMaxiMallPreviewController> WeakThis(this);
+        GetWorld()->GetTimerManager().SetTimerForNextTick([WeakThis]()
         {
-            FSlateApplication::Get().SetAllUserFocusToGameViewport();
-        }
+            if (AMaxiMallPreviewController* StrongThis = WeakThis.Get())
+            {
+                // Restore character look/move inputs
+                StrongThis->SetIgnoreLookInput(false);
+                StrongThis->SetIgnoreMoveInput(false);
+
+                FInputModeGameOnly InputMode;
+                StrongThis->SetInputMode(InputMode);
+                StrongThis->bShowMouseCursor = false;
+
+                if (FSlateApplication::IsInitialized())
+                {
+                    FSlateApplication::Get().ReleaseAllPointerCapture();
+                    FSlateApplication::Get().SetAllUserFocusToGameViewport();
+                }
+            }
+        });
     }
 
     // Destroy the local actor. This is a local operation — no RPC needed.
@@ -773,20 +786,6 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
     }
     else
     {
-        // Restore character look/move inputs
-        SetIgnoreLookInput(false);
-        SetIgnoreMoveInput(false);
-
-        if (MainWidgetInstance)
-        {
-            MainWidgetInstance->RemoveFromParent();
-        }
-
-        if (ViewmodeOverlayInstance)
-        {
-            ViewmodeOverlayInstance->RemoveFromParent();
-        }
-
         if (CurrentTargetBooth)
         {
             CurrentTargetBooth->OnProductChanged.RemoveAll(this);
@@ -794,13 +793,37 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         CurrentTargetBooth = nullptr;
         CurrentTargetComponent = EFurnitureComponentType::None;
 
-        FInputModeGameOnly InputMode;
-        SetInputMode(InputMode);
-        bShowMouseCursor = false;
-
-        if (FSlateApplication::IsInitialized())
+        // Defer input mode change, widget removal, and viewport focus restoration to next tick
+        // to prevent Slate mouse capture lockup when clicked from a button.
+        TWeakObjectPtr<AMaxiMallPreviewController> WeakThis(this);
+        GetWorld()->GetTimerManager().SetTimerForNextTick([WeakThis]()
         {
-            FSlateApplication::Get().SetAllUserFocusToGameViewport();
-        }
+            if (AMaxiMallPreviewController* StrongThis = WeakThis.Get())
+            {
+                // Restore character look/move inputs
+                StrongThis->SetIgnoreLookInput(false);
+                StrongThis->SetIgnoreMoveInput(false);
+
+                if (StrongThis->MainWidgetInstance)
+                {
+                    StrongThis->MainWidgetInstance->RemoveFromParent();
+                }
+
+                if (StrongThis->ViewmodeOverlayInstance)
+                {
+                    StrongThis->ViewmodeOverlayInstance->RemoveFromParent();
+                }
+
+                FInputModeGameOnly InputMode;
+                StrongThis->SetInputMode(InputMode);
+                StrongThis->bShowMouseCursor = false;
+
+                if (FSlateApplication::IsInitialized())
+                {
+                    FSlateApplication::Get().ReleaseAllPointerCapture();
+                    FSlateApplication::Get().SetAllUserFocusToGameViewport();
+                }
+            }
+        });
     }
 }
