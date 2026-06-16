@@ -1,79 +1,90 @@
 # Technical Reference: Setup, Configuration, and Testing Guide
 
-This document describes how to configure the Blueprint subclass, hook it up to the custom Player Controller, and verify the multi-user replication and camera orbit functionality at runtime.
+This document describes how to configure the Blueprint widgets, connect them to our Player Controller, and verify the multi-user replication, UI gating, and isolated Viewmode camera orbit functionality at runtime.
 
 ---
 
-## 1. Blueprint Subclassing & Registration
+## 1. Blueprint Subclassing & Widget Binding Reparenting
 
-To allow design-time adjustments to the camera limits, backdrop meshes, materials, and lighting intensities, you must create a Blueprint subclass of the C++ preview actor and configure it on the Player Controller:
+To eliminate manual Blueprint graph event wiring and property polling, you must reparent the Blueprint Widgets and register them with the custom Player Controller:
 
-### A. Create the Blueprint Subclass
-1. Open the Unreal Editor and navigate to the **Content Browser**.
-2. Right-click and choose **Blueprint Class**.
-3. Expand the **All Classes** section, search for `FurniturePreviewActor`, select it, and click **Select**.
-4. Name the new Blueprint asset `BP_FurniturePreviewActor`.
+### A. Reparent Widget Blueprints
+1. Locate your main configurator User Widget Blueprint (e.g. `WBP_PreviewWindow`) in the **Content Browser**.
+2. Double-click to open it. Go to **File** -> **Reparent Blueprint**.
+3. Choose `ConfiguratorMainWidget` as the new parent class.
+4. Reparent the Viewmode overlay User Widget Blueprint (e.g. `WBP_ViewmodeOverlay`) to `ViewmodeOverlayWidget`.
 
-### B. Configure Default Parameters
-Double-click `BP_FurniturePreviewActor` to open the Blueprint Editor and modify the following defaults in the **Details Panel**:
-* **Camera Clamping**:
-  - `PitchMin`: `-80.f` (prevent camera from flipping upside down under the model).
-  - `PitchMax`: `80.f` (prevent camera from flipping overhead).
-* **Isolated Lighting Defaults**:
-  - `BaseFillIntensity`: `40000.f` (starting headlight intensity in Lumens).
-  - `ReferenceZoomDistance`: `250.f` (the distance baseline for headlight distance compensation).
-* **Camera Post-Process Settings**:
-  - Select the **Camera** component in the components hierarchy.
-  - Locate **Post Process Settings** -> **Lens** -> **Exposure**.
-  - To prevent adaptation flashes/delays (the 1-second dimming behavior), verify that `Min EV100` and `Max EV100` are set to identical values (e.g. `10.0` or `12.0` depending on the desired brightness of the studio scene).
-  - *Note*: If you need to manually change exposure parameters, lock both min and max to the same value so that there is zero runtime adjustment delay.
+### B. Visual Component Naming (BindWidget Mapping)
+Verify that the visual components (buttons, combo boxes, text blocks) inside the designer match the C++ variable names **exactly** (case-sensitive) to bind automatically:
+* **`WBP_PreviewWindow` (inheriting from `UConfiguratorMainWidget`)**:
+  * `Txt_ProductName` (TextBlock)
+  * `Btn_Viewmode` (Button)
+  * `Btn_CloseUI` (Button)
+  * `Combo_Size` (ComboBoxString, optional)
+  * `Combo_Color` (ComboBoxString, optional)
+  * (Optional individual component combo boxes): `Combo_Cabinet_Size`, `Combo_Cabinet_Color`, `Combo_Closet_Size`, `Combo_Closet_Color`, etc.
+* **`WBP_ViewmodeOverlay` (inheriting from `UViewmodeOverlayWidget`)**:
+  * `Btn_Back` (Button)
 
-### C. Register in the Player Controller
+### C. Register Widgets in the Player Controller
 1. Find your project's custom player controller Blueprint, e.g., `BP_MaxiMallPlayerController` (which must subclass `AMaxiMallPreviewController`).
 2. Open it and navigate to the **Class Defaults**.
-3. Under the **MaxiMall | Preview Config** section, find the **Preview Actor Class** dropdown.
-4. Select `BP_FurniturePreviewActor`.
-5. Set the **Preview Staging Location** to `(0.0, 0.0, 10000.0)` or any location safe from main level visibility.
-6. (Optional) Set the **Backdrop Static Mesh** and **Backdrop Material** assets to configure the studio backdrop.
+3. Locate the **MaxiMall | UI Config** section.
+4. Assign:
+   * **Main Widget Class**: `WBP_PreviewWindow`
+   * **Viewmode Overlay Class**: `WBP_ViewmodeOverlay`
+5. Locate the **MaxiMall | Preview Config** section.
+6. Set:
+   * **Preview Actor Class**: `BP_FurniturePreviewActor`
+   * **Preview Staging Location**: `(0.0, 0.0, 10000.0)`
+   * **Backdrop Static Mesh** and **Backdrop Material** assets to configure the studio backdrop.
 
 ---
 
 ## 2. Runtime Verification & Test Scenarios
 
-Follow these scenarios to verify that the implementation is replication-safe and performs correctly under PIE (Play in Editor) multiplayer conditions.
+Follow these scenarios to verify that the implementation is replication-safe, handles dynamic layout gating correctly, and performs cleanly under PIE (Play in Editor) multiplayer conditions.
 
-### Scenario A: Multi-User Catalog Replication (Server/Client Sync)
-1. In the Editor, set the Play Mode to **Play In Editor (PIE)** with **Number of Players = 2** and Net Mode set to **Play as Listen Server** or **Play as Client**.
-2. Start the game.
-3. Walk Player 1 up to a `AShowroomBooth` actor in the level.
-4. Interact with the catalog menu and change the active product to a different ID.
-5. **Verify**:
-   - Player 1's local showroom booth immediately updates to display the new static meshes.
-   - Player 2 (standing nearby) also immediately sees the showroom booth mesh configuration change.
-   - Look at the **Output Log** to confirm the server accepted the request and replicated the change:
-     ```
-     [ShowroomBooth] Server_ChangeProductID called. ProductID = Cabinet_Modern_01
-     [ShowroomBooth] OnRep_ActiveProductID updated on client. Rebuilding components...
-     ```
-
-### Scenario B: Isolated Local Preview Inspection
-1. With Player 1, click the **Inspect/Preview** button (keyboard shortcut `F`) on a showroom booth to enter preview mode.
-2. The UI widget showing the RenderTarget will open.
-3. **Verify**:
-   - The scene transition is instant, without a 1-second adaptation delay where the screen goes from bright white/blown-out to normal (due to the locked `AutoExposureMin/MaxBrightness` configurations).
-   - Only Player 1 sees the preview scene. Player 2's screen and position are completely unaffected.
-   - Walk Player 2 near Player 1's character. Verify Player 2 does *not* see any floating preview lights, backdrops, or extra cabinet meshes, as they are spawned with `bReplicates = false` far above the level.
-   - Check the **Output Log** for the controller's spawn log:
-     ```
-     [PreviewController] OpenFurniturePreview spawning class: BP_FurniturePreviewActor_C
-     ```
-
-### Scenario C: Camera Orbit, Zoom, and Headlight Intensity Compensation
-1. Inside the preview UI, click and drag with the mouse to orbit around the furniture model.
-2. **Verify**:
-   - The model rotates smoothly according to mouse movements, staying within the configured `PitchMin` and `PitchMax` boundaries.
-3. Use the mouse wheel to zoom in close to the model and zoom far out.
+### Scenario A: Main World Right-Click & Real-Time Replication
+1. Run a multiplayer session with **2 players** (e.g. NetMode: Client 1 and Server).
+2. Walk Player 1 up to a showroom booth in the level.
+3. **Right-Click** on a specific subcomponent (such as the Cabinet).
 4. **Verify**:
-   - As you zoom in, the lighting intensity on the cabinet face does not blow out.
-   - As you zoom out, the model does not go completely dark.
-   - This indicates that the distance-compensation math formula $I_{\text{emitted}} = I_{\text{base}} \times (d / d_{\text{ref}})^2$ is correctly neutralizing the inverse-squared falloff of the headlight.
+   * **Widget 1 (Main Configurator UI)** opens immediately on Player 1's screen.
+   * Mouse cursor becomes visible, and input mode focuses on the UI.
+5. In the UI combo boxes, select a different color or size.
+6. **Verify**:
+   * Player 1's showroom booth immediately updates to display the new meshes/materials.
+   * Player 2 (standing nearby) also immediately sees the showroom booth mesh configuration change.
+   * No staging buffers, local cache, or "Commit" button is involved. Updates replicate instantly.
+
+### Scenario B: Dynamic Component Gating (Optional Meshes Collapse)
+1. Interact with a showroom booth in the level that has optional components missing or set to null static meshes (for example, a booth without a `MirrorMesh` component).
+2. **Verify**:
+   * In **Widget 1**, the Mirror color and size options/rows are automatically set to `ESlateVisibility::Collapsed` (hidden).
+3. Now interact with a showroom booth that includes a valid `MirrorMesh`.
+4. **Verify**:
+   * The Mirror option size/color dropdowns are fully visible (`ESlateVisibility::Visible`) and populated.
+
+### Scenario C: Door/Drawer Double-Click Toggle
+1. Approach a showroom booth that has doors (e.g., `OneDoor` or `TwoDoors` layout).
+2. **Double-Click** on one of the door components.
+3. **Verify**:
+   * The door mesh component animates open or closed.
+   * The updated door state replicates to other clients, showing the open/closed state on Player 2's screen.
+
+### Scenario D: True Isolated Viewmode & UI Transition
+1. Open the main configurator UI with Player 1.
+2. Click the **Viewmode** button.
+3. **Verify**:
+   * Player 1's camera transitions instantly to the isolated staging studio (`SetViewTargetWithBlend`).
+   * **Widget 1** is removed from Player 1's screen, and **Widget 2 (Viewmode Overlay)** is displayed.
+   * **Widget 2** contains no configuration UI (no colors, sizes), just a clean "Back" overlay.
+   * Only the targeted booth component (e.g. Cabinet) is visible in the preview scene. All other booths are hidden locally for Player 1.
+   * Player 2's screen is completely unaffected. All booths remain fully visible on Player 2's screen.
+4. Click the **Back** button on Widget 2.
+5. **Verify**:
+   * Player 1's camera returns to the character's main world position.
+   * Widget 2 is removed, and **Widget 1 (Main Configurator UI)** is re-opened, restoring focus and cursor state without losing the active booth target.
+   * All other showroom booths in the level become visible again on Player 1's screen.
+
