@@ -13,6 +13,7 @@
 #include "Blueprint/UserWidget.h"
 #include "FurnitureConfigurator/UI/ConfiguratorMainWidget.h"
 #include "FurnitureConfigurator/UI/ViewmodeOverlayWidget.h"
+#include "Framework/Application/SlateApplication.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -25,6 +26,7 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
     ActivePreviewActor = nullptr;
     CurrentTargetBooth = nullptr;
     CurrentTargetComponent = EFurnitureComponentType::None;
+    HoveredComponent = nullptr;
     
     // Default to the C++ base class so it is not empty in the Editor by default
     PreviewActorClass = AFurniturePreviewActor::StaticClass();
@@ -43,6 +45,98 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
 void AMaxiMallPreviewController::BeginPlay()
 {
     Super::BeginPlay();
+}
+
+void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
+{
+    Super::PlayerTick(DeltaTime);
+
+    if (!IsLocalController())
+    {
+        return;
+    }
+
+    UPrimitiveComponent* NewHoveredComp = nullptr;
+    AShowroomBooth* HitBooth = nullptr;
+    
+    // We only highlight if we are NOT in viewmode (viewmode staging is isolated)
+    if (!ActivePreviewActor)
+    {
+        FHitResult HitResult;
+        bool bHit = false;
+        
+        if (bShowMouseCursor)
+        {
+            bHit = GetHitResultUnderCursor(ECC_Visibility, false, HitResult);
+        }
+        else
+        {
+            // Trace from camera look direction
+            FVector CameraLoc;
+            FRotator CameraRot;
+            GetPlayerViewPoint(CameraLoc, CameraRot);
+            
+            FVector Start = CameraLoc;
+            FVector End = Start + (CameraRot.Vector() * 1000.f); // 10 meters range
+            
+            FCollisionQueryParams Params;
+            Params.AddIgnoredActor(GetPawn());
+            
+            bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params);
+        }
+        
+        if (bHit && HitResult.GetActor())
+        {
+            HitBooth = Cast<AShowroomBooth>(HitResult.GetActor());
+            if (HitBooth)
+            {
+                UPrimitiveComponent* HitComp = HitResult.GetComponent();
+                if (HitComp && (
+                    HitComp == HitBooth->MainCabinet.Get() ||
+                    HitComp == HitBooth->ClosetMesh.Get() ||
+                    HitComp == HitBooth->DoorMeshSlot0.Get() ||
+                    HitComp == HitBooth->DoorMeshSlot1.Get() ||
+                    HitComp == HitBooth->CountertopMesh.Get() ||
+                    HitComp == HitBooth->SinkMesh.Get() ||
+                    HitComp == HitBooth->FaucetMesh.Get() ||
+                    HitComp == HitBooth->MirrorMesh.Get()
+                ))
+                {
+                    NewHoveredComp = HitComp;
+                }
+            }
+        }
+    }
+
+    // Update highlights and cursor
+    UPrimitiveComponent* CurrentHovered = HoveredComponent.Get();
+    if (CurrentHovered != NewHoveredComp)
+    {
+        if (CurrentHovered)
+        {
+            CurrentHovered->SetRenderCustomDepth(false);
+        }
+        
+        if (NewHoveredComp)
+        {
+            NewHoveredComp->SetRenderCustomDepth(true);
+            NewHoveredComp->SetCustomDepthStencilValue(1); // Default highlight index
+            
+            if (bShowMouseCursor)
+            {
+                CurrentMouseCursor = EMouseCursor::Hand;
+            }
+        }
+        else
+        {
+            if (bShowMouseCursor)
+            {
+                CurrentMouseCursor = EMouseCursor::Default;
+            }
+        }
+        
+        HoveredComponent = NewHoveredComp;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +164,10 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         UE_LOG(LogTemp, Warning, TEXT("[PreviewController] OpenFurniturePreview called before possessing a pawn. Ignoring."));
         return;
     }
+
+    // Disable character look/move inputs to prevent character movement/rotation during preview
+    SetIgnoreLookInput(true);
+    SetIgnoreMoveInput(true);
 
     // Hide the main configurator UI widget when entering viewmode
     if (MainWidgetInstance)
@@ -118,17 +216,6 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     // Print runtime spawn class details for debugging/exposure validation
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
-    // Isolate target booth by hiding all other booths in the level locally for this player only
-    HiddenActors.Empty();
-    for (TActorIterator<AShowroomBooth> It(World); It; ++It)
-    {
-        AShowroomBooth* Booth = *It;
-        if (Booth && Booth != TargetBooth)
-        {
-            HiddenActors.Add(Booth);
-        }
-    }
-
     ActivePreviewActor = World->SpawnActor<AFurniturePreviewActor>(
         SpawnClass,
         PreviewStagingLocation,
@@ -141,8 +228,71 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         return;
     }
 
+    // Isolate view by hiding ALL other actors in the level locally for this player only
+    HiddenActors.Empty();
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        AActor* Actor = *It;
+        if (Actor && Actor != this && Actor != GetPawn() && Actor != ActivePreviewActor)
+        {
+            HiddenActors.Add(Actor);
+        }
+    }
+
     // ── 4. Load the product snapshot into the preview actor ───────────────
     ActivePreviewActor->LoadProductPreview(ProductSnapshot, TargetBooth->ActiveState, TargetBooth);
+
+    // Isolate target component in the preview actor by hiding others
+    if (CurrentTargetComponent != EFurnitureComponentType::None)
+    {
+        if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
+        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(false);
+        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(false);
+        if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(false);
+        if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(false);
+        if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
+        if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
+        if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
+
+        // Show only the selected component mesh
+        switch (CurrentTargetComponent)
+        {
+        case EFurnitureComponentType::Cabinet:
+            if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
+            break;
+        case EFurnitureComponentType::Closet:
+            if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
+            break;
+        case EFurnitureComponentType::Doors:
+            if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+            {
+                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+            }
+            else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+            {
+                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
+            }
+            break;
+        case EFurnitureComponentType::Countertop:
+            if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
+            break;
+        case EFurnitureComponentType::Sink:
+            if (ProductSnapshot.CountertopType == ECountertopType::SurfaceMounted)
+            {
+                if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
+            }
+            break;
+        case EFurnitureComponentType::Faucet:
+            if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(true);
+            break;
+        case EFurnitureComponentType::Mirror:
+            if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(true);
+            break;
+        default:
+            break;
+        }
+    }
 
     // Focus camera orbit on the isolated component
     if (CurrentTargetComponent != EFurnitureComponentType::None)
@@ -181,6 +331,7 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
 
         FInputModeGameAndUI InputMode;
         InputMode.SetWidgetToFocus(ViewmodeOverlayInstance->TakeWidget());
+        InputMode.SetHideCursorDuringCapture(true);
         InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
         SetInputMode(InputMode);
         bShowMouseCursor = true;
@@ -196,6 +347,10 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
     {
         return;
     }
+
+    // Restore character look/move inputs
+    SetIgnoreLookInput(false);
+    SetIgnoreMoveInput(false);
 
     // Restore visibility of all showroom booths in the level for the local player locally
     HiddenActors.Empty();
@@ -222,6 +377,9 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
     // Restore viewport view target to player pawn instantly
     SetViewTargetWithBlend(GetPawn(), 0.0f);
 
+    // Restore the control rotation to prevent rotation drift on exit
+    SetControlRotation(SavedControlRotation);
+
     // Remove viewmode overlay and restore main configurator UI widget on exit
     if (ViewmodeOverlayInstance)
     {
@@ -246,6 +404,7 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
 
         FInputModeGameAndUI InputMode;
         InputMode.SetWidgetToFocus(MainWidgetInstance->TakeWidget());
+        InputMode.SetHideCursorDuringCapture(true);
         InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
         SetInputMode(InputMode);
         bShowMouseCursor = true;
@@ -255,12 +414,14 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
         CurrentTargetBooth = nullptr;
         CurrentTargetComponent = EFurnitureComponentType::None;
 
-        // Restore the control rotation to prevent rotation drift on exit
-        SetControlRotation(SavedControlRotation);
-
         FInputModeGameOnly InputMode;
         SetInputMode(InputMode);
         bShowMouseCursor = false;
+
+        if (FSlateApplication::IsInitialized())
+        {
+            FSlateApplication::Get().SetAllUserFocusToGameViewport();
+        }
     }
 
     // Destroy the local actor. This is a local operation — no RPC needed.
@@ -437,6 +598,58 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
         {
             ActivePreviewActor->LoadProductPreview(ProductSnapshot, Booth->ActiveState, Booth);
 
+            // Isolate target component in the preview actor by hiding others
+            if (CurrentTargetComponent != EFurnitureComponentType::None)
+            {
+                if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
+                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(false);
+                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(false);
+                if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(false);
+                if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(false);
+                if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
+                if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
+                if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
+
+                // Show only the selected component mesh
+                switch (CurrentTargetComponent)
+                {
+                case EFurnitureComponentType::Cabinet:
+                    if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
+                    break;
+                case EFurnitureComponentType::Closet:
+                    if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
+                    break;
+                case EFurnitureComponentType::Doors:
+                    if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+                    {
+                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+                    }
+                    else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+                    {
+                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+                        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
+                    }
+                    break;
+                case EFurnitureComponentType::Countertop:
+                    if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
+                    break;
+                case EFurnitureComponentType::Sink:
+                    if (ProductSnapshot.CountertopType == ECountertopType::SurfaceMounted)
+                    {
+                        if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
+                    }
+                    break;
+                case EFurnitureComponentType::Faucet:
+                    if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(true);
+                    break;
+                case EFurnitureComponentType::Mirror:
+                    if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(true);
+                    break;
+                default:
+                    break;
+                }
+            }
+
             // Maintain camera focus on the isolated component
             if (CurrentTargetComponent != EFurnitureComponentType::None)
             {
@@ -473,6 +686,10 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
     if (bOpen)
     {
         if (!Booth) return;
+
+        // Disable character look/move inputs to prevent character movement/rotation during configuration
+        SetIgnoreLookInput(true);
+        SetIgnoreMoveInput(true);
 
         if (GEngine)
         {
@@ -540,6 +757,7 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
 
             FInputModeGameAndUI InputMode;
             InputMode.SetWidgetToFocus(MainWidgetInstance->TakeWidget());
+            InputMode.SetHideCursorDuringCapture(true);
             InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
             SetInputMode(InputMode);
             bShowMouseCursor = true;
@@ -555,6 +773,10 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
     }
     else
     {
+        // Restore character look/move inputs
+        SetIgnoreLookInput(false);
+        SetIgnoreMoveInput(false);
+
         if (MainWidgetInstance)
         {
             MainWidgetInstance->RemoveFromParent();
@@ -575,5 +797,10 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         FInputModeGameOnly InputMode;
         SetInputMode(InputMode);
         bShowMouseCursor = false;
+
+        if (FSlateApplication::IsInitialized())
+        {
+            FSlateApplication::Get().SetAllUserFocusToGameViewport();
+        }
     }
 }

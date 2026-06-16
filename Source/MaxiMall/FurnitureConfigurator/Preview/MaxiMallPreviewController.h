@@ -50,6 +50,8 @@ public:
 
     virtual void BeginPlay() override;
 
+    virtual void PlayerTick(float DeltaTime) override;
+
     // ─────────────────────────────────────────────────────────────────────
     // PREVIEW MANAGEMENT
     // ─────────────────────────────────────────────────────────────────────
@@ -276,4 +278,8 @@ private:
     /** Delegate callback called when the target showroom booth's configuration changes. */
     UFUNCTION()
     void OnTargetBoothProductChanged(AShowroomBooth* Booth, FName NewProductID);
+
+    /** Weak pointer to the currently hovered interactable component for highlight feedback. */
+    UPROPERTY()
+    TWeakObjectPtr<UPrimitiveComponent> HoveredComponent;
 };
