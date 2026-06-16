@@ -9,6 +9,9 @@
 #include "Camera/CameraComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "EngineUtils.h"
+#include "Blueprint/UserWidget.h"
+#include "FurnitureConfigurator/UI/ConfiguratorMainWidget.h"
+#include "FurnitureConfigurator/UI/ViewmodeOverlayWidget.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -24,6 +27,11 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
     
     // Default to the C++ base class so it is not empty in the Editor by default
     PreviewActorClass = AFurniturePreviewActor::StaticClass();
+
+    MainWidgetClass = nullptr;
+    ViewmodeOverlayClass = nullptr;
+    MainWidgetInstance = nullptr;
+    ViewmodeOverlayInstance = nullptr;
 
     // Set default fallback asset paths (using the engine's built-in shape sphere)
     BackdropMeshAsset = FSoftObjectPath(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
@@ -68,6 +76,12 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     {
         UE_LOG(LogTemp, Warning, TEXT("[PreviewController] OpenFurniturePreview called before possessing a pawn. Ignoring."));
         return;
+    }
+
+    // Hide the main configurator UI widget when entering viewmode
+    if (MainWidgetInstance)
+    {
+        MainWidgetInstance->RemoveFromParent();
     }
 
     // Capture the current control rotation before entering preview mode (if not already in preview)
@@ -205,6 +219,30 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     // ── 5. Switch viewport view target to the preview actor ────────────────
     SetViewTargetWithBlend(ActivePreviewActor, 0.0f);
 
+    // Show the viewmode overlay UI widget
+    if (!ViewmodeOverlayInstance && ViewmodeOverlayClass)
+    {
+        ViewmodeOverlayInstance = CreateWidget<UUserWidget>(this, ViewmodeOverlayClass);
+    }
+    if (ViewmodeOverlayInstance)
+    {
+        UViewmodeOverlayWidget* Overlay = Cast<UViewmodeOverlayWidget>(ViewmodeOverlayInstance);
+        if (Overlay)
+        {
+            Overlay->SetOwningPC(this);
+        }
+        if (!ViewmodeOverlayInstance->IsInViewport())
+        {
+            ViewmodeOverlayInstance->AddToViewport();
+        }
+
+        FInputModeGameAndUI InputMode;
+        InputMode.SetWidgetToFocus(ViewmodeOverlayInstance->TakeWidget());
+        InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        SetInputMode(InputMode);
+        bShowMouseCursor = true;
+    }
+
     // ── 6. Fire the Blueprint hook so the widget can animate in ───────────
     OnPreviewOpened();
 }
@@ -242,8 +280,39 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
     // Restore viewport view target to player pawn instantly
     SetViewTargetWithBlend(GetPawn(), 0.0f);
 
-    // Restore the control rotation to prevent rotation drift on exit
-    SetControlRotation(SavedControlRotation);
+    // Remove viewmode overlay and restore main configurator UI widget on exit
+    if (ViewmodeOverlayInstance)
+    {
+        ViewmodeOverlayInstance->RemoveFromParent();
+    }
+
+    if (CurrentTargetBooth && MainWidgetInstance)
+    {
+        UConfiguratorMainWidget* MainWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance);
+        if (MainWidget)
+        {
+            MainWidget->SetupWidget(this, CurrentTargetBooth, CurrentTargetComponent);
+        }
+        if (!MainWidgetInstance->IsInViewport())
+        {
+            MainWidgetInstance->AddToViewport();
+        }
+
+        FInputModeGameAndUI InputMode;
+        InputMode.SetWidgetToFocus(MainWidgetInstance->TakeWidget());
+        InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        SetInputMode(InputMode);
+        bShowMouseCursor = true;
+    }
+    else
+    {
+        // Restore the control rotation to prevent rotation drift on exit
+        SetControlRotation(SavedControlRotation);
+
+        FInputModeGameOnly InputMode;
+        SetInputMode(InputMode);
+        bShowMouseCursor = false;
+    }
 
     // Destroy the local actor. This is a local operation — no RPC needed.
     ActivePreviewActor->Destroy();
@@ -475,5 +544,81 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                 ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);
             }
         }
+    }
+
+    // Refresh main UI combo selections if open
+    if (MainWidgetInstance && MainWidgetInstance->IsInViewport() && Booth == CurrentTargetBooth)
+    {
+        UConfiguratorMainWidget* MainWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance);
+        if (MainWidget)
+        {
+            MainWidget->RefreshSelections();
+        }
+    }
+}
+
+void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen)
+{
+    if (!IsLocalController())
+    {
+        return;
+    }
+
+    if (bOpen)
+    {
+        if (!Booth) return;
+
+        // If another configuration widget is open on a different booth, close it first
+        if (MainWidgetInstance && CurrentTargetBooth && CurrentTargetBooth != Booth)
+        {
+            ToggleConfiguratorUI(CurrentTargetBooth, CurrentTargetComponent, false);
+        }
+
+        CurrentTargetBooth = Booth;
+        CurrentTargetComponent = Component;
+
+        if (!MainWidgetInstance && MainWidgetClass)
+        {
+            MainWidgetInstance = CreateWidget<UUserWidget>(this, MainWidgetClass);
+        }
+
+        if (MainWidgetInstance)
+        {
+            UConfiguratorMainWidget* MainWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance);
+            if (MainWidget)
+            {
+                MainWidget->SetupWidget(this, Booth, Component);
+            }
+
+            if (!MainWidgetInstance->IsInViewport())
+            {
+                MainWidgetInstance->AddToViewport();
+            }
+
+            FInputModeGameAndUI InputMode;
+            InputMode.SetWidgetToFocus(MainWidgetInstance->TakeWidget());
+            InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+            SetInputMode(InputMode);
+            bShowMouseCursor = true;
+        }
+    }
+    else
+    {
+        if (MainWidgetInstance)
+        {
+            MainWidgetInstance->RemoveFromParent();
+        }
+
+        if (ViewmodeOverlayInstance)
+        {
+            ViewmodeOverlayInstance->RemoveFromParent();
+        }
+
+        CurrentTargetBooth = nullptr;
+        CurrentTargetComponent = EFurnitureComponentType::None;
+
+        FInputModeGameOnly InputMode;
+        SetInputMode(InputMode);
+        bShowMouseCursor = false;
     }
 }

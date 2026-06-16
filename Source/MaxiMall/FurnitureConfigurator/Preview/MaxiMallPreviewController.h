@@ -238,6 +238,28 @@ public:
               meta = (DisplayName = "Backdrop Material"))
     TSoftObjectPtr<UMaterialInterface> BackdropMaterialAsset;
 
+    // ── CONFIGURATOR UI CONFIGURATION ────────────────────────────────────────
+
+    /** Widget Blueprint class for the main configurator UI. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
+    TSubclassOf<UUserWidget> MainWidgetClass;
+
+    /** Widget Blueprint class for the isolated viewmode overlay. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
+    TSubclassOf<UUserWidget> ViewmodeOverlayClass;
+
+    /** Live instance of the main configurator widget. */
+    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
+    TObjectPtr<UUserWidget> MainWidgetInstance;
+
+    /** Live instance of the isolated viewmode overlay widget. */
+    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
+    TObjectPtr<UUserWidget> ViewmodeOverlayInstance;
+
+    /** Opens or closes the configurator UI in the main world. */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
+    void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
+
 private:
 
     /**
