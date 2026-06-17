@@ -271,14 +271,64 @@ void UConfiguratorMainWidget::RefreshSelections()
                 }
             }
 
-            // ── COLOR SELECTORS (strictly hidden/collapsed for simplified layout) ──
+            // ── COLOR SELECTORS ──
             if (Color_Container)
             {
-                Color_Container->SetVisibility(ESlateVisibility::Collapsed);
+                Color_Container->SetVisibility(TargetVisibility);
+                Color_Container->ClearChildren();
+                if (Combo_Color)
+                {
+                    Combo_Color->SetVisibility(ESlateVisibility::Collapsed);
+                }
+
+                if (bIsValidMesh)
+                {
+                    for (const FFurnitureColorOption& ColorOpt : ActiveOpts.Colors)
+                    {
+                        UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                        if (NewBtn)
+                        {
+                            UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+                            if (BtnImg)
+                            {
+                                if (!ColorOpt.Thumbnail.IsNull())
+                                {
+                                    UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
+                                    if (LoadedTex)
+                                    {
+                                        BtnImg->SetBrushFromTexture(LoadedTex);
+                                    }
+                                }
+                                NewBtn->AddChild(BtnImg);
+                            }
+
+                            UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
+                            Listener->Init(this, ActiveComponent, EOptionType::Color, ColorOpt.ColorID);
+                            OptionListeners.Add(Listener);
+
+                            NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
+                            NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
+                            NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
+
+                            Color_Container->AddChild(NewBtn);
+                        }
+                    }
+                }
             }
-            if (Combo_Color)
+            else if (Combo_Color)
             {
-                Combo_Color->SetVisibility(ESlateVisibility::Collapsed);
+                Combo_Color->SetVisibility(TargetVisibility);
+                if (bIsValidMesh)
+                {
+                    TArray<FName> ColorIDs;
+                    TArray<FText> ColorNames;
+                    for (const FFurnitureColorOption& ColorOpt : ActiveOpts.Colors)
+                    {
+                        ColorIDs.Add(ColorOpt.ColorID);
+                        ColorNames.Add(ColorOpt.DisplayName);
+                    }
+                    PopulateCombo(Combo_Color, ColorIDs, ColorNames, ActiveState.SelectedColorID);
+                }
             }
         }
 
