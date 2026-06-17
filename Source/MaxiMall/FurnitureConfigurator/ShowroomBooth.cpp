@@ -312,6 +312,9 @@ void AShowroomBooth::InitializeDefaultBooth()
         return;
     }
 
+    // Initialize ActiveState to default product options (Index 0 fallback) in the editor
+    InitializeDefaultStateForProduct(ActiveState, InitialProductID, *ProductRow);
+
     // Safely apply product visuals
     ApplyProductData(*ProductRow);
 }
@@ -900,11 +903,10 @@ void AShowroomBooth::InitializeDefaultStateForProduct(FShowroomBoothConfigState&
     State.ClosetState.SelectedSizeID = GetDefaultSize(Row.ClosetOptions);
     State.ClosetState.SelectedColorID = GetDefaultColor(Row.ClosetOptions);
 
-    // Synchronize default size and color of Doors/Countertop with Cabinet
-    State.DoorState.SelectedSizeID = State.CabinetState.SelectedSizeID;
-    State.DoorState.SelectedColorID = State.CabinetState.SelectedColorID;
+    State.DoorState.SelectedSizeID = GetDefaultSize(Row.DoorOptions);
+    State.DoorState.SelectedColorID = GetDefaultColor(Row.DoorOptions);
 
-    State.CountertopState.SelectedSizeID = State.CabinetState.SelectedSizeID;
+    State.CountertopState.SelectedSizeID = GetDefaultSize(Row.CountertopOptions);
     State.CountertopState.SelectedColorID = GetDefaultColor(Row.CountertopOptions);
 
     State.SinkState.SelectedSizeID = GetDefaultSize(Row.SinkOptions);

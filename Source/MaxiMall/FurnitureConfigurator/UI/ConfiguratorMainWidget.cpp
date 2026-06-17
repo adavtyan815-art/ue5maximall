@@ -159,15 +159,15 @@ void UConfiguratorMainWidget::RefreshSelections()
         return;
     }
 
-    // Set product details title
+    // Set product details title (Unnecessary titles / clutter collapsed)
+    if (Txt_ProductName)
+    {
+        Txt_ProductName->SetVisibility(ESlateVisibility::Collapsed);
+    }
+
     FFurnitureProductRow ProductData;
     if (Booth->GetActiveProductData(ProductData))
     {
-        if (Txt_ProductName)
-        {
-            Txt_ProductName->SetText(ProductData.DisplayName);
-        }
-
         // ── Setup active right-clicked component selectors ────────────────────
         FFurnitureComponentOptions ActiveOpts;
         FFurnitureComponentState ActiveState;
@@ -180,17 +180,17 @@ void UConfiguratorMainWidget::RefreshSelections()
             // Clear option listeners when regenerating layout
             OptionListeners.Empty();
 
-            // Set default / active selection details first
+            // Set default / active selection details first (strictly only SKU and Description of active size mesh)
             if (bIsValidMesh)
             {
                 FText ActiveNameText;
                 FText ActiveDescText;
-                for (const FFurnitureColorOption& ColorOpt : ActiveOpts.Colors)
+                for (const FFurnitureSizeOption& SizeOpt : ActiveOpts.Sizes)
                 {
-                    if (ColorOpt.ColorID == ActiveState.SelectedColorID)
+                    if (SizeOpt.SizeID == ActiveState.SelectedSizeID)
                     {
-                        ActiveNameText = ColorOpt.DisplayName;
-                        ActiveDescText = ColorOpt.Description;
+                        ActiveNameText = SizeOpt.DisplayName;
+                        ActiveDescText = SizeOpt.Description;
                         break;
                     }
                 }
@@ -198,10 +198,23 @@ void UConfiguratorMainWidget::RefreshSelections()
                 if (Txt_SelectionName)
                 {
                     Txt_SelectionName->SetText(ActiveNameText);
+                    Txt_SelectionName->SetVisibility(ESlateVisibility::Visible);
                 }
                 if (Txt_SelectionDescription)
                 {
                     Txt_SelectionDescription->SetText(ActiveDescText);
+                    Txt_SelectionDescription->SetVisibility(ESlateVisibility::Visible);
+                }
+            }
+            else
+            {
+                if (Txt_SelectionName)
+                {
+                    Txt_SelectionName->SetVisibility(ESlateVisibility::Collapsed);
+                }
+                if (Txt_SelectionDescription)
+                {
+                    Txt_SelectionDescription->SetVisibility(ESlateVisibility::Collapsed);
                 }
             }
 
@@ -258,75 +271,32 @@ void UConfiguratorMainWidget::RefreshSelections()
                 }
             }
 
-            // ── COLOR SELECTORS ──
+            // ── COLOR SELECTORS (strictly hidden/collapsed for simplified layout) ──
             if (Color_Container)
             {
-                Color_Container->SetVisibility(TargetVisibility);
-                Color_Container->ClearChildren();
-                if (Combo_Color)
-                {
-                    Combo_Color->SetVisibility(ESlateVisibility::Collapsed);
-                }
-
-                if (bIsValidMesh)
-                {
-                    for (const FFurnitureColorOption& ColorOpt : ActiveOpts.Colors)
-                    {
-                        UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
-                        if (NewBtn)
-                        {
-                            UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-                            if (BtnImg)
-                            {
-                                if (!ColorOpt.Thumbnail.IsNull())
-                                {
-                                    UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
-                                    if (LoadedTex)
-                                    {
-                                        BtnImg->SetBrushFromTexture(LoadedTex);
-                                    }
-                                }
-                                NewBtn->AddChild(BtnImg);
-                            }
-
-                            UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
-                            Listener->Init(this, ActiveComponent, EOptionType::Color, ColorOpt.ColorID);
-                            OptionListeners.Add(Listener);
-
-                            NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
-                            NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
-                            NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
-
-                            Color_Container->AddChild(NewBtn);
-                        }
-                    }
-                }
+                Color_Container->SetVisibility(ESlateVisibility::Collapsed);
             }
-            else if (Combo_Color)
+            if (Combo_Color)
             {
-                Combo_Color->SetVisibility(TargetVisibility);
-                if (bIsValidMesh)
-                {
-                    TArray<FName> ColorIDs;
-                    TArray<FText> ColorNames;
-                    for (const FFurnitureColorOption& ColorOpt : ActiveOpts.Colors)
-                    {
-                        ColorIDs.Add(ColorOpt.ColorID);
-                        ColorNames.Add(ColorOpt.DisplayName);
-                    }
-                    PopulateCombo(Combo_Color, ColorIDs, ColorNames, ActiveState.SelectedColorID);
-                }
+                Combo_Color->SetVisibility(ESlateVisibility::Collapsed);
             }
         }
 
-        // ── Setup individual specific component selectors (optional layout table) ────
-        SetupIndividualComponentSelector(EFurnitureComponentType::Cabinet, Combo_Cabinet_Size, Combo_Cabinet_Color);
-        SetupIndividualComponentSelector(EFurnitureComponentType::Closet, Combo_Closet_Size, Combo_Closet_Color);
-        SetupIndividualComponentSelector(EFurnitureComponentType::Doors, Combo_Doors_Size, Combo_Doors_Color);
-        SetupIndividualComponentSelector(EFurnitureComponentType::Countertop, Combo_Countertop_Size, Combo_Countertop_Color);
-        SetupIndividualComponentSelector(EFurnitureComponentType::Sink, Combo_Sink_Size, Combo_Sink_Color);
-        SetupIndividualComponentSelector(EFurnitureComponentType::Faucet, Combo_Faucet_Size, Combo_Faucet_Color);
-        SetupIndividualComponentSelector(EFurnitureComponentType::Mirror, Combo_Mirror_Size, Combo_Mirror_Color);
+        // ── Setup individual specific component selectors (optional layout table — hidden/collapsed) ────
+        if (Combo_Cabinet_Size) Combo_Cabinet_Size->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Cabinet_Color) Combo_Cabinet_Color->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Closet_Size) Combo_Closet_Size->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Closet_Color) Combo_Closet_Color->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Doors_Size) Combo_Doors_Size->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Doors_Color) Combo_Doors_Color->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Countertop_Size) Combo_Countertop_Size->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Countertop_Color) Combo_Countertop_Color->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Sink_Size) Combo_Sink_Size->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Sink_Color) Combo_Sink_Color->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Faucet_Size) Combo_Faucet_Size->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Faucet_Color) Combo_Faucet_Color->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Mirror_Size) Combo_Mirror_Size->SetVisibility(ESlateVisibility::Collapsed);
+        if (Combo_Mirror_Color) Combo_Mirror_Color->SetVisibility(ESlateVisibility::Collapsed);
     }
 }
 
