@@ -409,7 +409,10 @@ void UConfiguratorMainWidget::OnSizeSelected(FString SelectedItem, ESelectInfo::
             int32 SelectedIdx = Combo_Size->GetSelectedIndex();
             if (Opts.Sizes.IsValidIndex(SelectedIdx))
             {
-                Booth->RequestComponentSelection(ActiveComponent, Opts.Sizes[SelectedIdx].SizeID, State.SelectedColorID);
+                if (OwningPC)
+                {
+                    OwningPC->RequestBoothComponentSelection(Booth, ActiveComponent, Opts.Sizes[SelectedIdx].SizeID, State.SelectedColorID);
+                }
             }
         }
     }
@@ -430,7 +433,10 @@ void UConfiguratorMainWidget::OnColorSelected(FString SelectedItem, ESelectInfo:
             int32 SelectedIdx = Combo_Color->GetSelectedIndex();
             if (Opts.Colors.IsValidIndex(SelectedIdx))
             {
-                Booth->RequestComponentSelection(ActiveComponent, State.SelectedSizeID, Opts.Colors[SelectedIdx].ColorID);
+                if (OwningPC)
+                {
+                    OwningPC->RequestBoothComponentSelection(Booth, ActiveComponent, State.SelectedSizeID, Opts.Colors[SelectedIdx].ColorID);
+                }
             }
         }
     }
@@ -471,7 +477,10 @@ void UConfiguratorMainWidget::UpdateSelectionForComponent(EFurnitureComponentTyp
                 }
             }
 
-            Booth->RequestComponentSelection(Component, TargetSize, TargetColor);
+            if (OwningPC)
+            {
+                OwningPC->RequestBoothComponentSelection(Booth, Component, TargetSize, TargetColor);
+            }
         }
     }
 }

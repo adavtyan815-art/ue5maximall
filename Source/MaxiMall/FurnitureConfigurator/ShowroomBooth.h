@@ -30,6 +30,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Engine/DataTable.h"
+#include "Engine/EngineTypes.h"
 #include "FurnitureConfigurator/Data/FurnitureTypes.h"
 #include "ShowroomBooth.generated.h"
 
@@ -349,7 +350,11 @@ protected:
      */
     void ApplyDoorSlotVisual(UStaticMeshComponent* Slot,
                              EDoorSlotState State,
-                             const FDoorSlotConfig& SlotCfg);
+                             const FDoorSlotConfig& SlotCfg,
+                             bool bAnimate = true);
+
+    /** Helper to interpolate a single door slot component towards its target. */
+    bool AnimateDoorSlot(UStaticMeshComponent* Slot, int32 SlotIndex, float DeltaTime);
 
     /**
      * Recalculates and applies the relative transforms of Sink and Faucet
@@ -380,6 +385,12 @@ protected:
      * Returns nullptr if ProductCatalog is null or RowName does not exist.
      */
     const FFurnitureProductRow* FindProductRow(FName RowName) const;
+
+    /** Timer handle for driving door/drawer smooth opening/closing animations. */
+    FTimerHandle DoorAnimationTimerHandle;
+
+    /** Updates the door meshes relative transforms during active animations. */
+    void UpdateDoorAnimation();
 
 private:
 

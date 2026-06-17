@@ -8,6 +8,7 @@
 #include "Net/UnrealNetwork.h"          // DOREPLIFETIME, DOREPLIFETIME_CONDITION
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "TimerManager.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -18,7 +19,7 @@ AShowroomBooth::AShowroomBooth()
     // This actor replicates state to all clients.
     bReplicates = true;
 
-    // We don't need Tick — all updates are event-driven via RepNotify.
+    // We don't need Tick — all updates are driven by Timers and RepNotify.
     PrimaryActorTick.bCanEverTick = false;
 
     // ── Root ──────────────────────────────────────────────────────────────
@@ -101,6 +102,92 @@ void AShowroomBooth::BeginPlay()
                 *GetName(), *InitialProductID.ToString());
         }
     }
+}
+
+void AShowroomBooth::UpdateDoorAnimation()
+{
+    float DeltaTime = 0.016f;
+    if (GetWorld())
+    {
+        DeltaTime = GetWorld()->GetDeltaSeconds();
+    }
+
+    bool bAnimating = false;
+
+    // Interpolate door 0 if it is present
+    if (DoorStates.IsValidIndex(0) && DoorMeshSlot0 && DoorStates[0] != EDoorSlotState::NotPresent)
+    {
+        bAnimating |= AnimateDoorSlot(DoorMeshSlot0, 0, DeltaTime);
+    }
+
+    // Interpolate door 1 if it is present
+    if (DoorStates.IsValidIndex(1) && DoorMeshSlot1 && DoorStates[1] != EDoorSlotState::NotPresent)
+    {
+        bAnimating |= AnimateDoorSlot(DoorMeshSlot1, 1, DeltaTime);
+    }
+
+    // Stop ticking the timer once all active animations are complete
+    if (!bAnimating)
+    {
+        if (GetWorld())
+        {
+            GetWorld()->GetTimerManager().ClearTimer(DoorAnimationTimerHandle);
+        }
+    }
+}
+
+bool AShowroomBooth::AnimateDoorSlot(UStaticMeshComponent* Slot, int32 SlotIndex, float DeltaTime)
+{
+    if (!Slot) return false;
+
+    const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
+    if (!Row) return false;
+
+    const FDoorSlotConfig SlotCfg = Row->DoorSlots.IsValidIndex(SlotIndex) ? Row->DoorSlots[SlotIndex] : FDoorSlotConfig();
+
+    FTransform BaselineTransform = (SlotIndex == 0) ? BaselineDoor0Transform : BaselineDoor1Transform;
+    if (BaselineTransform.GetScale3D().IsNearlyZero())
+    {
+        BaselineTransform.SetScale3D(FVector::OneVector);
+    }
+
+    // Target position (Open vs Closed, Translation/Sliding vs Hinge)
+    FVector TargetLocation = BaselineTransform.GetLocation();
+    if (!SlotCfg.bIsRotation && DoorStates[SlotIndex] == EDoorSlotState::Open)
+    {
+        TargetLocation = BaselineTransform.GetLocation() + SlotCfg.OpenTranslationOffset;
+    }
+
+    // Target rotation (Open vs Closed)
+    float TargetYaw = BaselineTransform.Rotator().Yaw;
+    if (SlotCfg.bIsRotation && DoorStates[SlotIndex] == EDoorSlotState::Open)
+    {
+        TargetYaw = BaselineTransform.Rotator().Yaw + SlotCfg.OpenYawDelta;
+    }
+    FRotator TargetRotation = BaselineTransform.Rotator();
+    TargetRotation.Yaw = TargetYaw;
+
+    FVector CurrentLocation = Slot->GetRelativeLocation();
+    FRotator CurrentRotation = Slot->GetRelativeRotation();
+
+    // Interp speed of 5.0f takes approximately 1 second to reach >99% of target
+    const float InterpSpeed = 5.f;
+    FVector NewLocation = FMath::VInterpTo(CurrentLocation, TargetLocation, DeltaTime, InterpSpeed);
+    FRotator NewRotation = FMath::RInterpTo(CurrentRotation, TargetRotation, DeltaTime, InterpSpeed);
+
+    Slot->SetRelativeLocationAndRotation(NewLocation, NewRotation);
+
+    // Stop animating once we are close enough
+    const bool bLocationAtTarget = NewLocation.Equals(TargetLocation, 0.1f);
+    const bool bRotationAtTarget = NewRotation.Equals(TargetRotation, 0.1f);
+
+    if (bLocationAtTarget && bRotationAtTarget)
+    {
+        Slot->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
+        return false;
+    }
+
+    return true;
 }
 
 void AShowroomBooth::PostInitializeComponents()
@@ -639,16 +726,17 @@ void AShowroomBooth::ApplyDoorConfiguration(const FFurnitureProductRow& Data)
         DoorStates[1] = Slot1State;
     }
 
-    // Apply visual state (runs on all machines).
+    // Apply visual state instantly without animation on full catalog/product change (runs on all machines).
     const FDoorSlotConfig Cfg0 = Data.DoorSlots.IsValidIndex(0) ? Data.DoorSlots[0] : FDoorSlotConfig();
     const FDoorSlotConfig Cfg1 = Data.DoorSlots.IsValidIndex(1) ? Data.DoorSlots[1] : FDoorSlotConfig();
-    ApplyDoorSlotVisual(DoorMeshSlot0.Get(), DoorStates[0], Cfg0);
-    ApplyDoorSlotVisual(DoorMeshSlot1.Get(), DoorStates[1], Cfg1);
+    ApplyDoorSlotVisual(DoorMeshSlot0.Get(), DoorStates[0], Cfg0, false);
+    ApplyDoorSlotVisual(DoorMeshSlot1.Get(), DoorStates[1], Cfg1, false);
 }
 
 void AShowroomBooth::ApplyDoorSlotVisual(UStaticMeshComponent* Slot,
-                                          EDoorSlotState State,
-                                          const FDoorSlotConfig& SlotCfg)
+                                         EDoorSlotState State,
+                                         const FDoorSlotConfig& SlotCfg,
+                                         bool bAnimate)
 {
     if (!Slot)
     {
@@ -690,15 +778,37 @@ void AShowroomBooth::ApplyDoorSlotVisual(UStaticMeshComponent* Slot,
         return;
     }
 
-    FVector TargetLocation = BaselineTransform.GetLocation();
+    if (bAnimate)
+    {
+        // Start the timer to smoothly interpolate the door meshes to their target state
+        if (GetWorld())
+        {
+            if (!GetWorld()->GetTimerManager().IsTimerActive(DoorAnimationTimerHandle))
+            {
+                GetWorld()->GetTimerManager().SetTimer(DoorAnimationTimerHandle, this, &AShowroomBooth::UpdateDoorAnimation, 0.016f, true);
+            }
+        }
+    }
+    else
+    {
+        // Instantly snap to the target position
+        FVector TargetLocation = BaselineTransform.GetLocation();
+        if (!SlotCfg.bIsRotation && State == EDoorSlotState::Open)
+        {
+            TargetLocation = BaselineTransform.GetLocation() + SlotCfg.OpenTranslationOffset;
+        }
 
-    // Compute the open/closed rotation.
-    // Closed = no yaw delta.  Open = add the product-defined yaw delta on top of the baseline rotation.
-    const float YawDelta = (State == EDoorSlotState::Open) ? SlotCfg.OpenYawDelta : 0.f;
-    FRotator TargetRotation = BaselineTransform.Rotator() + FRotator(0.f, YawDelta, 0.f);
+        float TargetYaw = BaselineTransform.Rotator().Yaw;
+        if (SlotCfg.bIsRotation && State == EDoorSlotState::Open)
+        {
+            TargetYaw = BaselineTransform.Rotator().Yaw + SlotCfg.OpenYawDelta;
+        }
+        FRotator TargetRotation = BaselineTransform.Rotator();
+        TargetRotation.Yaw = TargetYaw;
 
-    Slot->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
-    Slot->SetRelativeScale3D(BaselineTransform.GetScale3D());
+        Slot->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
+        Slot->SetRelativeScale3D(BaselineTransform.GetScale3D());
+    }
 }
 
 void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& Data)

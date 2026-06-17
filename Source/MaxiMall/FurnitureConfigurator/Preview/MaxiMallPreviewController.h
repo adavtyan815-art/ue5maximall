@@ -52,6 +52,8 @@ public:
 
     virtual void PlayerTick(float DeltaTime) override;
 
+    virtual void SetupInputComponent() override;
+
     // ─────────────────────────────────────────────────────────────────────
     // PREVIEW MANAGEMENT
     // ─────────────────────────────────────────────────────────────────────
@@ -181,6 +183,13 @@ public:
               meta = (DisplayName = "Request Booth Door Toggle"))
     void RequestBoothDoorToggle(AShowroomBooth* TargetBooth, int32 SlotIndex);
 
+    /**
+     * Requests a size/color component selection on the given booth.
+     */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth",
+              meta = (DisplayName = "Request Booth Component Selection"))
+    void RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+
     // ─────────────────────────────────────────────────────────────────────
     // BLUEPRINT EVENTS (Loose Coupling Hooks)
     // These can be overridden in the Blueprint child of this controller
@@ -262,6 +271,16 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
 
+protected:
+    UFUNCTION(Server, Reliable, WithValidation)
+    void Server_RequestBoothDoorToggle(AShowroomBooth* TargetBooth, int32 SlotIndex);
+
+    UFUNCTION(Server, Reliable, WithValidation)
+    void Server_RequestBoothProductChange(AShowroomBooth* TargetBooth, FName NewProductID);
+
+    UFUNCTION(Server, Reliable, WithValidation)
+    void Server_RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+
 private:
 
     /**
@@ -285,4 +304,10 @@ private:
 
     /** Flag to prevent race-condition re-triggering of interactions in the same frame as closing the UI. */
     bool bIsClosingUI = false;
+
+    /** Time when the left mouse button was last pressed, used for C++ double click detection. */
+    float LastClickTime = 0.f;
+
+    /** Handler for left mouse button press to detect double click in C++. */
+    void OnLeftMouseButtonPressed();
 };

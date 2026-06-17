@@ -39,6 +39,12 @@ Verify that the visual components (buttons, combo boxes, text blocks) inside the
    * **Preview Staging Location**: `(0.0, 0.0, 10000.0)`
    * **Backdrop Static Mesh** and **Backdrop Material** assets to configure the studio backdrop.
 
+### D. Clean up Blueprint Input Bindings
+1. Open the blueprint [BP_MaxiMallPlayerController](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Content/BP_MaxiMallPlayerController.uasset).
+2. Go to the **Event Graph**.
+3. **Delete or disconnect** the `Left Mouse Button` event node. Double-click detection is now handled automatically by the native C++ parent class `AMaxiMallPreviewController`, so removing this blueprint node prevents input consumption conflicts.
+4. Compile and Save the Blueprint.
+
 ---
 
 ## 2. Runtime Verification & Test Scenarios
@@ -67,11 +73,12 @@ Follow these scenarios to verify that the implementation is replication-safe, ha
    * The Mirror option size/color dropdowns are fully visible (`ESlateVisibility::Visible`) and populated.
 
 ### Scenario C: Door/Drawer Double-Click Toggle
-1. Approach a showroom booth that has doors (e.g., `OneDoor` or `TwoDoors` layout).
-2. **Double-Click** on one of the door components.
+1. Approach a showroom booth that has doors (e.g., `OneDoor` or `TwoDoors` layout) or drawers.
+2. **Double-Click** on one of the door/drawer components.
 3. **Verify**:
-   * The door mesh component animates open or closed.
-   * The updated door state replicates to other clients, showing the open/closed state on Player 2's screen.
+   * The door/drawer component animates open or closed smoothly over approximately 1 second.
+   * Hinge doors rotate open (up to `OpenYawDelta` degrees), while drawers slide open translationally (displacing by `OpenTranslationOffset` units) based on their catalog configuration.
+   * The updated state replicates to other clients, showing the animated state on Player 2's screen.
 
 ### Scenario D: True Isolated Viewmode & UI Transition
 1. Open the main configurator UI with Player 1.

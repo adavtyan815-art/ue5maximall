@@ -10,6 +10,8 @@
 #include "TimerManager.h"
 #include "Camera/CameraComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/InputComponent.h"
+#include "InputCoreTypes.h"
 #include "EngineUtils.h"
 #include "Blueprint/UserWidget.h"
 #include "FurnitureConfigurator/UI/ConfiguratorMainWidget.h"
@@ -32,6 +34,7 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
     CurrentTargetComponent = EFurnitureComponentType::None;
     HoveredComponent = nullptr;
     bIsClosingUI = false;
+    LastClickTime = 0.f;
     
     // Default to the C++ base class so it is not empty in the Editor by default
     PreviewActorClass = AFurniturePreviewActor::StaticClass();
@@ -152,6 +155,28 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         
         HoveredComponent = NewHoveredComp;
     }
+}
+
+void AMaxiMallPreviewController::SetupInputComponent()
+{
+    Super::SetupInputComponent();
+
+    if (InputComponent)
+    {
+        InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMaxiMallPreviewController::OnLeftMouseButtonPressed);
+    }
+}
+
+void AMaxiMallPreviewController::OnLeftMouseButtonPressed()
+{
+    float CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
+
+    if (CurrentTime - LastClickTime < 0.25f)
+    {
+        HandleDoubleClickInteraction();
+    }
+    
+    LastClickTime = CurrentTime;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -516,20 +541,91 @@ void AMaxiMallPreviewController::RequestBoothProductChange(AShowroomBooth* Targe
         return;
     }
 
-    // Delegate entirely to the booth. The booth handles authority checks
-    // and server RPC forwarding internally.
-    TargetBooth->RequestProductChange(NewProductID);
+    if (GetLocalRole() == ROLE_Authority)
+    {
+        TargetBooth->RequestProductChange(NewProductID);
+    }
+    else
+    {
+        Server_RequestBoothProductChange(TargetBooth, NewProductID);
+    }
 }
 
-void AMaxiMallPreviewController::RequestBoothDoorToggle(AShowroomBooth* TargetBooth,
-                                                         int32 SlotIndex)
+void AMaxiMallPreviewController::RequestBoothDoorToggle(AShowroomBooth* TargetBooth, int32 SlotIndex)
 {
     if (!TargetBooth)
     {
         return;
     }
 
-    TargetBooth->RequestDoorToggle(SlotIndex);
+    if (GetLocalRole() == ROLE_Authority)
+    {
+        TargetBooth->RequestDoorToggle(SlotIndex);
+    }
+    else
+    {
+        Server_RequestBoothDoorToggle(TargetBooth, SlotIndex);
+    }
+}
+
+void AMaxiMallPreviewController::RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+{
+    if (!TargetBooth)
+    {
+        return;
+    }
+
+    if (GetLocalRole() == ROLE_Authority)
+    {
+        TargetBooth->RequestComponentSelection(ComponentType, SizeID, ColorID);
+    }
+    else
+    {
+        Server_RequestBoothComponentSelection(TargetBooth, ComponentType, SizeID, ColorID);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Server RPC Implementations for Booth Interactions
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AMaxiMallPreviewController::Server_RequestBoothDoorToggle_Implementation(AShowroomBooth* TargetBooth, int32 SlotIndex)
+{
+    if (TargetBooth)
+    {
+        TargetBooth->RequestDoorToggle(SlotIndex);
+    }
+}
+
+bool AMaxiMallPreviewController::Server_RequestBoothDoorToggle_Validate(AShowroomBooth* TargetBooth, int32 SlotIndex)
+{
+    return true;
+}
+
+void AMaxiMallPreviewController::Server_RequestBoothProductChange_Implementation(AShowroomBooth* TargetBooth, FName NewProductID)
+{
+    if (TargetBooth)
+    {
+        TargetBooth->RequestProductChange(NewProductID);
+    }
+}
+
+bool AMaxiMallPreviewController::Server_RequestBoothProductChange_Validate(AShowroomBooth* TargetBooth, FName NewProductID)
+{
+    return true;
+}
+
+void AMaxiMallPreviewController::Server_RequestBoothComponentSelection_Implementation(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+{
+    if (TargetBooth)
+    {
+        TargetBooth->RequestComponentSelection(ComponentType, SizeID, ColorID);
+    }
+}
+
+bool AMaxiMallPreviewController::Server_RequestBoothComponentSelection_Validate(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+{
+    return true;
 }
 
 bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBooth, EFurnitureComponentType& OutComponentType, UPrimitiveComponent*& OutHitComponent)
@@ -539,20 +635,33 @@ bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBoo
     OutHitComponent = nullptr;
 
     // Block interaction if UI is currently closing, if a preview is active, or if the configurator UI is already open on the viewport
-    if (bIsClosingUI || IsPreviewActive() || (MainWidgetInstance && MainWidgetInstance->IsInViewport()))
+    if (bIsClosingUI)
+    {
+        return false;
+    }
+    if (IsPreviewActive())
+    {
+        return false;
+    }
+    if (MainWidgetInstance && MainWidgetInstance->IsInViewport())
     {
         return false;
     }
 
     FHitResult HitResult;
     // Trace under the mouse cursor using visibility channel
-    if (GetHitResultUnderCursor(ECC_Visibility, false, HitResult))
+    const bool bHit = GetHitResultUnderCursor(ECC_Visibility, false, HitResult);
+
+    if (bHit)
     {
-        AShowroomBooth* HitBooth = Cast<AShowroomBooth>(HitResult.GetActor());
+        AActor* HitActor = HitResult.GetActor();
+        UPrimitiveComponent* HitComp = HitResult.GetComponent();
+
+        AShowroomBooth* HitBooth = Cast<AShowroomBooth>(HitActor);
         if (HitBooth)
         {
             OutBooth = HitBooth;
-            OutHitComponent = HitResult.GetComponent();
+            OutHitComponent = HitComp;
 
             // Lock in the targeted showroom booth
             CurrentTargetBooth = HitBooth;
@@ -590,6 +699,7 @@ bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBoo
             return (OutComponentType != EFurnitureComponentType::None);
         }
     }
+
     return false;
 }
 
@@ -599,7 +709,9 @@ void AMaxiMallPreviewController::HandleDoubleClickInteraction()
     EFurnitureComponentType ComponentType = EFurnitureComponentType::None;
     UPrimitiveComponent* HitComponent = nullptr;
 
-    if (TraceFurnitureComponent(HitBooth, ComponentType, HitComponent))
+    const bool bSuccess = TraceFurnitureComponent(HitBooth, ComponentType, HitComponent);
+
+    if (bSuccess)
     {
         if (ComponentType == EFurnitureComponentType::Doors)
         {

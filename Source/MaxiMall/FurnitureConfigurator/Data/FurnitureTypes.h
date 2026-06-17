@@ -238,6 +238,20 @@ struct MAXIMALL_API FDoorSlotConfig
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
     float OpenYawDelta = 90.f;
+
+    /**
+     * If true, the door/drawer opens using rotation (hinge swing).
+     * If false, it opens using translation (drawer slide).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
+    bool bIsRotation = true;
+
+    /**
+     * Translation offset applied when transitioning from Closed → Open.
+     * Only evaluated if bIsRotation is false.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
+    FVector OpenTranslationOffset = FVector(35.f, 0.f, 0.f);
 };
 
 /**

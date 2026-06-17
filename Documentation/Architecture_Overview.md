@@ -55,8 +55,14 @@ We support two distinct interaction modes to drive booth configurations and stat
      * The player controller opens **Widget 1 (Main Configurator UI)** in the main world.
      * Selecting sizes/colors in Widget 1 instantly fires authoritative server RPCs to update the booth state in real-time, replicating the visual changes to all players.
 2. **Door/Drawer Toggle**:
-   * **Trigger**: Double-clicking on a door slot component in the main world.
-   * **Behavior**: Fires `Server_ToggleDoor` RPC to open/close the door mesh with localized rotation/translation.
+   * **Trigger**: Double-clicking on a door or drawer component in the main world.
+   * **Input Binding**: Handled natively in C++ inside `AMaxiMallPreviewController::SetupInputComponent` by binding the `Left Mouse Button` pressed state. Click delta time is monitored to filter out double-clicks, bypassing potential Blueprint mouse-click consumption blocks.
+   * **Behavior**: Fires `Server_ToggleDoor` RPC to open/close the door or drawer mesh.
+   * **Visual Movement & Animation**:
+     * Visuals are driven by DataTable configuration (`bIsRotation` for swinging hinge doors vs `false` for sliding translational drawers).
+     * Smooth movement is animated using an optimized repeating timer loop (`FTimerManager`) running at 60 FPS in C++ (`AShowroomBooth::UpdateDoorAnimation`). This avoids Unreal's class default object (CDO) serialization bugs where `bCanEverTick` from C++ constructors fails to propagate to pre-existing Blueprints.
+     * The door/drawer interpolates relative location/rotation over approximately **1 second** using `FMath::VInterpTo` and `FMath::RInterpTo` with an interpolation speed of `5.0f`.
+     * Once all active animations complete, the timer automatically clears itself to conserve CPU cycles.
 
 ---
 
