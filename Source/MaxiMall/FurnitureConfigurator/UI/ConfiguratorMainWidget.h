@@ -10,8 +10,47 @@
 class UTextBlock;
 class UButton;
 class UComboBoxString;
+class UPanelWidget;
 class AMaxiMallPreviewController;
 class AShowroomBooth;
+
+UENUM(BlueprintType)
+enum class EOptionType : uint8
+{
+    Size,
+    Color
+};
+
+UCLASS()
+class MAXIMALL_API UFurnitureOptionListener : public UObject
+{
+    GENERATED_BODY()
+
+public:
+    void Init(class UConfiguratorMainWidget* InOwnerWidget, EFurnitureComponentType InComponent, EOptionType InType, FName InOptionID)
+    {
+        OwnerWidget = InOwnerWidget;
+        Component = InComponent;
+        Type = InType;
+        OptionID = InOptionID;
+    }
+
+    UFUNCTION()
+    void OnButtonClicked();
+
+    UFUNCTION()
+    void OnButtonHovered();
+
+    UFUNCTION()
+    void OnButtonUnhovered();
+
+    UPROPERTY()
+    TObjectPtr<class UConfiguratorMainWidget> OwnerWidget;
+
+    EFurnitureComponentType Component;
+    EOptionType Type;
+    FName OptionID;
+};
 
 /**
  * UConfiguratorMainWidget
@@ -82,6 +121,18 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UComboBoxString> Combo_Mirror_Color;
 
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UPanelWidget> Size_Container;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UPanelWidget> Color_Container;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> Txt_SelectionName;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> Txt_SelectionDescription;
+
     // ── DELEGATE CALLBACKS ───────────────────────────────────────────────────
 
     UFUNCTION()
@@ -141,7 +192,14 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void RefreshSelections();
 
+    void HandleOptionSelected(EFurnitureComponentType Component, EOptionType Type, FName OptionID);
+    void HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, FName OptionID);
+    void HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, FName OptionID);
+
 private:
+    UPROPERTY()
+    TArray<TObjectPtr<UFurnitureOptionListener>> OptionListeners;
+
     UPROPERTY()
     TObjectPtr<AMaxiMallPreviewController> OwningPC;
 

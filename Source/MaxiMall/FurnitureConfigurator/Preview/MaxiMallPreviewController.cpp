@@ -196,6 +196,11 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         return;
     }
 
+    if (FocusComponent == EFurnitureComponentType::Doors)
+    {
+        FocusComponent = EFurnitureComponentType::Cabinet;
+    }
+
     CurrentTargetComponent = FocusComponent;
 
     // Safety check: Ensure we have a possessed pawn before allowing preview mode
@@ -300,6 +305,15 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         {
         case EFurnitureComponentType::Cabinet:
             if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
+            if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+            {
+                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+            }
+            else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+            {
+                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
+            }
             break;
         case EFurnitureComponentType::Closet:
             if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
@@ -772,6 +786,15 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                 {
                 case EFurnitureComponentType::Cabinet:
                     if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
+                    if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+                    {
+                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+                    }
+                    else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+                    {
+                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
+                        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
+                    }
                     break;
                 case EFurnitureComponentType::Closet:
                     if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
@@ -836,6 +859,11 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
     if (bOpen)
     {
         if (!Booth) return;
+
+        if (Component == EFurnitureComponentType::Doors)
+        {
+            Component = EFurnitureComponentType::Cabinet;
+        }
 
         // Disable character look/move inputs to prevent character movement/rotation during configuration
         ResetIgnoreInputFlags();

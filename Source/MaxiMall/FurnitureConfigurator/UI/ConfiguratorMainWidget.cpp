@@ -4,8 +4,36 @@
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
 #include "Components/ComboBoxString.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Image.h"
+#include "Components/PanelWidget.h"
+#include "Engine/Texture2D.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
+
+void UFurnitureOptionListener::OnButtonClicked()
+{
+    if (OwnerWidget)
+    {
+        OwnerWidget->HandleOptionSelected(Component, Type, OptionID);
+    }
+}
+
+void UFurnitureOptionListener::OnButtonHovered()
+{
+    if (OwnerWidget)
+    {
+        OwnerWidget->HandleOptionHovered(Component, Type, OptionID);
+    }
+}
+
+void UFurnitureOptionListener::OnButtonUnhovered()
+{
+    if (OwnerWidget)
+    {
+        OwnerWidget->HandleOptionUnhovered(Component, Type, OptionID);
+    }
+}
 
 void UConfiguratorMainWidget::NativeConstruct()
 {
@@ -149,7 +177,72 @@ void UConfiguratorMainWidget::RefreshSelections()
             bool bIsValidMesh = IsComponentMeshValid(Booth, ActiveComponent);
             ESlateVisibility TargetVisibility = bIsValidMesh ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 
-            if (Combo_Size)
+            // Clear option listeners when regenerating layout
+            OptionListeners.Empty();
+
+            // Set default / active selection details first
+            if (bIsValidMesh)
+            {
+                FText ActiveNameText;
+                FText ActiveDescText;
+                for (const FFurnitureColorOption& ColorOpt : ActiveOpts.Colors)
+                {
+                    if (ColorOpt.ColorID == ActiveState.SelectedColorID)
+                    {
+                        ActiveNameText = ColorOpt.DisplayName;
+                        ActiveDescText = ColorOpt.Description;
+                        break;
+                    }
+                }
+
+                if (Txt_SelectionName)
+                {
+                    Txt_SelectionName->SetText(ActiveNameText);
+                }
+                if (Txt_SelectionDescription)
+                {
+                    Txt_SelectionDescription->SetText(ActiveDescText);
+                }
+            }
+
+            // ── SIZE SELECTORS ──
+            if (Size_Container)
+            {
+                Size_Container->SetVisibility(TargetVisibility);
+                Size_Container->ClearChildren();
+                if (Combo_Size)
+                {
+                    Combo_Size->SetVisibility(ESlateVisibility::Collapsed);
+                }
+
+                if (bIsValidMesh)
+                {
+                    for (const FFurnitureSizeOption& SizeOpt : ActiveOpts.Sizes)
+                    {
+                        UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                        if (NewBtn)
+                        {
+                            UTextBlock* BtnText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+                            if (BtnText)
+                            {
+                                BtnText->SetText(SizeOpt.DisplayName);
+                                NewBtn->AddChild(BtnText);
+                            }
+
+                            UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
+                            Listener->Init(this, ActiveComponent, EOptionType::Size, SizeOpt.SizeID);
+                            OptionListeners.Add(Listener);
+
+                            NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
+                            NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
+                            NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
+
+                            Size_Container->AddChild(NewBtn);
+                        }
+                    }
+                }
+            }
+            else if (Combo_Size)
             {
                 Combo_Size->SetVisibility(TargetVisibility);
                 if (bIsValidMesh)
@@ -165,7 +258,51 @@ void UConfiguratorMainWidget::RefreshSelections()
                 }
             }
 
-            if (Combo_Color)
+            // ── COLOR SELECTORS ──
+            if (Color_Container)
+            {
+                Color_Container->SetVisibility(TargetVisibility);
+                Color_Container->ClearChildren();
+                if (Combo_Color)
+                {
+                    Combo_Color->SetVisibility(ESlateVisibility::Collapsed);
+                }
+
+                if (bIsValidMesh)
+                {
+                    for (const FFurnitureColorOption& ColorOpt : ActiveOpts.Colors)
+                    {
+                        UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                        if (NewBtn)
+                        {
+                            UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+                            if (BtnImg)
+                            {
+                                if (!ColorOpt.Thumbnail.IsNull())
+                                {
+                                    UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
+                                    if (LoadedTex)
+                                    {
+                                        BtnImg->SetBrushFromTexture(LoadedTex);
+                                    }
+                                }
+                                NewBtn->AddChild(BtnImg);
+                            }
+
+                            UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
+                            Listener->Init(this, ActiveComponent, EOptionType::Color, ColorOpt.ColorID);
+                            OptionListeners.Add(Listener);
+
+                            NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
+                            NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
+                            NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
+
+                            Color_Container->AddChild(NewBtn);
+                        }
+                    }
+                }
+            }
+            else if (Combo_Color)
             {
                 Combo_Color->SetVisibility(TargetVisibility);
                 if (bIsValidMesh)
@@ -548,4 +685,86 @@ void UConfiguratorMainWidget::OnMirrorSizeChanged(FString SelectedItem, ESelectI
 void UConfiguratorMainWidget::OnMirrorColorChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
     UpdateSelectionForComponent(EFurnitureComponentType::Mirror, Combo_Mirror_Size, Combo_Mirror_Color);
+}
+
+void UConfiguratorMainWidget::HandleOptionSelected(EFurnitureComponentType Component, EOptionType Type, FName OptionID)
+{
+    AShowroomBooth* Booth = TargetBooth.Get();
+    if (!Booth || !OwningPC) return;
+
+    FFurnitureProductRow ProductData;
+    if (Booth->GetActiveProductData(ProductData))
+    {
+        FFurnitureComponentOptions Opts;
+        FFurnitureComponentState State;
+        if (GetComponentOptionsAndState(ProductData, Booth->ActiveState, Component, Opts, State))
+        {
+            if (Type == EOptionType::Size)
+            {
+                OwningPC->RequestBoothComponentSelection(Booth, Component, OptionID, State.SelectedColorID);
+            }
+            else
+            {
+                OwningPC->RequestBoothComponentSelection(Booth, Component, State.SelectedSizeID, OptionID);
+            }
+        }
+    }
+}
+
+void UConfiguratorMainWidget::HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, FName OptionID)
+{
+    AShowroomBooth* Booth = TargetBooth.Get();
+    if (!Booth) return;
+
+    FFurnitureProductRow ProductData;
+    if (Booth->GetActiveProductData(ProductData))
+    {
+        FFurnitureComponentOptions Opts;
+        FFurnitureComponentState State;
+        if (GetComponentOptionsAndState(ProductData, Booth->ActiveState, Component, Opts, State))
+        {
+            FText DisplayNameText;
+            FText DescriptionText;
+
+            if (Type == EOptionType::Size)
+            {
+                for (const FFurnitureSizeOption& SizeOpt : Opts.Sizes)
+                {
+                    if (SizeOpt.SizeID == OptionID)
+                    {
+                        DisplayNameText = SizeOpt.DisplayName;
+                        DescriptionText = SizeOpt.Description;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                for (const FFurnitureColorOption& ColorOpt : Opts.Colors)
+                {
+                    if (ColorOpt.ColorID == OptionID)
+                    {
+                        DisplayNameText = ColorOpt.DisplayName;
+                        DescriptionText = ColorOpt.Description;
+                        break;
+                    }
+                }
+            }
+
+            if (Txt_SelectionName)
+            {
+                Txt_SelectionName->SetText(DisplayNameText);
+            }
+            if (Txt_SelectionDescription)
+            {
+                Txt_SelectionDescription->SetText(DescriptionText);
+            }
+        }
+    }
+}
+
+void UConfiguratorMainWidget::HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, FName OptionID)
+{
+    // Restore text to show active selection details
+    RefreshSelections();
 }

@@ -449,6 +449,11 @@ void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureCom
     case EFurnitureComponentType::Cabinet:
         ActiveState.CabinetState.SelectedSizeID = SizeID;
         ActiveState.CabinetState.SelectedColorID = ColorID;
+        // Synchronize size across Cabinet, Countertop, and Doors
+        ActiveState.CountertopState.SelectedSizeID = SizeID;
+        ActiveState.DoorState.SelectedSizeID = SizeID;
+        // Synchronize color across Cabinet and Doors
+        ActiveState.DoorState.SelectedColorID = ColorID;
         break;
     case EFurnitureComponentType::Closet:
         ActiveState.ClosetState.SelectedSizeID = SizeID;
@@ -895,10 +900,11 @@ void AShowroomBooth::InitializeDefaultStateForProduct(FShowroomBoothConfigState&
     State.ClosetState.SelectedSizeID = GetDefaultSize(Row.ClosetOptions);
     State.ClosetState.SelectedColorID = GetDefaultColor(Row.ClosetOptions);
 
-    State.DoorState.SelectedSizeID = GetDefaultSize(Row.DoorOptions);
-    State.DoorState.SelectedColorID = GetDefaultColor(Row.DoorOptions);
+    // Synchronize default size and color of Doors/Countertop with Cabinet
+    State.DoorState.SelectedSizeID = State.CabinetState.SelectedSizeID;
+    State.DoorState.SelectedColorID = State.CabinetState.SelectedColorID;
 
-    State.CountertopState.SelectedSizeID = GetDefaultSize(Row.CountertopOptions);
+    State.CountertopState.SelectedSizeID = State.CabinetState.SelectedSizeID;
     State.CountertopState.SelectedColorID = GetDefaultColor(Row.CountertopOptions);
 
     State.SinkState.SelectedSizeID = GetDefaultSize(Row.SinkOptions);

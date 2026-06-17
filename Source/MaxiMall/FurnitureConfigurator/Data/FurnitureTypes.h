@@ -128,6 +128,9 @@ struct MAXIMALL_API FFurnitureSizeOption
     FText DisplayName;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Size Option")
+    FText Description;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Size Option")
     TSoftObjectPtr<UStaticMesh> Mesh;
 };
 
@@ -144,6 +147,12 @@ struct MAXIMALL_API FFurnitureColorOption
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option")
     FText DisplayName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option")
+    FText Description;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option")
+    TSoftObjectPtr<UTexture2D> Thumbnail;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option")
     TArray<FFurnitureMaterialSlot> MaterialOverrides;
