@@ -336,7 +336,7 @@ protected:
      * Applies dynamic size and color selections to target door components using the dedicated door options struct.
      */
     void ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
-                                   const FFurnitureDoorOptions& Options,
+                                   const FFurnitureDoorGroup& DoorGroup,
                                    int32 SizeIndex,
                                    int32 ColorIndex,
                                    int32 SlotIndex);

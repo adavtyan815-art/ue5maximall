@@ -144,7 +144,7 @@ struct MAXIMALL_API FFurnitureComponentOptions
 };
 
 /**
- * A door color/material option containing material overrides, with no Thumbnail.
+ * A door color/material option containing material overrides for a single door mesh, with no Thumbnail.
  */
 USTRUCT(BlueprintType)
 struct MAXIMALL_API FFurnitureDoorColorOption
@@ -156,34 +156,149 @@ struct MAXIMALL_API FFurnitureDoorColorOption
 };
 
 /**
- * Wraps size and color options specifically for Doors.
- */
-/**
- * Wraps size options specifically for Doors to support multiple mesh allocations per size index.
+ * Size options for double doors, holding exactly two explicit mesh slots.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureDoorSizeOption
+struct MAXIMALL_API FFurnitureDoubleDoorsSizeOption
 {
     GENERATED_BODY()
 
-    /** Meshes for this size index. Index 0 = Left / Single Door, Index 1 = Right Door. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door Size Option")
-    TArray<TSoftObjectPtr<UStaticMesh>> DoorMeshes;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sizes")
+    TSoftObjectPtr<UStaticMesh> Slot0Mesh;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sizes")
+    TSoftObjectPtr<UStaticMesh> Slot1Mesh;
 };
 
 /**
- * Wraps size and color options specifically for Doors.
+ * Color options for double doors, holding two separate material override blocks.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureDoorOptions
+struct MAXIMALL_API FFurnitureDoubleDoorsColorOption
 {
     GENERATED_BODY()
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door Options")
-    TArray<FFurnitureDoorSizeOption> Sizes;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Colors")
+    TArray<FFurnitureMaterialSlot> Slot0MaterialOverrides;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door Options")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Colors")
+    TArray<FFurnitureMaterialSlot> Slot1MaterialOverrides;
+};
+
+/**
+ * Describes a door slot's resting offset from the cabinet pivot in local space
+ * and the angular offset applied when the door transitions to the Open state.
+ *
+ * Both offsets are relative to the MainCabinet component's local origin so the
+ * designer-established world placement is never overwritten — only the delta
+ * between "product A door position" and "product B door position" is applied.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FDoorSlotConfig
+{
+    GENERATED_BODY()
+
+    /**
+     * Closed-state position offset from the cabinet local origin.
+     * Set this in the DataTable to match the physical door pivot on the mesh.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
+    FVector ClosedPositionOffset = FVector::ZeroVector;
+
+    /**
+     * Yaw rotation offset (degrees) added to the component when transitioning
+     * from Closed → Open. Negative = swing left, Positive = swing right.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
+    float OpenYawDelta = 90.f;
+
+    /**
+     * If true, the door/drawer opens using rotation (hinge swing).
+     * If false, it opens using translation (drawer slide).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
+    bool bIsRotation = true;
+
+    /**
+     * Translation offset applied when transitioning from Closed → Open.
+     * Only evaluated if bIsRotation is false.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
+    FVector OpenTranslationOffset = FVector(35.f, 0.f, 0.f);
+};
+
+/**
+ * Configuration schema strictly for a single door setup.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureSingleDoorConfig
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors")
+    FDoorSlotConfig SlotConfig;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors")
+    TArray<TSoftObjectPtr<UStaticMesh>> Sizes;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors")
     TArray<FFurnitureDoorColorOption> Colors;
+};
+
+/**
+ * Configuration schema strictly for a double doors setup.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureDoubleDoorsConfig
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors")
+    FDoorSlotConfig Slot0Config;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors")
+    FDoorSlotConfig Slot1Config;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors")
+    TArray<FFurnitureDoubleDoorsSizeOption> Sizes;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors")
+    TArray<FFurnitureDoubleDoorsColorOption> Colors;
+};
+
+/**
+ * Combines configuration for single or double doors, visible conditionally in details panel.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureDoorGroup
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors")
+    EDoorCount DoorCount = EDoorCount::TwoDoors;
+
+    /** Active only if DoorCount == SingleDoor */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors", meta = (EditCondition = "DoorCount == 1"))
+    FFurnitureSingleDoorConfig SingleDoor;
+
+    /** Active only if DoorCount == TwoDoors */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors", meta = (EditCondition = "DoorCount == 2"))
+    FFurnitureDoubleDoorsConfig DoubleDoors;
+};
+
+/**
+ * Unified doors configuration splits cabinet and closet doors.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureDoorsConfig
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cabinet Doors")
+    FFurnitureDoorGroup CabinetDoors;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Closet Doors")
+    FFurnitureDoorGroup ClosetDoors;
 };
 
 /**
@@ -231,47 +346,6 @@ struct MAXIMALL_API FShowroomBoothConfigState
     int32 MirrorColorIndex = 0;
 };
 
-/**
- * Describes a door slot's resting offset from the cabinet pivot in local space
- * and the angular offset applied when the door transitions to the Open state.
- *
- * Both offsets are relative to the MainCabinet component's local origin so the
- * designer-established world placement is never overwritten — only the delta
- * between "product A door position" and "product B door position" is applied.
- */
-USTRUCT(BlueprintType)
-struct MAXIMALL_API FDoorSlotConfig
-{
-    GENERATED_BODY()
-
-    /**
-     * Closed-state position offset from the cabinet local origin.
-     * Set this in the DataTable to match the physical door pivot on the mesh.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
-    FVector ClosedPositionOffset = FVector::ZeroVector;
-
-    /**
-     * Yaw rotation offset (degrees) added to the component when transitioning
-     * from Closed → Open. Negative = swing left, Positive = swing right.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
-    float OpenYawDelta = 90.f;
-
-    /**
-     * If true, the door/drawer opens using rotation (hinge swing).
-     * If false, it opens using translation (drawer slide).
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
-    bool bIsRotation = true;
-
-    /**
-     * Translation offset applied when transitioning from Closed → Open.
-     * Only evaluated if bIsRotation is false.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
-    FVector OpenTranslationOffset = FVector(35.f, 0.f, 0.f);
-};
 
 /**
  * Relative transform offset (in the countertop's local space) for the
@@ -345,23 +419,9 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     // ── Doors ─────────────────────────────────────────────────────────────
 
-    /** How many doors this model physically has. Drives slot visibility. */
+    /** Unified doors configuration for cabinet and closet doors. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Doors")
-    EDoorCount DoorCount = EDoorCount::TwoDoors;
-
-    /**
-     * Per-slot positional config. Index 0 = left/single door. Index 1 = right door.
-     * Only Index 0 is used when DoorCount == OneDoor. Both ignored for NoDoors.
-     *
-     * Note: Populate exactly 2 entries in the DataTable editor.
-     * Accessed as DoorSlots[0] and DoorSlots[1] at runtime.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Doors")
-    TArray<FDoorSlotConfig> DoorSlots;
-
-    /** Door mesh and color options. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Doors")
-    FFurnitureDoorOptions DoorOptions;
+    FFurnitureDoorsConfig DoorsConfig;
 
     // ── Countertop ────────────────────────────────────────────────────────
 

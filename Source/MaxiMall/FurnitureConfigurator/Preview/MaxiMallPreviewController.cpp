@@ -305,11 +305,11 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         {
         case EFurnitureComponentType::Cabinet:
             if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
-            if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+            if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
             {
                 if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
             }
-            else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+            else if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::TwoDoors)
             {
                 if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
                 if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
@@ -319,11 +319,11 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
             if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
             break;
         case EFurnitureComponentType::Doors:
-            if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+            if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
             {
                 if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
             }
-            else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+            else if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::TwoDoors)
             {
                 if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
                 if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
@@ -786,11 +786,11 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                 {
                 case EFurnitureComponentType::Cabinet:
                     if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
-                    if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+                    if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
                     {
                         if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
                     }
-                    else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+                    else if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::TwoDoors)
                     {
                         if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
                         if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
@@ -800,11 +800,11 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                     if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
                     break;
                 case EFurnitureComponentType::Doors:
-                    if (ProductSnapshot.DoorCount == EDoorCount::OneDoor)
+                    if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
                     {
                         if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
                     }
-                    else if (ProductSnapshot.DoorCount == EDoorCount::TwoDoors)
+                    else if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::TwoDoors)
                     {
                         if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
                         if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);

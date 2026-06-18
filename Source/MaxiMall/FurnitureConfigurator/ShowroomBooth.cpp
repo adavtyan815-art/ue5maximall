@@ -143,7 +143,16 @@ bool AShowroomBooth::AnimateDoorSlot(UStaticMeshComponent* Slot, int32 SlotIndex
     const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
     if (!Row) return false;
 
-    const FDoorSlotConfig SlotCfg = Row->DoorSlots.IsValidIndex(SlotIndex) ? Row->DoorSlots[SlotIndex] : FDoorSlotConfig();
+    FDoorSlotConfig SlotCfg;
+    const FFurnitureDoorGroup& CabDoors = Row->DoorsConfig.CabinetDoors;
+    if (CabDoors.DoorCount == EDoorCount::OneDoor)
+    {
+        SlotCfg = CabDoors.SingleDoor.SlotConfig;
+    }
+    else if (CabDoors.DoorCount == EDoorCount::TwoDoors)
+    {
+        SlotCfg = (SlotIndex == 0) ? CabDoors.DoubleDoors.Slot0Config : CabDoors.DoubleDoors.Slot1Config;
+    }
 
     FTransform BaselineTransform = (SlotIndex == 0) ? BaselineDoor0Transform : BaselineDoor1Transform;
     if (BaselineTransform.GetScale3D().IsNearlyZero())
@@ -513,7 +522,17 @@ void AShowroomBooth::Server_ToggleDoor_Implementation(int32 SlotIndex)
     const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
     if (Row)
     {
-        const FDoorSlotConfig SlotCfg = Row->DoorSlots.IsValidIndex(SlotIndex) ? Row->DoorSlots[SlotIndex] : FDoorSlotConfig();
+        FDoorSlotConfig SlotCfg;
+        const FFurnitureDoorGroup& CabDoors = Row->DoorsConfig.CabinetDoors;
+        if (CabDoors.DoorCount == EDoorCount::OneDoor)
+        {
+            SlotCfg = CabDoors.SingleDoor.SlotConfig;
+        }
+        else if (CabDoors.DoorCount == EDoorCount::TwoDoors)
+        {
+            SlotCfg = (SlotIndex == 0) ? CabDoors.DoubleDoors.Slot0Config : CabDoors.DoubleDoors.Slot1Config;
+        }
+
         UStaticMeshComponent* Slot = (SlotIndex == 0) ? DoorMeshSlot0.Get() : DoorMeshSlot1.Get();
         ApplyDoorSlotVisual(Slot, DoorStates[SlotIndex], SlotCfg);
     }
@@ -549,16 +568,32 @@ void AShowroomBooth::OnRep_DoorStates()
         return;
     }
 
+    const FFurnitureDoorGroup& CabDoors = Row->DoorsConfig.CabinetDoors;
+
     if (DoorStates.IsValidIndex(0))
     {
-        const FDoorSlotConfig Cfg0 = Row->DoorSlots.IsValidIndex(0) ? Row->DoorSlots[0] : FDoorSlotConfig();
+        FDoorSlotConfig Cfg0;
+        if (CabDoors.DoorCount == EDoorCount::OneDoor)
+        {
+            Cfg0 = CabDoors.SingleDoor.SlotConfig;
+        }
+        else if (CabDoors.DoorCount == EDoorCount::TwoDoors)
+        {
+            Cfg0 = CabDoors.DoubleDoors.Slot0Config;
+        }
+
         ApplyDoorSlotVisual(DoorMeshSlot0.Get(), DoorStates[0], Cfg0);
         OnDoorStateChanged.Broadcast(this, 0, DoorStates[0]);
     }
 
     if (DoorStates.IsValidIndex(1))
     {
-        const FDoorSlotConfig Cfg1 = Row->DoorSlots.IsValidIndex(1) ? Row->DoorSlots[1] : FDoorSlotConfig();
+        FDoorSlotConfig Cfg1;
+        if (CabDoors.DoorCount == EDoorCount::TwoDoors)
+        {
+            Cfg1 = CabDoors.DoubleDoors.Slot1Config;
+        }
+
         ApplyDoorSlotVisual(DoorMeshSlot1.Get(), DoorStates[1], Cfg1);
         OnDoorStateChanged.Broadcast(this, 1, DoorStates[1]);
     }
@@ -680,7 +715,7 @@ void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target
 }
 
 void AShowroomBooth::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
-                                               const FFurnitureDoorOptions& Options,
+                                               const FFurnitureDoorGroup& DoorGroup,
                                                int32 SizeIndex,
                                                int32 ColorIndex,
                                                int32 SlotIndex)
@@ -690,17 +725,64 @@ void AShowroomBooth::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
         return;
     }
 
-    TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
-    if (Options.Sizes.IsValidIndex(SizeIndex))
+    TSoftObjectPtr<UStaticMesh> TargetMeshPtr = nullptr;
+    TArray<FFurnitureMaterialSlot> MaterialOverrides;
+    bool bHasSelectedColor = false;
+
+    if (DoorGroup.DoorCount == EDoorCount::OneDoor)
     {
-        const TArray<TSoftObjectPtr<UStaticMesh>>& Meshes = Options.Sizes[SizeIndex].DoorMeshes;
-        if (Meshes.IsValidIndex(SlotIndex))
+        const FFurnitureSingleDoorConfig& SingleCfg = DoorGroup.SingleDoor;
+        if (SingleCfg.Sizes.IsValidIndex(SizeIndex))
         {
-            TargetMeshPtr = Meshes[SlotIndex];
+            TargetMeshPtr = SingleCfg.Sizes[SizeIndex];
         }
-        else if (Meshes.Num() > 0)
+        else if (SingleCfg.Sizes.Num() > 0)
         {
-            TargetMeshPtr = Meshes[0]; // Fallback to first mesh if slot-specific mesh doesn't exist (e.g. symmetric layout)
+            TargetMeshPtr = SingleCfg.Sizes[0];
+        }
+
+        const FFurnitureDoorColorOption* SelectedColor = nullptr;
+        if (SingleCfg.Colors.IsValidIndex(ColorIndex))
+        {
+            SelectedColor = &SingleCfg.Colors[ColorIndex];
+        }
+        else if (SingleCfg.Colors.Num() > 0)
+        {
+            SelectedColor = &SingleCfg.Colors[0];
+        }
+
+        if (SelectedColor)
+        {
+            MaterialOverrides = SelectedColor->MaterialOverrides;
+            bHasSelectedColor = true;
+        }
+    }
+    else if (DoorGroup.DoorCount == EDoorCount::TwoDoors)
+    {
+        const FFurnitureDoubleDoorsConfig& DoubleCfg = DoorGroup.DoubleDoors;
+        if (DoubleCfg.Sizes.IsValidIndex(SizeIndex))
+        {
+            TargetMeshPtr = (SlotIndex == 0) ? DoubleCfg.Sizes[SizeIndex].Slot0Mesh : DoubleCfg.Sizes[SizeIndex].Slot1Mesh;
+        }
+        else if (DoubleCfg.Sizes.Num() > 0)
+        {
+            TargetMeshPtr = (SlotIndex == 0) ? DoubleCfg.Sizes[0].Slot0Mesh : DoubleCfg.Sizes[0].Slot1Mesh;
+        }
+
+        const FFurnitureDoubleDoorsColorOption* SelectedColor = nullptr;
+        if (DoubleCfg.Colors.IsValidIndex(ColorIndex))
+        {
+            SelectedColor = &DoubleCfg.Colors[ColorIndex];
+        }
+        else if (DoubleCfg.Colors.Num() > 0)
+        {
+            SelectedColor = &DoubleCfg.Colors[0];
+        }
+
+        if (SelectedColor)
+        {
+            MaterialOverrides = (SlotIndex == 0) ? SelectedColor->Slot0MaterialOverrides : SelectedColor->Slot1MaterialOverrides;
+            bHasSelectedColor = true;
         }
     }
 
@@ -725,19 +807,9 @@ void AShowroomBooth::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
             Target->SetMaterial(i, nullptr);
         }
 
-        const FFurnitureDoorColorOption* SelectedColor = nullptr;
-        if (Options.Colors.IsValidIndex(ColorIndex))
+        if (bHasSelectedColor)
         {
-            SelectedColor = &Options.Colors[ColorIndex];
-        }
-        else if (Options.Colors.Num() > 0)
-        {
-            SelectedColor = &Options.Colors[0];
-        }
-
-        if (SelectedColor)
-        {
-            for (const FFurnitureMaterialSlot& SlotOverride : SelectedColor->MaterialOverrides)
+            for (const FFurnitureMaterialSlot& SlotOverride : MaterialOverrides)
             {
                 UMaterialInterface* LoadedMat = SlotOverride.Material.LoadSynchronous();
                 if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
@@ -757,13 +829,17 @@ void AShowroomBooth::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
 
 void AShowroomBooth::ApplyDoorConfiguration(const FFurnitureProductRow& Data)
 {
-    ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), Data.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 0);
-    ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), Data.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 1);
+    InitializeDoorStateArray();
+
+    const FFurnitureDoorGroup& CabDoors = Data.DoorsConfig.CabinetDoors;
+
+    ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), CabDoors, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 0);
+    ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), CabDoors, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 1);
 
     EDoorSlotState Slot0State = EDoorSlotState::NotPresent;
     EDoorSlotState Slot1State = EDoorSlotState::NotPresent;
 
-    switch (Data.DoorCount)
+    switch (CabDoors.DoorCount)
     {
     case EDoorCount::OneDoor:
         Slot0State = EDoorSlotState::Closed;
@@ -789,8 +865,19 @@ void AShowroomBooth::ApplyDoorConfiguration(const FFurnitureProductRow& Data)
     }
 
     // Apply visual state instantly without animation on full catalog/product change (runs on all machines).
-    const FDoorSlotConfig Cfg0 = Data.DoorSlots.IsValidIndex(0) ? Data.DoorSlots[0] : FDoorSlotConfig();
-    const FDoorSlotConfig Cfg1 = Data.DoorSlots.IsValidIndex(1) ? Data.DoorSlots[1] : FDoorSlotConfig();
+    FDoorSlotConfig Cfg0 = FDoorSlotConfig();
+    FDoorSlotConfig Cfg1 = FDoorSlotConfig();
+
+    if (CabDoors.DoorCount == EDoorCount::OneDoor)
+    {
+        Cfg0 = CabDoors.SingleDoor.SlotConfig;
+    }
+    else if (CabDoors.DoorCount == EDoorCount::TwoDoors)
+    {
+        Cfg0 = CabDoors.DoubleDoors.Slot0Config;
+        Cfg1 = CabDoors.DoubleDoors.Slot1Config;
+    }
+
     ApplyDoorSlotVisual(DoorMeshSlot0.Get(), DoorStates[0], Cfg0, false);
     ApplyDoorSlotVisual(DoorMeshSlot1.Get(), DoorStates[1], Cfg1, false);
 }
