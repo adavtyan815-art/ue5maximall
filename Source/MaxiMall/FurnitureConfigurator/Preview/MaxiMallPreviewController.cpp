@@ -1053,19 +1053,45 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
         return false;
     }
 
+    // Since Cabinet (and Doors, which mapped to Cabinet) uses FFurnitureCabinetOptions,
+    // and other components use FFurnitureComponentOptions, we need to handle them separately.
+
+    if (ComponentType == EFurnitureComponentType::Cabinet || ComponentType == EFurnitureComponentType::Doors)
+    {
+        int32 TargetSizeIndex = CurrentTargetBooth->ActiveState.ActiveSizeIndex;
+        int32 TargetColorIndex = CurrentTargetBooth->ActiveState.ActiveColorIndex;
+        
+        // Search for combination match in the Cabinet metadata matrix
+        for (const FFurnitureMetadataEntry& Entry : Row->CabinetOptions.CombinationsMetadata)
+        {
+            if (Entry.SizeIndex == TargetSizeIndex && Entry.ColorIndex == TargetColorIndex)
+            {
+                OutProductName = Entry.Metadata.ProductName;
+                OutSKU = Entry.Metadata.SKU;
+                OutURL = Entry.Metadata.URL;
+                return true;
+            }
+        }
+        
+        // Fallback: If no combination is found, try to use the first combination
+        if (Row->CabinetOptions.CombinationsMetadata.Num() > 0)
+        {
+            const FFurnitureMetadata& Fallback = Row->CabinetOptions.CombinationsMetadata[0].Metadata;
+            OutProductName = Fallback.ProductName;
+            OutSKU = Fallback.SKU;
+            OutURL = Fallback.URL;
+            return true;
+        }
+        
+        return false;
+    }
+
     const FFurnitureComponentOptions* TargetOptions = nullptr;
     int32 TargetSizeIndex = 0;
     int32 TargetColorIndex = 0;
 
     switch (ComponentType)
     {
-    case EFurnitureComponentType::Cabinet:
-    case EFurnitureComponentType::Doors:
-        TargetOptions = &Row->CabinetOptions;
-        TargetSizeIndex = CurrentTargetBooth->ActiveState.ActiveSizeIndex;
-        TargetColorIndex = CurrentTargetBooth->ActiveState.ActiveColorIndex;
-        break;
-
     case EFurnitureComponentType::Countertop:
         TargetOptions = &Row->CountertopOptions;
         TargetSizeIndex = CurrentTargetBooth->ActiveState.ActiveSizeIndex;
@@ -1105,7 +1131,7 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
         return false;
     }
 
-    // Search for combination match in the matrix
+    // Search for combination match in the component metadata matrix
     for (const FFurnitureMetadataEntry& Entry : TargetOptions->CombinationsMetadata)
     {
         if (Entry.SizeIndex == TargetSizeIndex && Entry.ColorIndex == TargetColorIndex)

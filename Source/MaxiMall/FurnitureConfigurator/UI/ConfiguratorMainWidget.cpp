@@ -10,6 +10,12 @@
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
 #include "Engine/Engine.h"
+#include "Components/ScrollBox.h"
+#include "Components/UniformGridPanel.h"
+#include "Components/UniformGridSlot.h"
+#include "Components/SizeBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/WrapBoxSlot.h"
 
 void UFurnitureOptionListener::OnButtonClicked()
 {
@@ -76,33 +82,6 @@ void UConfiguratorMainWidget::RefreshSelections()
     FFurnitureProductRow ProductData;
     if (Booth->GetActiveProductData(ProductData))
     {
-        // ── Setup active right-clicked component selectors ────────────────────
-        FFurnitureComponentOptions ActiveOpts;
-        if (ActiveComponent == EFurnitureComponentType::Countertop)
-        {
-            ActiveOpts = ProductData.CountertopOptions;
-        }
-        else if (ActiveComponent == EFurnitureComponentType::Closet)
-        {
-            ActiveOpts = ProductData.ClosetOptions;
-        }
-        else if (ActiveComponent == EFurnitureComponentType::Sink)
-        {
-            ActiveOpts = ProductData.SinkOptions;
-        }
-        else if (ActiveComponent == EFurnitureComponentType::Faucet)
-        {
-            ActiveOpts = ProductData.FaucetOptions;
-        }
-        else if (ActiveComponent == EFurnitureComponentType::Mirror)
-        {
-            ActiveOpts = ProductData.MirrorOptions;
-        }
-        else
-        {
-            ActiveOpts = ProductData.CabinetOptions;
-        }
-
         // Gate optional component visibility — if the component's mesh is missing/null, collapse the UI selectors
         bool bIsValidMesh = IsComponentMeshValid(Booth, ActiveComponent);
         ESlateVisibility TargetVisibility = bIsValidMesh ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
@@ -110,42 +89,202 @@ void UConfiguratorMainWidget::RefreshSelections()
         // Clear option listeners when regenerating layout
         OptionListeners.Empty();
 
+        // Query active index for components to fetch nested colors correctly
+        int32 ActiveSizeIdx = 0;
+        if (Booth)
+        {
+            switch (ActiveComponent)
+            {
+            case EFurnitureComponentType::Cabinet:
+            case EFurnitureComponentType::Doors:
+                ActiveSizeIdx = Booth->ActiveState.ActiveSizeIndex;
+                break;
+            case EFurnitureComponentType::Countertop:
+                ActiveSizeIdx = Booth->ActiveState.ActiveSizeIndex; // Countertop size maps to cabinet size index
+                break;
+            case EFurnitureComponentType::Closet:
+                ActiveSizeIdx = Booth->ActiveState.ClosetSizeIndex;
+                break;
+            case EFurnitureComponentType::Sink:
+                ActiveSizeIdx = Booth->ActiveState.SinkSizeIndex;
+                break;
+            case EFurnitureComponentType::Faucet:
+                ActiveSizeIdx = Booth->ActiveState.FaucetSizeIndex;
+                break;
+            case EFurnitureComponentType::Mirror:
+                ActiveSizeIdx = Booth->ActiveState.MirrorSizeIndex;
+                break;
+            default:
+                break;
+            }
+        }
+
         // ── SIZE SELECTORS ──
         if (Size_Container)
         {
-            if (ActiveComponent == EFurnitureComponentType::Countertop || ActiveOpts.Sizes.Num() <= 1)
+            if (ActiveComponent == EFurnitureComponentType::Countertop)
             {
                 Size_Container->SetVisibility(ESlateVisibility::Collapsed);
                 Size_Container->ClearChildren();
             }
-            else
+            else if (ActiveComponent == EFurnitureComponentType::Cabinet)
             {
-                Size_Container->SetVisibility(TargetVisibility);
-                Size_Container->ClearChildren();
-
-                if (bIsValidMesh)
+                const FFurnitureCabinetOptions& CabinetOpts = ProductData.CabinetOptions;
+                if (CabinetOpts.Sizes.Num() <= 1)
                 {
-                    for (int32 i = 0; i < ActiveOpts.Sizes.Num(); ++i)
+                    Size_Container->SetVisibility(ESlateVisibility::Collapsed);
+                    Size_Container->ClearChildren();
+                }
+                else
+                {
+                    Size_Container->SetVisibility(TargetVisibility);
+                    Size_Container->ClearChildren();
+
+                    if (bIsValidMesh)
                     {
-                        UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
-                        if (NewBtn)
+                        for (int32 i = 0; i < CabinetOpts.Sizes.Num(); ++i)
                         {
-                            UTextBlock* BtnText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-                            if (BtnText)
+                            UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                            if (NewBtn)
                             {
-                                BtnText->SetText(FText::Format(FText::FromString(TEXT("Size {0}")), FText::AsNumber(i + 1)));
-                                NewBtn->AddChild(BtnText);
+                                // Set button background transparent
+                                NewBtn->SetBackgroundColor(FLinearColor::Transparent);
+
+                                UTextBlock* BtnText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+                                if (BtnText)
+                                {
+                                    FText SizeText;
+                                    if (CabinetOpts.SizeNames.IsValidIndex(i) && !CabinetOpts.SizeNames[i].IsEmpty())
+                                    {
+                                        SizeText = CabinetOpts.SizeNames[i];
+                                    }
+                                    else
+                                    {
+                                        SizeText = FText::Format(FText::FromString(TEXT("Size {0}")), FText::AsNumber(i + 1));
+                                    }
+                                    BtnText->SetText(SizeText);
+                                    NewBtn->AddChild(BtnText);
+                                }
+
+                                UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
+                                Listener->Init(this, ActiveComponent, EOptionType::Size, i);
+                                OptionListeners.Add(Listener);
+
+                                NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
+                                NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
+                                NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
+
+                                Size_Container->AddChild(NewBtn);
+
+                                if (NewBtn->Slot)
+                                {
+                                    if (UHorizontalBoxSlot* HSlot = Cast<UHorizontalBoxSlot>(NewBtn->Slot))
+                                    {
+                                        HSlot->SetPadding(FMargin(5.f, 0.f, 5.f, 0.f));
+                                    }
+                                    else if (UWrapBoxSlot* WSlot = Cast<UWrapBoxSlot>(NewBtn->Slot))
+                                    {
+                                        WSlot->SetPadding(FMargin(5.f, 0.f, 5.f, 0.f));
+                                    }
+                                }
                             }
+                        }
+                    }
+                }
+            }
+            else // General components options (Models list)
+            {
+                const FFurnitureComponentOptions* ComponentOpts = nullptr;
+                switch (ActiveComponent)
+                {
+                case EFurnitureComponentType::Closet:
+                    ComponentOpts = &ProductData.ClosetOptions;
+                    break;
+                case EFurnitureComponentType::Sink:
+                    ComponentOpts = &ProductData.SinkOptions;
+                    break;
+                case EFurnitureComponentType::Faucet:
+                    ComponentOpts = &ProductData.FaucetOptions;
+                    break;
+                case EFurnitureComponentType::Mirror:
+                    ComponentOpts = &ProductData.MirrorOptions;
+                    break;
+                default:
+                    break;
+                }
 
-                            UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
-                            Listener->Init(this, ActiveComponent, EOptionType::Size, i);
-                            OptionListeners.Add(Listener);
+                if (!ComponentOpts || ComponentOpts->Models.Num() <= 1)
+                {
+                    Size_Container->SetVisibility(ESlateVisibility::Collapsed);
+                    Size_Container->ClearChildren();
+                }
+                else
+                {
+                    Size_Container->SetVisibility(TargetVisibility);
+                    Size_Container->ClearChildren();
 
-                            NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
-                            NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
-                            NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
+                    if (bIsValidMesh)
+                    {
+                        UScrollBox* ScrollBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+                        if (ScrollBox)
+                        {
+                            UUniformGridPanel* GridPanel = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
+                            if (GridPanel)
+                            {
+                                GridPanel->SetMinDesiredSlotWidth(0.f);
+                                GridPanel->SetMinDesiredSlotHeight(0.f);
+                                GridPanel->SetSlotPadding(FMargin(5.f));
 
-                            Size_Container->AddChild(NewBtn);
+                                for (int32 i = 0; i < ComponentOpts->Models.Num(); ++i)
+                                {
+                                    const FFurnitureModelOption& ModelOpt = ComponentOpts->Models[i];
+
+                                    UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                                    if (NewBtn)
+                                    {
+                                        UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+                                        if (BtnImg)
+                                        {
+                                            if (!ModelOpt.Thumbnail.IsNull())
+                                            {
+                                                UTexture2D* LoadedTex = ModelOpt.Thumbnail.LoadSynchronous();
+                                                if (LoadedTex)
+                                                {
+                                                    BtnImg->SetBrushFromTexture(LoadedTex);
+                                                }
+                                            }
+                                            NewBtn->AddChild(BtnImg);
+                                        }
+
+                                        UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
+                                        Listener->Init(this, ActiveComponent, EOptionType::Size, i);
+                                        OptionListeners.Add(Listener);
+
+                                        NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
+                                        NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
+                                        NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
+
+                                        USizeBox* SizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+                                        if (SizeBox)
+                                        {
+                                            SizeBox->SetWidthOverride(120.f);
+                                            SizeBox->SetHeightOverride(120.f);
+                                            SizeBox->AddChild(NewBtn);
+
+                                            int32 RowIdx = i / 2;
+                                            int32 ColIdx = i % 2;
+                                            UUniformGridSlot* GridSlot = GridPanel->AddChildToUniformGrid(SizeBox, RowIdx, ColIdx);
+                                            if (GridSlot)
+                                            {
+                                                GridSlot->SetHorizontalAlignment(EHorizontalAlignment::HAlign_Fill);
+                                                GridSlot->SetVerticalAlignment(EVerticalAlignment::VAlign_Fill);
+                                            }
+                                        }
+                                    }
+                                }
+                                ScrollBox->AddChild(GridPanel);
+                            }
+                            Size_Container->AddChild(ScrollBox);
                         }
                     }
                 }
@@ -153,42 +292,85 @@ void UConfiguratorMainWidget::RefreshSelections()
         }
 
         // ── COLOR SELECTORS ──
+        TArray<FFurnitureColorOption> ActiveColors;
+        if (ActiveComponent == EFurnitureComponentType::Cabinet)
+        {
+            ActiveColors = ProductData.CabinetOptions.Colors;
+        }
+        else
+        {
+            const FFurnitureComponentOptions* ComponentOpts = nullptr;
+            switch (ActiveComponent)
+            {
+            case EFurnitureComponentType::Countertop:
+                ComponentOpts = &ProductData.CountertopOptions;
+                break;
+            case EFurnitureComponentType::Closet:
+                ComponentOpts = &ProductData.ClosetOptions;
+                break;
+            case EFurnitureComponentType::Sink:
+                ComponentOpts = &ProductData.SinkOptions;
+                break;
+            case EFurnitureComponentType::Faucet:
+                ComponentOpts = &ProductData.FaucetOptions;
+                break;
+            case EFurnitureComponentType::Mirror:
+                ComponentOpts = &ProductData.MirrorOptions;
+                break;
+            default:
+                break;
+            }
+
+            if (ComponentOpts && ComponentOpts->Models.IsValidIndex(ActiveSizeIdx))
+            {
+                ActiveColors = ComponentOpts->Models[ActiveSizeIdx].Colors;
+            }
+        }
+
         if (Color_Container)
         {
-            Color_Container->SetVisibility(TargetVisibility);
-            Color_Container->ClearChildren();
-
-            if (bIsValidMesh)
+            if (ActiveColors.Num() <= 1)
             {
-                for (int32 i = 0; i < ActiveOpts.Colors.Num(); ++i)
+                Color_Container->SetVisibility(ESlateVisibility::Collapsed);
+                Color_Container->ClearChildren();
+            }
+            else
+            {
+                Color_Container->SetVisibility(TargetVisibility);
+                Color_Container->ClearChildren();
+
+                if (bIsValidMesh)
                 {
-                    const FFurnitureColorOption& ColorOpt = ActiveOpts.Colors[i];
-                    UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
-                    if (NewBtn)
+                    for (int32 i = 0; i < ActiveColors.Num(); ++i)
                     {
-                        UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-                        if (BtnImg)
+                        const FFurnitureColorOption& ColorOpt = ActiveColors[i];
+                        UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                        if (NewBtn)
                         {
-                            if (!ColorOpt.Thumbnail.IsNull())
+                            UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+                            if (BtnImg)
                             {
-                                UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
-                                if (LoadedTex)
+                                if (!ColorOpt.Thumbnail.IsNull())
                                 {
-                                    BtnImg->SetBrushFromTexture(LoadedTex);
+                                    UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
+                                    if (LoadedTex)
+                                    {
+                                        BtnImg->SetBrushFromTexture(LoadedTex);
+                                    }
                                 }
+                                NewBtn->AddChild(BtnImg);
                             }
-                            NewBtn->AddChild(BtnImg);
+
+                            UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
+                            Listener->Init(this, ActiveComponent, EOptionType::Color, i);
+                            OptionListeners.Add(Listener);
+
+                            NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
+                            NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
+                            NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
+
+                            Color_Container->AddChild(NewBtn);
                         }
-
-                           UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
-                           Listener->Init(this, ActiveComponent, EOptionType::Color, i);
-                           OptionListeners.Add(Listener);
-
-                           NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
-                           NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
-                           NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
-
-                           Color_Container->AddChild(NewBtn);
                     }
                 }
             }
@@ -304,6 +486,7 @@ void UConfiguratorMainWidget::HandleOptionSelected(EFurnitureComponentType Compo
     if (Type == EOptionType::Size)
     {
         SizeIndex = OptionIndex;
+        ColorIndex = 0; // Reset active color to 0 when changing the model size
     }
     else
     {

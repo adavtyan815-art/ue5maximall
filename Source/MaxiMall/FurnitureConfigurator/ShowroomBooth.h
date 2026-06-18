@@ -346,6 +346,11 @@ protected:
                                         int32 SizeIndex,
                                         int32 ColorIndex);
 
+    void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
+                                        const FFurnitureCabinetOptions& Options,
+                                        int32 SizeIndex,
+                                        int32 ColorIndex);
+
     /**
      * Applies dynamic size and color selections to target door components using the dedicated door options struct.
      */

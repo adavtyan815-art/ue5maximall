@@ -204,6 +204,11 @@ private:
                                         int32 SizeIndex,
                                         int32 ColorIndex);
 
+    void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
+                                        const FFurnitureCabinetOptions& Options,
+                                        int32 SizeIndex,
+                                        int32 ColorIndex);
+
     /** Helper — applies dynamic size and color selections to a target door component using the dedicated door options struct. */
     void ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
                                    const FFurnitureDoorGroup& DoorGroup,

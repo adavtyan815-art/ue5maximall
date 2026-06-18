@@ -569,6 +569,81 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
     }
 
     TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
+    if (Options.Models.IsValidIndex(SizeIndex))
+    {
+        TargetMeshPtr = Options.Models[SizeIndex].Mesh;
+    }
+    else if (Options.Models.Num() > 0)
+    {
+        TargetMeshPtr = Options.Models[0].Mesh;
+    }
+
+    if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        return;
+    }
+
+    UStaticMesh* LoadedMesh = TargetMeshPtr.LoadSynchronous();
+    if (LoadedMesh)
+    {
+        Target->SetStaticMesh(LoadedMesh);
+        Target->SetVisibility(true);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision); // Keep no collision in preview
+
+        const int32 NumMaterials = Target->GetNumMaterials();
+        for (int32 i = 0; i < NumMaterials; ++i)
+        {
+            Target->SetMaterial(i, nullptr);
+        }
+
+        const FFurnitureColorOption* SelectedColor = nullptr;
+        if (Options.Models.IsValidIndex(SizeIndex))
+        {
+            const TArray<FFurnitureColorOption>& Colors = Options.Models[SizeIndex].Colors;
+            if (Colors.IsValidIndex(ColorIndex))
+            {
+                SelectedColor = &Colors[ColorIndex];
+            }
+            else if (Colors.Num() > 0)
+            {
+                SelectedColor = &Colors[0];
+            }
+        }
+
+        if (SelectedColor)
+        {
+            for (const FFurnitureMaterialSlot& SlotOverride : SelectedColor->MaterialOverrides)
+            {
+                UMaterialInterface* LoadedMat = SlotOverride.Material.LoadSynchronous();
+                if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+                {
+                    Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
+                }
+            }
+        }
+    }
+    else
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+}
+
+void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
+                                                            const FFurnitureCabinetOptions& Options,
+                                                            int32 SizeIndex,
+                                                            int32 ColorIndex)
+{
+    if (!Target)
+    {
+        return;
+    }
+
+    TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
     if (Options.Sizes.IsValidIndex(SizeIndex))
     {
         TargetMeshPtr = Options.Sizes[SizeIndex];

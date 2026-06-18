@@ -168,17 +168,47 @@ struct MAXIMALL_API FFurnitureMetadataEntry
 };
 
 USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureCabinetOptions
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cabinet Options", meta = (DisplayName = "Sizes"))
+    TArray<TSoftObjectPtr<UStaticMesh>> Sizes;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cabinet Options")
+    TArray<FText> SizeNames;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cabinet Options")
+    TArray<FFurnitureColorOption> Colors;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cabinet Options")
+    TArray<FFurnitureMetadataEntry> CombinationsMetadata;
+};
+
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureModelOption
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
+    TSoftObjectPtr<UStaticMesh> Mesh;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
+    TSoftObjectPtr<UTexture2D> Thumbnail;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
+    TArray<FFurnitureColorOption> Colors;
+};
+
+USTRUCT(BlueprintType)
 struct MAXIMALL_API FFurnitureComponentOptions
 {
     GENERATED_BODY()
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component Options")
-    TArray<TSoftObjectPtr<UStaticMesh>> Sizes;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component Options", meta = (DisplayName = "Models"))
+    TArray<FFurnitureModelOption> Models;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component Options")
-    TArray<FFurnitureColorOption> Colors;
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Metadata Matrix")
     TArray<FFurnitureMetadataEntry> CombinationsMetadata;
 };
 
@@ -448,7 +478,7 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     /** Main cabinet body options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Cabinet")
-    FFurnitureComponentOptions CabinetOptions;
+    FFurnitureCabinetOptions CabinetOptions;
 
     // ── Closet Body ───────────────────────────────────────────────────────
 
