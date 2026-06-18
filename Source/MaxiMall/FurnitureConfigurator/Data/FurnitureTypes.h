@@ -158,13 +158,29 @@ struct MAXIMALL_API FFurnitureDoorColorOption
 /**
  * Wraps size and color options specifically for Doors.
  */
+/**
+ * Wraps size options specifically for Doors to support multiple mesh allocations per size index.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureDoorSizeOption
+{
+    GENERATED_BODY()
+
+    /** Meshes for this size index. Index 0 = Left / Single Door, Index 1 = Right Door. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door Size Option")
+    TArray<TSoftObjectPtr<UStaticMesh>> DoorMeshes;
+};
+
+/**
+ * Wraps size and color options specifically for Doors.
+ */
 USTRUCT(BlueprintType)
 struct MAXIMALL_API FFurnitureDoorOptions
 {
     GENERATED_BODY()
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door Options")
-    TArray<TSoftObjectPtr<UStaticMesh>> Sizes;
+    TArray<FFurnitureDoorSizeOption> Sizes;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door Options")
     TArray<FFurnitureDoorColorOption> Colors;

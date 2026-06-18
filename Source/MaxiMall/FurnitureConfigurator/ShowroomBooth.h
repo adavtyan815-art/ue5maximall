@@ -338,7 +338,8 @@ protected:
     void ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
                                    const FFurnitureDoorOptions& Options,
                                    int32 SizeIndex,
-                                   int32 ColorIndex);
+                                   int32 ColorIndex,
+                                   int32 SlotIndex);
 
     /**
      * Drives door slot visibility and collision from active product data.

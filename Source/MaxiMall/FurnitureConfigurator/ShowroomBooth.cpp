@@ -682,7 +682,8 @@ void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target
 void AShowroomBooth::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
                                                const FFurnitureDoorOptions& Options,
                                                int32 SizeIndex,
-                                               int32 ColorIndex)
+                                               int32 ColorIndex,
+                                               int32 SlotIndex)
 {
     if (!Target)
     {
@@ -692,11 +693,15 @@ void AShowroomBooth::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
     TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
     if (Options.Sizes.IsValidIndex(SizeIndex))
     {
-        TargetMeshPtr = Options.Sizes[SizeIndex];
-    }
-    else if (Options.Sizes.Num() > 0)
-    {
-        TargetMeshPtr = Options.Sizes[0];
+        const TArray<TSoftObjectPtr<UStaticMesh>>& Meshes = Options.Sizes[SizeIndex].DoorMeshes;
+        if (Meshes.IsValidIndex(SlotIndex))
+        {
+            TargetMeshPtr = Meshes[SlotIndex];
+        }
+        else if (Meshes.Num() > 0)
+        {
+            TargetMeshPtr = Meshes[0]; // Fallback to first mesh if slot-specific mesh doesn't exist (e.g. symmetric layout)
+        }
     }
 
     if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
@@ -752,8 +757,8 @@ void AShowroomBooth::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
 
 void AShowroomBooth::ApplyDoorConfiguration(const FFurnitureProductRow& Data)
 {
-    ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), Data.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
-    ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), Data.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
+    ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), Data.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 0);
+    ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), Data.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 1);
 
     EDoorSlotState Slot0State = EDoorSlotState::NotPresent;
     EDoorSlotState Slot1State = EDoorSlotState::NotPresent;

@@ -191,7 +191,8 @@ private:
     void ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
                                    const FFurnitureDoorOptions& Options,
                                    int32 SizeIndex,
-                                   int32 ColorIndex);
+                                   int32 ColorIndex,
+                                   int32 SlotIndex);
 
     /** Dynamically adjusts the camera-mounted FillLight intensity to compensate for distance attenuation. */
     void UpdateLightIntensityForZoom();
