@@ -181,7 +181,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     // ── Cabinet ───────────────────────────────────────────────────────────
     if (!SourceBooth || (SourceBooth->MainCabinet && SourceBooth->MainCabinet->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetOptions, ActiveState.CabinetState);
+        ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
     }
     else
     {
@@ -193,7 +193,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     // ── Closet ────────────────────────────────────────────────────────────
     if (!SourceBooth || (SourceBooth->ClosetMesh && SourceBooth->ClosetMesh->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ProductData.ClosetOptions, ActiveState.ClosetState);
+        ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ProductData.ClosetOptions, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex);
     }
     else
     {
@@ -205,8 +205,8 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     // ── Doors ─────────────────────────────────────────────────────────────
     if (!SourceBooth || (SourceBooth->DoorMeshSlot0 && SourceBooth->DoorMeshSlot0->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(DoorMeshSlot0.Get(), ProductData.DoorOptions, ActiveState.DoorState);
-        ApplyComponentMeshAndMaterials(DoorMeshSlot1.Get(), ProductData.DoorOptions, ActiveState.DoorState);
+        ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), ProductData.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
+        ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), ProductData.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
 
         switch (ProductData.DoorCount)
         {
@@ -270,7 +270,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     // ── Countertop ────────────────────────────────────────────────────────
     if (!SourceBooth || (SourceBooth->CountertopMesh && SourceBooth->CountertopMesh->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ProductData.CountertopOptions, ActiveState.CountertopState);
+        ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ProductData.CountertopOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveCountertopColorIndex);
     }
     else
     {
@@ -283,7 +283,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     if (ProductData.CountertopType == ECountertopType::SurfaceMounted && 
         (!SourceBooth || (SourceBooth->SinkMesh && SourceBooth->SinkMesh->GetStaticMesh() != nullptr)))
     {
-        ApplyComponentMeshAndMaterials(SinkMesh.Get(), ProductData.SinkOptions, ActiveState.SinkState);
+        ApplyComponentMeshAndMaterials(SinkMesh.Get(), ProductData.SinkOptions, ActiveState.SinkSizeIndex, ActiveState.SinkColorIndex);
 
         const FSinkPlacementOffset& SO = ProductData.SinkOffset;
         FTransform ProductDelta;
@@ -305,7 +305,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     // ── Faucet ────────────────────────────────────────────────────────────
     if (!SourceBooth || (SourceBooth->FaucetMesh && SourceBooth->FaucetMesh->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ProductData.FaucetOptions, ActiveState.FaucetState);
+        ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ProductData.FaucetOptions, ActiveState.FaucetSizeIndex, ActiveState.FaucetColorIndex);
         {
             const FFaucetPlacementOffset& FO = ProductData.FaucetOffset;
             FTransform ProductDelta;
@@ -328,7 +328,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     // ── Mirror ────────────────────────────────────────────────────────────
     if (!SourceBooth || (SourceBooth->MirrorMesh && SourceBooth->MirrorMesh->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ProductData.MirrorOptions, ActiveState.MirrorState);
+        ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ProductData.MirrorOptions, ActiveState.MirrorSizeIndex, ActiveState.MirrorColorIndex);
     }
     else
     {
@@ -457,48 +457,25 @@ void AFurniturePreviewActor::ResetRotation()
 
 void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                                             const FFurnitureComponentOptions& Options,
-                                                            const FFurnitureComponentState& State)
+                                                            int32 SizeIndex,
+                                                            int32 ColorIndex)
 {
     if (!Target)
     {
         return;
     }
 
-    const FFurnitureSizeOption* SelectedSize = nullptr;
-    if (Options.Sizes.Num() > 0)
+    TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
+    if (Options.Sizes.IsValidIndex(SizeIndex))
     {
-        for (const FFurnitureSizeOption& SizeOpt : Options.Sizes)
-        {
-            if (SizeOpt.SizeID == State.SelectedSizeID)
-            {
-                SelectedSize = &SizeOpt;
-                break;
-            }
-        }
-        if (!SelectedSize)
-        {
-            SelectedSize = &Options.Sizes[0];
-        }
+        TargetMeshPtr = Options.Sizes[SizeIndex];
+    }
+    else if (Options.Sizes.Num() > 0)
+    {
+        TargetMeshPtr = Options.Sizes[0];
     }
 
-    const FFurnitureColorOption* SelectedColor = nullptr;
-    if (Options.Colors.Num() > 0)
-    {
-        for (const FFurnitureColorOption& ColorOpt : Options.Colors)
-        {
-            if (ColorOpt.ColorID == State.SelectedColorID)
-            {
-                SelectedColor = &ColorOpt;
-                break;
-            }
-        }
-        if (!SelectedColor)
-        {
-            SelectedColor = &Options.Colors[0];
-        }
-    }
-
-    if (!SelectedSize || SelectedSize->Mesh.IsNull() || SelectedSize->Mesh.ToSoftObjectPath().ToString().IsEmpty())
+    if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
     {
         Target->SetStaticMesh(nullptr);
         Target->SetVisibility(false);
@@ -506,17 +483,98 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
         return;
     }
 
-    UStaticMesh* LoadedMesh = SelectedSize->Mesh.LoadSynchronous();
+    UStaticMesh* LoadedMesh = TargetMeshPtr.LoadSynchronous();
     if (LoadedMesh)
     {
         Target->SetStaticMesh(LoadedMesh);
         Target->SetVisibility(true);
-        Target->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision); // Keep no collision in preview
 
         const int32 NumMaterials = Target->GetNumMaterials();
         for (int32 i = 0; i < NumMaterials; ++i)
         {
             Target->SetMaterial(i, nullptr);
+        }
+
+        const FFurnitureColorOption* SelectedColor = nullptr;
+        if (Options.Colors.IsValidIndex(ColorIndex))
+        {
+            SelectedColor = &Options.Colors[ColorIndex];
+        }
+        else if (Options.Colors.Num() > 0)
+        {
+            SelectedColor = &Options.Colors[0];
+        }
+
+        if (SelectedColor)
+        {
+            for (const FFurnitureMaterialSlot& SlotOverride : SelectedColor->MaterialOverrides)
+            {
+                UMaterialInterface* LoadedMat = SlotOverride.Material.LoadSynchronous();
+                if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+                {
+                    Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
+                }
+            }
+        }
+    }
+    else
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+}
+
+void AFurniturePreviewActor::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
+                                                       const FFurnitureDoorOptions& Options,
+                                                       int32 SizeIndex,
+                                                       int32 ColorIndex)
+{
+    if (!Target)
+    {
+        return;
+    }
+
+    TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
+    if (Options.Sizes.IsValidIndex(SizeIndex))
+    {
+        TargetMeshPtr = Options.Sizes[SizeIndex];
+    }
+    else if (Options.Sizes.Num() > 0)
+    {
+        TargetMeshPtr = Options.Sizes[0];
+    }
+
+    if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        return;
+    }
+
+    UStaticMesh* LoadedMesh = TargetMeshPtr.LoadSynchronous();
+    if (LoadedMesh)
+    {
+        Target->SetStaticMesh(LoadedMesh);
+        Target->SetVisibility(true);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision); // Keep no collision in preview
+
+        const int32 NumMaterials = Target->GetNumMaterials();
+        for (int32 i = 0; i < NumMaterials; ++i)
+        {
+            Target->SetMaterial(i, nullptr);
+        }
+
+        const FFurnitureDoorColorOption* SelectedColor = nullptr;
+        if (Options.Colors.IsValidIndex(ColorIndex))
+        {
+            SelectedColor = &Options.Colors[ColorIndex];
+        }
+        else if (Options.Colors.Num() > 0)
+        {
+            SelectedColor = &Options.Colors[0];
         }
 
         if (SelectedColor)

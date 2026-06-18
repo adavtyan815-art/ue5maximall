@@ -202,7 +202,7 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "Booth | Interaction",
               meta = (DisplayName = "Request Component Selection"))
-    void RequestComponentSelection(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+    void RequestComponentSelection(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
 
     /**
      * Toggles the open/closed state of a single door slot.
@@ -292,9 +292,9 @@ protected:
      */
     UFUNCTION(Server, Reliable, WithValidation,
               meta = (DisplayName = "[Server] Apply Component Selection"))
-    void Server_ApplyComponentSelection(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
-    bool Server_ApplyComponentSelection_Validate(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
-    void Server_ApplyComponentSelection_Implementation(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+    void Server_ApplyComponentSelection(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
+    bool Server_ApplyComponentSelection_Validate(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
+    void Server_ApplyComponentSelection_Implementation(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
 
     /**
      * Server-authoritative door toggle.
@@ -329,7 +329,16 @@ protected:
      */
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                         const FFurnitureComponentOptions& Options,
-                                        const FFurnitureComponentState& State);
+                                        int32 SizeIndex,
+                                        int32 ColorIndex);
+
+    /**
+     * Applies dynamic size and color selections to target door components using the dedicated door options struct.
+     */
+    void ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
+                                   const FFurnitureDoorOptions& Options,
+                                   int32 SizeIndex,
+                                   int32 ColorIndex);
 
     /**
      * Drives door slot visibility and collision from active product data.

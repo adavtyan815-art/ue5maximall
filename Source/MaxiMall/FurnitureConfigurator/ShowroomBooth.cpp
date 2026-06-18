@@ -428,62 +428,53 @@ void AShowroomBooth::Server_ApplyProductChange_Implementation(FName NewProductID
 
 // ── Component Selection ───────────────────────────────────────────────────────
 
-void AShowroomBooth::RequestComponentSelection(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+void AShowroomBooth::RequestComponentSelection(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex)
 {
     if (HasAuthority())
     {
-        Server_ApplyComponentSelection_Implementation(ComponentType, SizeID, ColorID);
+        Server_ApplyComponentSelection_Implementation(ComponentType, SizeIndex, ColorIndex);
     }
     else
     {
-        Server_ApplyComponentSelection(ComponentType, SizeID, ColorID);
+        Server_ApplyComponentSelection(ComponentType, SizeIndex, ColorIndex);
     }
 }
 
-bool AShowroomBooth::Server_ApplyComponentSelection_Validate(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+bool AShowroomBooth::Server_ApplyComponentSelection_Validate(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex)
 {
     return true;
 }
 
-void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex)
 {
-    switch (ComponentType)
+    if (ComponentType == EFurnitureComponentType::Cabinet)
     {
-    case EFurnitureComponentType::Cabinet:
-        ActiveState.CabinetState.SelectedSizeID = SizeID;
-        ActiveState.CabinetState.SelectedColorID = ColorID;
-        // Synchronize size across Cabinet, Countertop, and Doors
-        ActiveState.CountertopState.SelectedSizeID = SizeID;
-        ActiveState.DoorState.SelectedSizeID = SizeID;
-        // Synchronize color across Cabinet and Doors
-        ActiveState.DoorState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Closet:
-        ActiveState.ClosetState.SelectedSizeID = SizeID;
-        ActiveState.ClosetState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Doors:
-        ActiveState.DoorState.SelectedSizeID = SizeID;
-        ActiveState.DoorState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Countertop:
-        ActiveState.CountertopState.SelectedSizeID = SizeID;
-        ActiveState.CountertopState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Sink:
-        ActiveState.SinkState.SelectedSizeID = SizeID;
-        ActiveState.SinkState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Faucet:
-        ActiveState.FaucetState.SelectedSizeID = SizeID;
-        ActiveState.FaucetState.SelectedColorID = ColorID;
-        break;
-    case EFurnitureComponentType::Mirror:
-        ActiveState.MirrorState.SelectedSizeID = SizeID;
-        ActiveState.MirrorState.SelectedColorID = ColorID;
-        break;
-    default:
-        break;
+        ActiveState.ActiveSizeIndex = SizeIndex;
+        ActiveState.ActiveColorIndex = ColorIndex;
+    }
+    else if (ComponentType == EFurnitureComponentType::Countertop)
+    {
+        ActiveState.ActiveCountertopColorIndex = ColorIndex;
+    }
+    else if (ComponentType == EFurnitureComponentType::Closet)
+    {
+        ActiveState.ClosetSizeIndex = SizeIndex;
+        ActiveState.ClosetColorIndex = ColorIndex;
+    }
+    else if (ComponentType == EFurnitureComponentType::Sink)
+    {
+        ActiveState.SinkSizeIndex = SizeIndex;
+        ActiveState.SinkColorIndex = ColorIndex;
+    }
+    else if (ComponentType == EFurnitureComponentType::Faucet)
+    {
+        ActiveState.FaucetSizeIndex = SizeIndex;
+        ActiveState.FaucetColorIndex = ColorIndex;
+    }
+    else if (ComponentType == EFurnitureComponentType::Mirror)
+    {
+        ActiveState.MirrorSizeIndex = SizeIndex;
+        ActiveState.MirrorColorIndex = ColorIndex;
     }
 
     const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
@@ -581,16 +572,16 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
     EnsureBaselineTransformsCaptured();
 
     // ── 1. Cabinet ────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(MainCabinet.Get(), Data.CabinetOptions, ActiveState.CabinetState);
+    ApplyComponentMeshAndMaterials(MainCabinet.Get(), Data.CabinetOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
 
     // ── 2. Closet ─────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(ClosetMesh.Get(), Data.ClosetOptions, ActiveState.ClosetState);
+    ApplyComponentMeshAndMaterials(ClosetMesh.Get(), Data.ClosetOptions, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex);
 
     // ── 3. Doors ──────────────────────────────────────────────────────────
     ApplyDoorConfiguration(Data);
 
     // ── 4. Countertop ─────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(CountertopMesh.Get(), Data.CountertopOptions, ActiveState.CountertopState);
+    ApplyComponentMeshAndMaterials(CountertopMesh.Get(), Data.CountertopOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveCountertopColorIndex);
 
     // ── 5. Sink (visibility + mesh driven by CountertopType) ──────────────
     if (Data.CountertopType == ECountertopType::BuiltIn)
@@ -604,14 +595,14 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
     }
     else // SurfaceMounted
     {
-        ApplyComponentMeshAndMaterials(SinkMesh.Get(), Data.SinkOptions, ActiveState.SinkState);
+        ApplyComponentMeshAndMaterials(SinkMesh.Get(), Data.SinkOptions, ActiveState.SinkSizeIndex, ActiveState.SinkColorIndex);
     }
 
     // ── 6. Faucet ─────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(FaucetMesh.Get(), Data.FaucetOptions, ActiveState.FaucetState);
+    ApplyComponentMeshAndMaterials(FaucetMesh.Get(), Data.FaucetOptions, ActiveState.FaucetSizeIndex, ActiveState.FaucetColorIndex);
 
     // ── 7. Mirror ─────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(MirrorMesh.Get(), Data.MirrorOptions, ActiveState.MirrorState);
+    ApplyComponentMeshAndMaterials(MirrorMesh.Get(), Data.MirrorOptions, ActiveState.MirrorSizeIndex, ActiveState.MirrorColorIndex);
 
     // ── 8. Recalculate Sink + Faucet positions relative to Countertop ─────
     RecalculateDependentTransforms(Data);
@@ -619,48 +610,25 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
 
 void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                                     const FFurnitureComponentOptions& Options,
-                                                    const FFurnitureComponentState& State)
+                                                    int32 SizeIndex,
+                                                    int32 ColorIndex)
 {
     if (!Target)
     {
         return;
     }
 
-    const FFurnitureSizeOption* SelectedSize = nullptr;
-    if (Options.Sizes.Num() > 0)
+    TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
+    if (Options.Sizes.IsValidIndex(SizeIndex))
     {
-        for (const FFurnitureSizeOption& SizeOpt : Options.Sizes)
-        {
-            if (SizeOpt.SizeID == State.SelectedSizeID)
-            {
-                SelectedSize = &SizeOpt;
-                break;
-            }
-        }
-        if (!SelectedSize)
-        {
-            SelectedSize = &Options.Sizes[0];
-        }
+        TargetMeshPtr = Options.Sizes[SizeIndex];
+    }
+    else if (Options.Sizes.Num() > 0)
+    {
+        TargetMeshPtr = Options.Sizes[0];
     }
 
-    const FFurnitureColorOption* SelectedColor = nullptr;
-    if (Options.Colors.Num() > 0)
-    {
-        for (const FFurnitureColorOption& ColorOpt : Options.Colors)
-        {
-            if (ColorOpt.ColorID == State.SelectedColorID)
-            {
-                SelectedColor = &ColorOpt;
-                break;
-            }
-        }
-        if (!SelectedColor)
-        {
-            SelectedColor = &Options.Colors[0];
-        }
-    }
-
-    if (!SelectedSize || SelectedSize->Mesh.IsNull() || SelectedSize->Mesh.ToSoftObjectPath().ToString().IsEmpty())
+    if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
     {
         Target->SetStaticMesh(nullptr);
         Target->SetVisibility(false);
@@ -668,7 +636,7 @@ void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target
         return;
     }
 
-    UStaticMesh* LoadedMesh = SelectedSize->Mesh.LoadSynchronous();
+    UStaticMesh* LoadedMesh = TargetMeshPtr.LoadSynchronous();
     if (LoadedMesh)
     {
         Target->SetStaticMesh(LoadedMesh);
@@ -679,6 +647,87 @@ void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target
         for (int32 i = 0; i < NumMaterials; ++i)
         {
             Target->SetMaterial(i, nullptr);
+        }
+
+        const FFurnitureColorOption* SelectedColor = nullptr;
+        if (Options.Colors.IsValidIndex(ColorIndex))
+        {
+            SelectedColor = &Options.Colors[ColorIndex];
+        }
+        else if (Options.Colors.Num() > 0)
+        {
+            SelectedColor = &Options.Colors[0];
+        }
+
+        if (SelectedColor)
+        {
+            for (const FFurnitureMaterialSlot& SlotOverride : SelectedColor->MaterialOverrides)
+            {
+                UMaterialInterface* LoadedMat = SlotOverride.Material.LoadSynchronous();
+                if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+                {
+                    Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
+                }
+            }
+        }
+    }
+    else
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+}
+
+void AShowroomBooth::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
+                                               const FFurnitureDoorOptions& Options,
+                                               int32 SizeIndex,
+                                               int32 ColorIndex)
+{
+    if (!Target)
+    {
+        return;
+    }
+
+    TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
+    if (Options.Sizes.IsValidIndex(SizeIndex))
+    {
+        TargetMeshPtr = Options.Sizes[SizeIndex];
+    }
+    else if (Options.Sizes.Num() > 0)
+    {
+        TargetMeshPtr = Options.Sizes[0];
+    }
+
+    if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
+    {
+        Target->SetStaticMesh(nullptr);
+        Target->SetVisibility(false);
+        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        return;
+    }
+
+    UStaticMesh* LoadedMesh = TargetMeshPtr.LoadSynchronous();
+    if (LoadedMesh)
+    {
+        Target->SetStaticMesh(LoadedMesh);
+        Target->SetVisibility(true);
+        Target->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+        const int32 NumMaterials = Target->GetNumMaterials();
+        for (int32 i = 0; i < NumMaterials; ++i)
+        {
+            Target->SetMaterial(i, nullptr);
+        }
+
+        const FFurnitureDoorColorOption* SelectedColor = nullptr;
+        if (Options.Colors.IsValidIndex(ColorIndex))
+        {
+            SelectedColor = &Options.Colors[ColorIndex];
+        }
+        else if (Options.Colors.Num() > 0)
+        {
+            SelectedColor = &Options.Colors[0];
         }
 
         if (SelectedColor)
@@ -703,8 +752,8 @@ void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target
 
 void AShowroomBooth::ApplyDoorConfiguration(const FFurnitureProductRow& Data)
 {
-    ApplyComponentMeshAndMaterials(DoorMeshSlot0.Get(), Data.DoorOptions, ActiveState.DoorState);
-    ApplyComponentMeshAndMaterials(DoorMeshSlot1.Get(), Data.DoorOptions, ActiveState.DoorState);
+    ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), Data.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
+    ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), Data.DoorOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
 
     EDoorSlotState Slot0State = EDoorSlotState::NotPresent;
     EDoorSlotState Slot1State = EDoorSlotState::NotPresent;
@@ -888,33 +937,15 @@ const FFurnitureProductRow* AShowroomBooth::FindProductRow(FName RowName) const
 void AShowroomBooth::InitializeDefaultStateForProduct(FShowroomBoothConfigState& State, FName ProductID, const FFurnitureProductRow& Row)
 {
     State.ProductID = ProductID;
-
-    auto GetDefaultSize = [](const FFurnitureComponentOptions& Opts) -> FName {
-        return (Opts.Sizes.Num() > 0) ? Opts.Sizes[0].SizeID : NAME_None;
-    };
-
-    auto GetDefaultColor = [](const FFurnitureComponentOptions& Opts) -> FName {
-        return (Opts.Colors.Num() > 0) ? Opts.Colors[0].ColorID : NAME_None;
-    };
-
-    State.CabinetState.SelectedSizeID = GetDefaultSize(Row.CabinetOptions);
-    State.CabinetState.SelectedColorID = GetDefaultColor(Row.CabinetOptions);
-
-    State.ClosetState.SelectedSizeID = GetDefaultSize(Row.ClosetOptions);
-    State.ClosetState.SelectedColorID = GetDefaultColor(Row.ClosetOptions);
-
-    State.DoorState.SelectedSizeID = GetDefaultSize(Row.DoorOptions);
-    State.DoorState.SelectedColorID = GetDefaultColor(Row.DoorOptions);
-
-    State.CountertopState.SelectedSizeID = GetDefaultSize(Row.CountertopOptions);
-    State.CountertopState.SelectedColorID = GetDefaultColor(Row.CountertopOptions);
-
-    State.SinkState.SelectedSizeID = GetDefaultSize(Row.SinkOptions);
-    State.SinkState.SelectedColorID = GetDefaultColor(Row.SinkOptions);
-
-    State.FaucetState.SelectedSizeID = GetDefaultSize(Row.FaucetOptions);
-    State.FaucetState.SelectedColorID = GetDefaultColor(Row.FaucetOptions);
-
-    State.MirrorState.SelectedSizeID = GetDefaultSize(Row.MirrorOptions);
-    State.MirrorState.SelectedColorID = GetDefaultColor(Row.MirrorOptions);
+    State.ActiveSizeIndex = 0;
+    State.ActiveColorIndex = 0;
+    State.ActiveCountertopColorIndex = 0;
+    State.ClosetSizeIndex = 0;
+    State.ClosetColorIndex = 0;
+    State.SinkSizeIndex = 0;
+    State.SinkColorIndex = 0;
+    State.FaucetSizeIndex = 0;
+    State.FaucetColorIndex = 0;
+    State.MirrorSizeIndex = 0;
+    State.MirrorColorIndex = 0;
 }

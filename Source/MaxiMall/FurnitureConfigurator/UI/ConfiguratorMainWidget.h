@@ -27,12 +27,12 @@ class MAXIMALL_API UFurnitureOptionListener : public UObject
     GENERATED_BODY()
 
 public:
-    void Init(class UConfiguratorMainWidget* InOwnerWidget, EFurnitureComponentType InComponent, EOptionType InType, FName InOptionID)
+    void Init(class UConfiguratorMainWidget* InOwnerWidget, EFurnitureComponentType InComponent, EOptionType InType, int32 InOptionIndex)
     {
         OwnerWidget = InOwnerWidget;
         Component = InComponent;
         Type = InType;
-        OptionID = InOptionID;
+        OptionIndex = InOptionIndex;
     }
 
     UFUNCTION()
@@ -49,7 +49,7 @@ public:
 
     EFurnitureComponentType Component;
     EOptionType Type;
-    FName OptionID;
+    int32 OptionIndex;
 };
 
 /**
@@ -127,11 +127,6 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UPanelWidget> Color_Container;
 
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> Txt_SelectionName;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> Txt_SelectionDescription;
 
     // ── DELEGATE CALLBACKS ───────────────────────────────────────────────────
 
@@ -192,9 +187,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void RefreshSelections();
 
-    void HandleOptionSelected(EFurnitureComponentType Component, EOptionType Type, FName OptionID);
-    void HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, FName OptionID);
-    void HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, FName OptionID);
+    void HandleOptionSelected(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
+    void HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
+    void HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
 
 private:
     UPROPERTY()
@@ -209,10 +204,10 @@ private:
     UPROPERTY()
     EFurnitureComponentType ActiveComponent;
 
+
     // Helper functions
     bool IsComponentMeshValid(AShowroomBooth* Booth, EFurnitureComponentType Component) const;
-    void PopulateCombo(UComboBoxString* Combo, const TArray<FName>& OptionIDs, const TArray<FText>& DisplayNames, FName CurrentSelection);
-    bool GetComponentOptionsAndState(const FFurnitureProductRow& Row, const FShowroomBoothConfigState& State, EFurnitureComponentType Component, FFurnitureComponentOptions& OutOptions, FFurnitureComponentState& OutState) const;
+    void PopulateCombo(UComboBoxString* Combo, const TArray<FText>& DisplayNames, int32 CurrentSelectionIndex);
     void SetupIndividualComponentSelector(EFurnitureComponentType Component, UComboBoxString* SizeCombo, UComboBoxString* ColorCombo);
     void UpdateSelectionForComponent(EFurnitureComponentType Component, UComboBoxString* SizeCombo, UComboBoxString* ColorCombo);
 };

@@ -15,7 +15,7 @@ void UFurnitureOptionListener::OnButtonClicked()
 {
     if (OwnerWidget)
     {
-        OwnerWidget->HandleOptionSelected(Component, Type, OptionID);
+        OwnerWidget->HandleOptionSelected(Component, Type, OptionIndex);
     }
 }
 
@@ -23,7 +23,7 @@ void UFurnitureOptionListener::OnButtonHovered()
 {
     if (OwnerWidget)
     {
-        OwnerWidget->HandleOptionHovered(Component, Type, OptionID);
+        OwnerWidget->HandleOptionHovered(Component, Type, OptionIndex);
     }
 }
 
@@ -31,7 +31,7 @@ void UFurnitureOptionListener::OnButtonUnhovered()
 {
     if (OwnerWidget)
     {
-        OwnerWidget->HandleOptionUnhovered(Component, Type, OptionID);
+        OwnerWidget->HandleOptionUnhovered(Component, Type, OptionIndex);
     }
 }
 
@@ -170,56 +170,46 @@ void UConfiguratorMainWidget::RefreshSelections()
     {
         // ── Setup active right-clicked component selectors ────────────────────
         FFurnitureComponentOptions ActiveOpts;
-        FFurnitureComponentState ActiveState;
-        if (GetComponentOptionsAndState(ProductData, Booth->ActiveState, ActiveComponent, ActiveOpts, ActiveState))
+        if (ActiveComponent == EFurnitureComponentType::Countertop)
         {
-            // Gate optional component visibility — if the component's mesh is missing/null, collapse the UI selectors
-            bool bIsValidMesh = IsComponentMeshValid(Booth, ActiveComponent);
-            ESlateVisibility TargetVisibility = bIsValidMesh ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+            ActiveOpts = ProductData.CountertopOptions;
+        }
+        else if (ActiveComponent == EFurnitureComponentType::Closet)
+        {
+            ActiveOpts = ProductData.ClosetOptions;
+        }
+        else if (ActiveComponent == EFurnitureComponentType::Sink)
+        {
+            ActiveOpts = ProductData.SinkOptions;
+        }
+        else if (ActiveComponent == EFurnitureComponentType::Faucet)
+        {
+            ActiveOpts = ProductData.FaucetOptions;
+        }
+        else if (ActiveComponent == EFurnitureComponentType::Mirror)
+        {
+            ActiveOpts = ProductData.MirrorOptions;
+        }
+        else
+        {
+            ActiveOpts = ProductData.CabinetOptions;
+        }
 
-            // Clear option listeners when regenerating layout
-            OptionListeners.Empty();
+        // Gate optional component visibility — if the component's mesh is missing/null, collapse the UI selectors
+        bool bIsValidMesh = IsComponentMeshValid(Booth, ActiveComponent);
+        ESlateVisibility TargetVisibility = bIsValidMesh ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 
-            // Set default / active selection details first (strictly only SKU and Description of active size mesh)
-            if (bIsValidMesh)
+        // Clear option listeners when regenerating layout
+        OptionListeners.Empty();
+
+        // ── SIZE SELECTORS ──
+        if (Size_Container)
+        {
+            if (ActiveComponent == EFurnitureComponentType::Countertop)
             {
-                FText ActiveNameText;
-                FText ActiveDescText;
-                for (const FFurnitureSizeOption& SizeOpt : ActiveOpts.Sizes)
-                {
-                    if (SizeOpt.SizeID == ActiveState.SelectedSizeID)
-                    {
-                        ActiveNameText = SizeOpt.DisplayName;
-                        ActiveDescText = SizeOpt.Description;
-                        break;
-                    }
-                }
-
-                if (Txt_SelectionName)
-                {
-                    Txt_SelectionName->SetText(ActiveNameText);
-                    Txt_SelectionName->SetVisibility(ESlateVisibility::Visible);
-                }
-                if (Txt_SelectionDescription)
-                {
-                    Txt_SelectionDescription->SetText(ActiveDescText);
-                    Txt_SelectionDescription->SetVisibility(ESlateVisibility::Visible);
-                }
+                Size_Container->SetVisibility(ESlateVisibility::Collapsed);
             }
             else
-            {
-                if (Txt_SelectionName)
-                {
-                    Txt_SelectionName->SetVisibility(ESlateVisibility::Collapsed);
-                }
-                if (Txt_SelectionDescription)
-                {
-                    Txt_SelectionDescription->SetVisibility(ESlateVisibility::Collapsed);
-                }
-            }
-
-            // ── SIZE SELECTORS ──
-            if (Size_Container)
             {
                 Size_Container->SetVisibility(TargetVisibility);
                 Size_Container->ClearChildren();
@@ -230,7 +220,7 @@ void UConfiguratorMainWidget::RefreshSelections()
 
                 if (bIsValidMesh)
                 {
-                    for (const FFurnitureSizeOption& SizeOpt : ActiveOpts.Sizes)
+                    for (int32 i = 0; i < ActiveOpts.Sizes.Num(); ++i)
                     {
                         UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
                         if (NewBtn)
@@ -238,12 +228,12 @@ void UConfiguratorMainWidget::RefreshSelections()
                             UTextBlock* BtnText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
                             if (BtnText)
                             {
-                                BtnText->SetText(SizeOpt.DisplayName);
+                                BtnText->SetText(FText::Format(FText::FromString(TEXT("Size {0}")), FText::AsNumber(i + 1)));
                                 NewBtn->AddChild(BtnText);
                             }
 
                             UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
-                            Listener->Init(this, ActiveComponent, EOptionType::Size, SizeOpt.SizeID);
+                            Listener->Init(this, ActiveComponent, EOptionType::Size, i);
                             OptionListeners.Add(Listener);
 
                             NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
@@ -255,80 +245,95 @@ void UConfiguratorMainWidget::RefreshSelections()
                     }
                 }
             }
-            else if (Combo_Size)
+        }
+        else if (Combo_Size)
+        {
+            if (ActiveComponent == EFurnitureComponentType::Countertop)
+            {
+                Combo_Size->SetVisibility(ESlateVisibility::Collapsed);
+            }
+            else
             {
                 Combo_Size->SetVisibility(TargetVisibility);
                 if (bIsValidMesh)
                 {
-                    TArray<FName> SizeIDs;
                     TArray<FText> SizeNames;
-                    for (const FFurnitureSizeOption& SizeOpt : ActiveOpts.Sizes)
+                    for (int32 i = 0; i < ActiveOpts.Sizes.Num(); ++i)
                     {
-                        SizeIDs.Add(SizeOpt.SizeID);
-                        SizeNames.Add(SizeOpt.DisplayName);
+                        SizeNames.Add(FText::Format(FText::FromString(TEXT("Size {0}")), FText::AsNumber(i + 1)));
                     }
-                    PopulateCombo(Combo_Size, SizeIDs, SizeNames, ActiveState.SelectedSizeID);
+                    int32 CurrentSizeIdx = Booth->ActiveState.ActiveSizeIndex;
+                    if (ActiveComponent == EFurnitureComponentType::Closet) CurrentSizeIdx = Booth->ActiveState.ClosetSizeIndex;
+                    else if (ActiveComponent == EFurnitureComponentType::Sink) CurrentSizeIdx = Booth->ActiveState.SinkSizeIndex;
+                    else if (ActiveComponent == EFurnitureComponentType::Faucet) CurrentSizeIdx = Booth->ActiveState.FaucetSizeIndex;
+                    else if (ActiveComponent == EFurnitureComponentType::Mirror) CurrentSizeIdx = Booth->ActiveState.MirrorSizeIndex;
+                    PopulateCombo(Combo_Size, SizeNames, CurrentSizeIdx);
                 }
             }
+        }
 
-            // ── COLOR SELECTORS ──
-            if (Color_Container)
+        // ── COLOR SELECTORS ──
+        if (Color_Container)
+        {
+            Color_Container->SetVisibility(TargetVisibility);
+            Color_Container->ClearChildren();
+            if (Combo_Color)
             {
-                Color_Container->SetVisibility(TargetVisibility);
-                Color_Container->ClearChildren();
-                if (Combo_Color)
-                {
-                    Combo_Color->SetVisibility(ESlateVisibility::Collapsed);
-                }
+                Combo_Color->SetVisibility(ESlateVisibility::Collapsed);
+            }
 
-                if (bIsValidMesh)
+            if (bIsValidMesh)
+            {
+                for (int32 i = 0; i < ActiveOpts.Colors.Num(); ++i)
                 {
-                    for (const FFurnitureColorOption& ColorOpt : ActiveOpts.Colors)
+                    const FFurnitureColorOption& ColorOpt = ActiveOpts.Colors[i];
+                    UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                    if (NewBtn)
                     {
-                        UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
-                        if (NewBtn)
+                        UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+                        if (BtnImg)
                         {
-                            UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-                            if (BtnImg)
+                            if (!ColorOpt.Thumbnail.IsNull())
                             {
-                                if (!ColorOpt.Thumbnail.IsNull())
+                                UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
+                                if (LoadedTex)
                                 {
-                                    UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
-                                    if (LoadedTex)
-                                    {
-                                        BtnImg->SetBrushFromTexture(LoadedTex);
-                                    }
+                                    BtnImg->SetBrushFromTexture(LoadedTex);
                                 }
-                                NewBtn->AddChild(BtnImg);
                             }
-
-                            UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
-                            Listener->Init(this, ActiveComponent, EOptionType::Color, ColorOpt.ColorID);
-                            OptionListeners.Add(Listener);
-
-                            NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
-                            NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
-                            NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
-
-                            Color_Container->AddChild(NewBtn);
+                            NewBtn->AddChild(BtnImg);
                         }
+
+                        UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
+                        Listener->Init(this, ActiveComponent, EOptionType::Color, i);
+                        OptionListeners.Add(Listener);
+
+                        NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
+                        NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
+                        NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
+
+                        Color_Container->AddChild(NewBtn);
                     }
                 }
             }
-            else if (Combo_Color)
+        }
+        else if (Combo_Color)
+        {
+            Combo_Color->SetVisibility(TargetVisibility);
+            if (bIsValidMesh)
             {
-                Combo_Color->SetVisibility(TargetVisibility);
-                if (bIsValidMesh)
+                TArray<FText> ColorNames;
+                for (int32 i = 0; i < ActiveOpts.Colors.Num(); ++i)
                 {
-                    TArray<FName> ColorIDs;
-                    TArray<FText> ColorNames;
-                    for (const FFurnitureColorOption& ColorOpt : ActiveOpts.Colors)
-                    {
-                        ColorIDs.Add(ColorOpt.ColorID);
-                        ColorNames.Add(ColorOpt.DisplayName);
-                    }
-                    PopulateCombo(Combo_Color, ColorIDs, ColorNames, ActiveState.SelectedColorID);
+                    ColorNames.Add(FText::Format(FText::FromString(TEXT("Color {0}")), FText::AsNumber(i + 1)));
                 }
+                int32 CurrentColorIdx = Booth->ActiveState.ActiveColorIndex;
+                if (ActiveComponent == EFurnitureComponentType::Countertop) CurrentColorIdx = Booth->ActiveState.ActiveCountertopColorIndex;
+                else if (ActiveComponent == EFurnitureComponentType::Closet) CurrentColorIdx = Booth->ActiveState.ClosetColorIndex;
+                else if (ActiveComponent == EFurnitureComponentType::Sink) CurrentColorIdx = Booth->ActiveState.SinkColorIndex;
+                else if (ActiveComponent == EFurnitureComponentType::Faucet) CurrentColorIdx = Booth->ActiveState.FaucetColorIndex;
+                else if (ActiveComponent == EFurnitureComponentType::Mirror) CurrentColorIdx = Booth->ActiveState.MirrorColorIndex;
+                PopulateCombo(Combo_Color, ColorNames, CurrentColorIdx);
             }
         }
 
@@ -365,39 +370,71 @@ void UConfiguratorMainWidget::SetupIndividualComponentSelector(EFurnitureCompone
     if (Booth->GetActiveProductData(ProductData))
     {
         FFurnitureComponentOptions Opts;
-        FFurnitureComponentState State;
-        if (GetComponentOptionsAndState(ProductData, Booth->ActiveState, Component, Opts, State))
+        if (Component == EFurnitureComponentType::Doors)
         {
-            if (SizeCombo)
-            {
-                SizeCombo->SetVisibility(TargetVisibility);
-                if (bIsValidMesh)
-                {
-                    TArray<FName> SizeIDs;
-                    TArray<FText> SizeNames;
-                    for (const FFurnitureSizeOption& SizeOpt : Opts.Sizes)
-                    {
-                        SizeIDs.Add(SizeOpt.SizeID);
-                        SizeNames.Add(SizeOpt.DisplayName);
-                    }
-                    PopulateCombo(SizeCombo, SizeIDs, SizeNames, State.SelectedSizeID);
-                }
-            }
+            Opts = ProductData.CabinetOptions; // Redirect/fallback to Cabinet since doors configuration is unified
+        }
+        else if (Component == EFurnitureComponentType::Countertop)
+        {
+            Opts = ProductData.CountertopOptions;
+        }
+        else if (Component == EFurnitureComponentType::Closet)
+        {
+            Opts = ProductData.ClosetOptions;
+        }
+        else if (Component == EFurnitureComponentType::Sink)
+        {
+            Opts = ProductData.SinkOptions;
+        }
+        else if (Component == EFurnitureComponentType::Faucet)
+        {
+            Opts = ProductData.FaucetOptions;
+        }
+        else if (Component == EFurnitureComponentType::Mirror)
+        {
+            Opts = ProductData.MirrorOptions;
+        }
+        else
+        {
+            Opts = ProductData.CabinetOptions;
+        }
 
-            if (ColorCombo)
+        if (SizeCombo)
+        {
+            SizeCombo->SetVisibility(TargetVisibility);
+            if (bIsValidMesh)
             {
-                ColorCombo->SetVisibility(TargetVisibility);
-                if (bIsValidMesh)
+                TArray<FText> SizeNames;
+                for (int32 i = 0; i < Opts.Sizes.Num(); ++i)
                 {
-                    TArray<FName> ColorIDs;
-                    TArray<FText> ColorNames;
-                    for (const FFurnitureColorOption& ColorOpt : Opts.Colors)
-                    {
-                        ColorIDs.Add(ColorOpt.ColorID);
-                        ColorNames.Add(ColorOpt.DisplayName);
-                    }
-                    PopulateCombo(ColorCombo, ColorIDs, ColorNames, State.SelectedColorID);
+                    SizeNames.Add(FText::Format(FText::FromString(TEXT("Size {0}")), FText::AsNumber(i + 1)));
                 }
+                int32 SizeIdx = Booth->ActiveState.ActiveSizeIndex;
+                if (Component == EFurnitureComponentType::Closet) SizeIdx = Booth->ActiveState.ClosetSizeIndex;
+                else if (Component == EFurnitureComponentType::Sink) SizeIdx = Booth->ActiveState.SinkSizeIndex;
+                else if (Component == EFurnitureComponentType::Faucet) SizeIdx = Booth->ActiveState.FaucetSizeIndex;
+                else if (Component == EFurnitureComponentType::Mirror) SizeIdx = Booth->ActiveState.MirrorSizeIndex;
+                PopulateCombo(SizeCombo, SizeNames, SizeIdx);
+            }
+        }
+
+        if (ColorCombo)
+        {
+            ColorCombo->SetVisibility(TargetVisibility);
+            if (bIsValidMesh)
+            {
+                TArray<FText> ColorNames;
+                for (int32 i = 0; i < Opts.Colors.Num(); ++i)
+                {
+                    ColorNames.Add(FText::Format(FText::FromString(TEXT("Color {0}")), FText::AsNumber(i + 1)));
+                }
+                int32 ColorIdx = Booth->ActiveState.ActiveColorIndex;
+                if (Component == EFurnitureComponentType::Countertop) ColorIdx = Booth->ActiveState.ActiveCountertopColorIndex;
+                else if (Component == EFurnitureComponentType::Closet) ColorIdx = Booth->ActiveState.ClosetColorIndex;
+                else if (Component == EFurnitureComponentType::Sink) ColorIdx = Booth->ActiveState.SinkColorIndex;
+                else if (Component == EFurnitureComponentType::Faucet) ColorIdx = Booth->ActiveState.FaucetColorIndex;
+                else if (Component == EFurnitureComponentType::Mirror) ColorIdx = Booth->ActiveState.MirrorColorIndex;
+                PopulateCombo(ColorCombo, ColorNames, ColorIdx);
             }
         }
     }
@@ -436,7 +473,7 @@ bool UConfiguratorMainWidget::IsComponentMeshValid(AShowroomBooth* Booth, EFurni
     return false;
 }
 
-void UConfiguratorMainWidget::PopulateCombo(UComboBoxString* Combo, const TArray<FName>& OptionIDs, const TArray<FText>& DisplayNames, FName CurrentSelection)
+void UConfiguratorMainWidget::PopulateCombo(UComboBoxString* Combo, const TArray<FText>& DisplayNames, int32 CurrentSelectionIndex)
 {
     if (!Combo)
     {
@@ -448,25 +485,15 @@ void UConfiguratorMainWidget::PopulateCombo(UComboBoxString* Combo, const TArray
 
     Combo->ClearOptions();
     
-    int32 SelectIndex = 0;
-    for (int32 i = 0; i < OptionIDs.Num(); ++i)
+    for (int32 i = 0; i < DisplayNames.Num(); ++i)
     {
-        FString OptionStr = OptionIDs[i].ToString();
-        if (DisplayNames.IsValidIndex(i) && !DisplayNames[i].IsEmpty())
-        {
-            OptionStr = FString::Printf(TEXT("%s (%s)"), *DisplayNames[i].ToString(), *OptionIDs[i].ToString());
-        }
+        FString OptionStr = DisplayNames[i].ToString();
         Combo->AddOption(OptionStr);
-
-        if (OptionIDs[i] == CurrentSelection)
-        {
-            SelectIndex = i;
-        }
     }
 
-    if (OptionIDs.Num() > 0)
+    if (DisplayNames.Num() > 0 && DisplayNames.IsValidIndex(CurrentSelectionIndex))
     {
-        Combo->SetSelectedIndex(SelectIndex);
+        Combo->SetSelectedIndex(CurrentSelectionIndex);
     }
 
     // Re-bind the selection changed callbacks
@@ -488,43 +515,7 @@ void UConfiguratorMainWidget::PopulateCombo(UComboBoxString* Combo, const TArray
     else if (Combo == Combo_Mirror_Color) Combo->OnSelectionChanged.AddDynamic(this, &UConfiguratorMainWidget::OnMirrorColorChanged);
 }
 
-bool UConfiguratorMainWidget::GetComponentOptionsAndState(const FFurnitureProductRow& Row, const FShowroomBoothConfigState& State, EFurnitureComponentType Component, FFurnitureComponentOptions& OutOptions, FFurnitureComponentState& OutState) const
-{
-    switch (Component)
-    {
-    case EFurnitureComponentType::Cabinet:
-        OutOptions = Row.CabinetOptions;
-        OutState = State.CabinetState;
-        return true;
-    case EFurnitureComponentType::Closet:
-        OutOptions = Row.ClosetOptions;
-        OutState = State.ClosetState;
-        return true;
-    case EFurnitureComponentType::Doors:
-        OutOptions = Row.DoorOptions;
-        OutState = State.DoorState;
-        return true;
-    case EFurnitureComponentType::Countertop:
-        OutOptions = Row.CountertopOptions;
-        OutState = State.CountertopState;
-        return true;
-    case EFurnitureComponentType::Sink:
-        OutOptions = Row.SinkOptions;
-        OutState = State.SinkState;
-        return true;
-    case EFurnitureComponentType::Faucet:
-        OutOptions = Row.FaucetOptions;
-        OutState = State.FaucetState;
-        return true;
-    case EFurnitureComponentType::Mirror:
-        OutOptions = Row.MirrorOptions;
-        OutState = State.MirrorState;
-        return true;
-    default:
-        break;
-    }
-    return false;
-}
+
 
 // ── Strict UI button event callbacks ──────────────────────────────────────────
 
@@ -556,22 +547,32 @@ void UConfiguratorMainWidget::OnSizeSelected(FString SelectedItem, ESelectInfo::
     AShowroomBooth* Booth = TargetBooth.Get();
     if (!Booth || !Combo_Size) return;
 
-    FFurnitureProductRow ProductData;
-    if (Booth->GetActiveProductData(ProductData))
+    int32 SelectedIdx = Combo_Size->GetSelectedIndex();
+    if (OwningPC)
     {
-        FFurnitureComponentOptions Opts;
-        FFurnitureComponentState State;
-        if (GetComponentOptionsAndState(ProductData, Booth->ActiveState, ActiveComponent, Opts, State))
+        int32 ColorIndex = Booth->ActiveState.ActiveColorIndex;
+        if (ActiveComponent == EFurnitureComponentType::Countertop)
         {
-            int32 SelectedIdx = Combo_Size->GetSelectedIndex();
-            if (Opts.Sizes.IsValidIndex(SelectedIdx))
-            {
-                if (OwningPC)
-                {
-                    OwningPC->RequestBoothComponentSelection(Booth, ActiveComponent, Opts.Sizes[SelectedIdx].SizeID, State.SelectedColorID);
-                }
-            }
+            ColorIndex = Booth->ActiveState.ActiveCountertopColorIndex;
         }
+        else if (ActiveComponent == EFurnitureComponentType::Closet)
+        {
+            ColorIndex = Booth->ActiveState.ClosetColorIndex;
+        }
+        else if (ActiveComponent == EFurnitureComponentType::Sink)
+        {
+            ColorIndex = Booth->ActiveState.SinkColorIndex;
+        }
+        else if (ActiveComponent == EFurnitureComponentType::Faucet)
+        {
+            ColorIndex = Booth->ActiveState.FaucetColorIndex;
+        }
+        else if (ActiveComponent == EFurnitureComponentType::Mirror)
+        {
+            ColorIndex = Booth->ActiveState.MirrorColorIndex;
+        }
+
+        OwningPC->RequestBoothComponentSelection(Booth, ActiveComponent, SelectedIdx, ColorIndex);
     }
 }
 
@@ -580,22 +581,28 @@ void UConfiguratorMainWidget::OnColorSelected(FString SelectedItem, ESelectInfo:
     AShowroomBooth* Booth = TargetBooth.Get();
     if (!Booth || !Combo_Color) return;
 
-    FFurnitureProductRow ProductData;
-    if (Booth->GetActiveProductData(ProductData))
+    int32 SelectedIdx = Combo_Color->GetSelectedIndex();
+    if (OwningPC)
     {
-        FFurnitureComponentOptions Opts;
-        FFurnitureComponentState State;
-        if (GetComponentOptionsAndState(ProductData, Booth->ActiveState, ActiveComponent, Opts, State))
+        int32 SizeIndex = Booth->ActiveState.ActiveSizeIndex;
+        if (ActiveComponent == EFurnitureComponentType::Closet)
         {
-            int32 SelectedIdx = Combo_Color->GetSelectedIndex();
-            if (Opts.Colors.IsValidIndex(SelectedIdx))
-            {
-                if (OwningPC)
-                {
-                    OwningPC->RequestBoothComponentSelection(Booth, ActiveComponent, State.SelectedSizeID, Opts.Colors[SelectedIdx].ColorID);
-                }
-            }
+            SizeIndex = Booth->ActiveState.ClosetSizeIndex;
         }
+        else if (ActiveComponent == EFurnitureComponentType::Sink)
+        {
+            SizeIndex = Booth->ActiveState.SinkSizeIndex;
+        }
+        else if (ActiveComponent == EFurnitureComponentType::Faucet)
+        {
+            SizeIndex = Booth->ActiveState.FaucetSizeIndex;
+        }
+        else if (ActiveComponent == EFurnitureComponentType::Mirror)
+        {
+            SizeIndex = Booth->ActiveState.MirrorSizeIndex;
+        }
+
+        OwningPC->RequestBoothComponentSelection(Booth, ActiveComponent, SizeIndex, SelectedIdx);
     }
 }
 
@@ -606,39 +613,55 @@ void UConfiguratorMainWidget::UpdateSelectionForComponent(EFurnitureComponentTyp
     AShowroomBooth* Booth = TargetBooth.Get();
     if (!Booth) return;
 
-    FFurnitureProductRow ProductData;
-    if (Booth->GetActiveProductData(ProductData))
+    int32 TargetSize = Booth->ActiveState.ActiveSizeIndex;
+    int32 TargetColor = Booth->ActiveState.ActiveColorIndex;
+
+    if (Component == EFurnitureComponentType::Countertop)
     {
-        FFurnitureComponentOptions Opts;
-        FFurnitureComponentState State;
-        if (GetComponentOptionsAndState(ProductData, Booth->ActiveState, Component, Opts, State))
+        TargetColor = Booth->ActiveState.ActiveCountertopColorIndex;
+    }
+    else if (Component == EFurnitureComponentType::Closet)
+    {
+        TargetSize = Booth->ActiveState.ClosetSizeIndex;
+        TargetColor = Booth->ActiveState.ClosetColorIndex;
+    }
+    else if (Component == EFurnitureComponentType::Sink)
+    {
+        TargetSize = Booth->ActiveState.SinkSizeIndex;
+        TargetColor = Booth->ActiveState.SinkColorIndex;
+    }
+    else if (Component == EFurnitureComponentType::Faucet)
+    {
+        TargetSize = Booth->ActiveState.FaucetSizeIndex;
+        TargetColor = Booth->ActiveState.FaucetColorIndex;
+    }
+    else if (Component == EFurnitureComponentType::Mirror)
+    {
+        TargetSize = Booth->ActiveState.MirrorSizeIndex;
+        TargetColor = Booth->ActiveState.MirrorColorIndex;
+    }
+
+    if (SizeCombo)
+    {
+        int32 SizeIdx = SizeCombo->GetSelectedIndex();
+        if (SizeIdx != -1)
         {
-            FName TargetSize = State.SelectedSizeID;
-            FName TargetColor = State.SelectedColorID;
-
-            if (SizeCombo)
-            {
-                int32 SizeIdx = SizeCombo->GetSelectedIndex();
-                if (Opts.Sizes.IsValidIndex(SizeIdx))
-                {
-                    TargetSize = Opts.Sizes[SizeIdx].SizeID;
-                }
-            }
-
-            if (ColorCombo)
-            {
-                int32 ColorIdx = ColorCombo->GetSelectedIndex();
-                if (Opts.Colors.IsValidIndex(ColorIdx))
-                {
-                    TargetColor = Opts.Colors[ColorIdx].ColorID;
-                }
-            }
-
-            if (OwningPC)
-            {
-                OwningPC->RequestBoothComponentSelection(Booth, Component, TargetSize, TargetColor);
-            }
+            TargetSize = SizeIdx;
         }
+    }
+
+    if (ColorCombo)
+    {
+        int32 ColorIdx = ColorCombo->GetSelectedIndex();
+        if (ColorIdx != -1)
+        {
+            TargetColor = ColorIdx;
+        }
+    }
+
+    if (OwningPC)
+    {
+        OwningPC->RequestBoothComponentSelection(Booth, Component, TargetSize, TargetColor);
     }
 }
 
@@ -707,83 +730,58 @@ void UConfiguratorMainWidget::OnMirrorColorChanged(FString SelectedItem, ESelect
     UpdateSelectionForComponent(EFurnitureComponentType::Mirror, Combo_Mirror_Size, Combo_Mirror_Color);
 }
 
-void UConfiguratorMainWidget::HandleOptionSelected(EFurnitureComponentType Component, EOptionType Type, FName OptionID)
+void UConfiguratorMainWidget::HandleOptionSelected(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex)
 {
     AShowroomBooth* Booth = TargetBooth.Get();
     if (!Booth || !OwningPC) return;
 
-    FFurnitureProductRow ProductData;
-    if (Booth->GetActiveProductData(ProductData))
+    int32 SizeIndex = Booth->ActiveState.ActiveSizeIndex;
+    int32 ColorIndex = Booth->ActiveState.ActiveColorIndex;
+
+    if (Component == EFurnitureComponentType::Countertop)
     {
-        FFurnitureComponentOptions Opts;
-        FFurnitureComponentState State;
-        if (GetComponentOptionsAndState(ProductData, Booth->ActiveState, Component, Opts, State))
-        {
-            if (Type == EOptionType::Size)
-            {
-                OwningPC->RequestBoothComponentSelection(Booth, Component, OptionID, State.SelectedColorID);
-            }
-            else
-            {
-                OwningPC->RequestBoothComponentSelection(Booth, Component, State.SelectedSizeID, OptionID);
-            }
-        }
+        SizeIndex = Booth->ActiveState.ActiveSizeIndex;
+        ColorIndex = Booth->ActiveState.ActiveCountertopColorIndex;
     }
+    else if (Component == EFurnitureComponentType::Closet)
+    {
+        SizeIndex = Booth->ActiveState.ClosetSizeIndex;
+        ColorIndex = Booth->ActiveState.ClosetColorIndex;
+    }
+    else if (Component == EFurnitureComponentType::Sink)
+    {
+        SizeIndex = Booth->ActiveState.SinkSizeIndex;
+        ColorIndex = Booth->ActiveState.SinkColorIndex;
+    }
+    else if (Component == EFurnitureComponentType::Faucet)
+    {
+        SizeIndex = Booth->ActiveState.FaucetSizeIndex;
+        ColorIndex = Booth->ActiveState.FaucetColorIndex;
+    }
+    else if (Component == EFurnitureComponentType::Mirror)
+    {
+        SizeIndex = Booth->ActiveState.MirrorSizeIndex;
+        ColorIndex = Booth->ActiveState.MirrorColorIndex;
+    }
+
+    if (Type == EOptionType::Size)
+    {
+        SizeIndex = OptionIndex;
+    }
+    else
+    {
+        ColorIndex = OptionIndex;
+    }
+
+    OwningPC->RequestBoothComponentSelection(Booth, Component, SizeIndex, ColorIndex);
 }
 
-void UConfiguratorMainWidget::HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, FName OptionID)
+void UConfiguratorMainWidget::HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex)
 {
-    AShowroomBooth* Booth = TargetBooth.Get();
-    if (!Booth) return;
-
-    FFurnitureProductRow ProductData;
-    if (Booth->GetActiveProductData(ProductData))
-    {
-        FFurnitureComponentOptions Opts;
-        FFurnitureComponentState State;
-        if (GetComponentOptionsAndState(ProductData, Booth->ActiveState, Component, Opts, State))
-        {
-            FText DisplayNameText;
-            FText DescriptionText;
-
-            if (Type == EOptionType::Size)
-            {
-                for (const FFurnitureSizeOption& SizeOpt : Opts.Sizes)
-                {
-                    if (SizeOpt.SizeID == OptionID)
-                    {
-                        DisplayNameText = SizeOpt.DisplayName;
-                        DescriptionText = SizeOpt.Description;
-                        break;
-                    }
-                }
-            }
-            else
-            {
-                for (const FFurnitureColorOption& ColorOpt : Opts.Colors)
-                {
-                    if (ColorOpt.ColorID == OptionID)
-                    {
-                        DisplayNameText = ColorOpt.DisplayName;
-                        DescriptionText = ColorOpt.Description;
-                        break;
-                    }
-                }
-            }
-
-            if (Txt_SelectionName)
-            {
-                Txt_SelectionName->SetText(DisplayNameText);
-            }
-            if (Txt_SelectionDescription)
-            {
-                Txt_SelectionDescription->SetText(DescriptionText);
-            }
-        }
-    }
+    // No-op for metadata-free phase
 }
 
-void UConfiguratorMainWidget::HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, FName OptionID)
+void UConfiguratorMainWidget::HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex)
 {
     // Restore text to show active selection details
     RefreshSelections();

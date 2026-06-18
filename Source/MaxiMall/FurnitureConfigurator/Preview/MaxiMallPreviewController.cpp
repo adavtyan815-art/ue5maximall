@@ -582,7 +582,7 @@ void AMaxiMallPreviewController::RequestBoothDoorToggle(AShowroomBooth* TargetBo
     }
 }
 
-void AMaxiMallPreviewController::RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+void AMaxiMallPreviewController::RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex)
 {
     if (!TargetBooth)
     {
@@ -591,11 +591,11 @@ void AMaxiMallPreviewController::RequestBoothComponentSelection(AShowroomBooth* 
 
     if (GetLocalRole() == ROLE_Authority)
     {
-        TargetBooth->RequestComponentSelection(ComponentType, SizeID, ColorID);
+        TargetBooth->RequestComponentSelection(ComponentType, SizeIndex, ColorIndex);
     }
     else
     {
-        Server_RequestBoothComponentSelection(TargetBooth, ComponentType, SizeID, ColorID);
+        Server_RequestBoothComponentSelection(TargetBooth, ComponentType, SizeIndex, ColorIndex);
     }
 }
 
@@ -629,15 +629,15 @@ bool AMaxiMallPreviewController::Server_RequestBoothProductChange_Validate(AShow
     return true;
 }
 
-void AMaxiMallPreviewController::Server_RequestBoothComponentSelection_Implementation(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+void AMaxiMallPreviewController::Server_RequestBoothComponentSelection_Implementation(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex)
 {
     if (TargetBooth)
     {
-        TargetBooth->RequestComponentSelection(ComponentType, SizeID, ColorID);
+        TargetBooth->RequestComponentSelection(ComponentType, SizeIndex, ColorIndex);
     }
 }
 
-bool AMaxiMallPreviewController::Server_RequestBoothComponentSelection_Validate(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID)
+bool AMaxiMallPreviewController::Server_RequestBoothComponentSelection_Validate(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex)
 {
     return true;
 }

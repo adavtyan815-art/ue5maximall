@@ -184,7 +184,14 @@ private:
     /** Helper — applies dynamic size and color selections to a target mesh component. */
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                         const FFurnitureComponentOptions& Options,
-                                        const FFurnitureComponentState& State);
+                                        int32 SizeIndex,
+                                        int32 ColorIndex);
+
+    /** Helper — applies dynamic size and color selections to a target door component using the dedicated door options struct. */
+    void ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
+                                   const FFurnitureDoorOptions& Options,
+                                   int32 SizeIndex,
+                                   int32 ColorIndex);
 
     /** Dynamically adjusts the camera-mounted FillLight intensity to compensate for distance attenuation. */
     void UpdateLightIntensityForZoom();

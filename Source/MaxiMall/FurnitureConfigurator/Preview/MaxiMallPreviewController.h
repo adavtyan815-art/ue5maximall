@@ -188,7 +188,7 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth",
               meta = (DisplayName = "Request Booth Component Selection"))
-    void RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+    void RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
 
     // ─────────────────────────────────────────────────────────────────────
     // BLUEPRINT EVENTS (Loose Coupling Hooks)
@@ -279,7 +279,7 @@ protected:
     void Server_RequestBoothProductChange(AShowroomBooth* TargetBooth, FName NewProductID);
 
     UFUNCTION(Server, Reliable, WithValidation)
-    void Server_RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FName SizeID, FName ColorID);
+    void Server_RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
 
 private:
 
