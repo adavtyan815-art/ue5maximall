@@ -131,6 +131,42 @@ struct MAXIMALL_API FFurnitureColorOption
 /**
  * Wraps size and color/material options for a component.
  */
+/**
+ * Product metadata for a specific combination of component selections.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureMetadata
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Metadata")
+    FText ProductName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Metadata")
+    FString SKU;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Metadata")
+    FString URL;
+};
+
+/**
+ * A mapped combination key-value entry for size and color configurations.
+ */
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureMetadataEntry
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combination")
+    int32 SizeIndex = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combination")
+    int32 ColorIndex = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combination")
+    FFurnitureMetadata Metadata;
+};
+
 USTRUCT(BlueprintType)
 struct MAXIMALL_API FFurnitureComponentOptions
 {
@@ -141,6 +177,9 @@ struct MAXIMALL_API FFurnitureComponentOptions
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component Options")
     TArray<FFurnitureColorOption> Colors;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Metadata Matrix")
+    TArray<FFurnitureMetadataEntry> CombinationsMetadata;
 };
 
 /**

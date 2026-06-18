@@ -114,6 +114,8 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
                     HitComp == HitBooth->ClosetMesh.Get() ||
                     HitComp == HitBooth->DoorMeshSlot0.Get() ||
                     HitComp == HitBooth->DoorMeshSlot1.Get() ||
+                    HitComp == HitBooth->ClosetDoorMeshSlot0.Get() ||
+                    HitComp == HitBooth->ClosetDoorMeshSlot1.Get() ||
                     HitComp == HitBooth->CountertopMesh.Get() ||
                     HitComp == HitBooth->SinkMesh.Get() ||
                     HitComp == HitBooth->FaucetMesh.Get() ||
@@ -262,10 +264,16 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     // Print runtime spawn class details for debugging/exposure validation
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
+    FRotator SpawnRotation = FRotator::ZeroRotator;
+    if (TargetBooth)
+    {
+        SpawnRotation.Yaw = TargetBooth->GetActorRotation().Yaw;
+    }
+
     ActivePreviewActor = World->SpawnActor<AFurniturePreviewActor>(
         SpawnClass,
         PreviewStagingLocation,
-        FRotator::ZeroRotator,
+        SpawnRotation,
         SpawnParams);
 
     if (!ActivePreviewActor)
@@ -299,6 +307,8 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
         if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
         if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
+        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(false);
+        if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(false);
 
         // Show only the selected component mesh
         switch (CurrentTargetComponent)
@@ -317,6 +327,15 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
             break;
         case EFurnitureComponentType::Closet:
             if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
+            if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::OneDoor)
+            {
+                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
+            }
+            else if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::TwoDoors)
+            {
+                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
+                if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(true);
+            }
             break;
         case EFurnitureComponentType::Doors:
             if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
@@ -327,6 +346,15 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
             {
                 if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
                 if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
+            }
+            if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::OneDoor)
+            {
+                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
+            }
+            else if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::TwoDoors)
+            {
+                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
+                if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(true);
             }
             break;
         case EFurnitureComponentType::Countertop:
@@ -354,6 +382,11 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     {
         ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);
     }
+
+    // Calculate and apply starting preview camera angles to match player's view relative to the booth
+    float InitialYaw = FRotator::NormalizeAxis(SavedControlRotation.Yaw - SpawnRotation.Yaw);
+    float InitialPitch = FRotator::NormalizeAxis(SavedControlRotation.Pitch);
+    ActivePreviewActor->SetInitialRotation(InitialYaw, InitialPitch);
 
     // Bind to the booth's product change delegate to keep the preview actor in sync dynamically
     CurrentTargetBooth = TargetBooth;
@@ -692,6 +725,10 @@ bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBoo
             {
                 OutComponentType = EFurnitureComponentType::Doors;
             }
+            else if (OutHitComponent == HitBooth->ClosetDoorMeshSlot0.Get() || OutHitComponent == HitBooth->ClosetDoorMeshSlot1.Get())
+            {
+                OutComponentType = EFurnitureComponentType::Closet;
+            }
             else if (OutHitComponent == HitBooth->CountertopMesh.Get())
             {
                 OutComponentType = EFurnitureComponentType::Countertop;
@@ -727,7 +764,7 @@ void AMaxiMallPreviewController::HandleDoubleClickInteraction()
 
     if (bSuccess)
     {
-        if (ComponentType == EFurnitureComponentType::Doors)
+        if (ComponentType == EFurnitureComponentType::Doors || ComponentType == EFurnitureComponentType::Closet)
         {
             int32 SlotIndex = -1;
             if (HitComponent == HitBooth->DoorMeshSlot0.Get())
@@ -737,6 +774,14 @@ void AMaxiMallPreviewController::HandleDoubleClickInteraction()
             else if (HitComponent == HitBooth->DoorMeshSlot1.Get())
             {
                 SlotIndex = 1;
+            }
+            else if (HitComponent == HitBooth->ClosetDoorMeshSlot0.Get())
+            {
+                SlotIndex = 2;
+            }
+            else if (HitComponent == HitBooth->ClosetDoorMeshSlot1.Get())
+            {
+                SlotIndex = 3;
             }
 
             if (SlotIndex != -1)
@@ -780,6 +825,8 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                 if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
                 if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
                 if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
+                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(false);
+                if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(false);
 
                 // Show only the selected component mesh
                 switch (CurrentTargetComponent)
@@ -798,6 +845,15 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                     break;
                 case EFurnitureComponentType::Closet:
                     if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
+                    if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::OneDoor)
+                    {
+                        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
+                    }
+                    else if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::TwoDoors)
+                    {
+                        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
+                        if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(true);
+                    }
                     break;
                 case EFurnitureComponentType::Doors:
                     if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
@@ -808,6 +864,15 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                     {
                         if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
                         if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
+                    }
+                    if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::OneDoor)
+                    {
+                        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
+                    }
+                    else if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::TwoDoors)
+                    {
+                        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
+                        if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(true);
                     }
                     break;
                 case EFurnitureComponentType::Countertop:
@@ -969,4 +1034,98 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
             }
         });
     }
+}
+
+bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentType ComponentType, FText& OutProductName, FString& OutSKU, FString& OutURL) const
+{
+    OutProductName = FText::GetEmpty();
+    OutSKU = FString();
+    OutURL = FString();
+
+    if (!CurrentTargetBooth)
+    {
+        return false;
+    }
+
+    const FFurnitureProductRow* Row = CurrentTargetBooth->FindProductRow(CurrentTargetBooth->ActiveState.ProductID);
+    if (!Row)
+    {
+        return false;
+    }
+
+    const FFurnitureComponentOptions* TargetOptions = nullptr;
+    int32 TargetSizeIndex = 0;
+    int32 TargetColorIndex = 0;
+
+    switch (ComponentType)
+    {
+    case EFurnitureComponentType::Cabinet:
+    case EFurnitureComponentType::Doors:
+        TargetOptions = &Row->CabinetOptions;
+        TargetSizeIndex = CurrentTargetBooth->ActiveState.ActiveSizeIndex;
+        TargetColorIndex = CurrentTargetBooth->ActiveState.ActiveColorIndex;
+        break;
+
+    case EFurnitureComponentType::Countertop:
+        TargetOptions = &Row->CountertopOptions;
+        TargetSizeIndex = CurrentTargetBooth->ActiveState.ActiveSizeIndex;
+        TargetColorIndex = CurrentTargetBooth->ActiveState.ActiveCountertopColorIndex;
+        break;
+
+    case EFurnitureComponentType::Closet:
+        TargetOptions = &Row->ClosetOptions;
+        TargetSizeIndex = CurrentTargetBooth->ActiveState.ClosetSizeIndex;
+        TargetColorIndex = CurrentTargetBooth->ActiveState.ClosetColorIndex;
+        break;
+
+    case EFurnitureComponentType::Sink:
+        TargetOptions = &Row->SinkOptions;
+        TargetSizeIndex = CurrentTargetBooth->ActiveState.SinkSizeIndex;
+        TargetColorIndex = CurrentTargetBooth->ActiveState.SinkColorIndex;
+        break;
+
+    case EFurnitureComponentType::Faucet:
+        TargetOptions = &Row->FaucetOptions;
+        TargetSizeIndex = CurrentTargetBooth->ActiveState.FaucetSizeIndex;
+        TargetColorIndex = CurrentTargetBooth->ActiveState.FaucetColorIndex;
+        break;
+
+    case EFurnitureComponentType::Mirror:
+        TargetOptions = &Row->MirrorOptions;
+        TargetSizeIndex = CurrentTargetBooth->ActiveState.MirrorSizeIndex;
+        TargetColorIndex = CurrentTargetBooth->ActiveState.MirrorColorIndex;
+        break;
+
+    default:
+        return false;
+    }
+
+    if (!TargetOptions)
+    {
+        return false;
+    }
+
+    // Search for combination match in the matrix
+    for (const FFurnitureMetadataEntry& Entry : TargetOptions->CombinationsMetadata)
+    {
+        if (Entry.SizeIndex == TargetSizeIndex && Entry.ColorIndex == TargetColorIndex)
+        {
+            OutProductName = Entry.Metadata.ProductName;
+            OutSKU = Entry.Metadata.SKU;
+            OutURL = Entry.Metadata.URL;
+            return true;
+        }
+    }
+
+    // Fallback: If no combination is found, try to use the first combination
+    if (TargetOptions->CombinationsMetadata.Num() > 0)
+    {
+        const FFurnitureMetadata& Fallback = TargetOptions->CombinationsMetadata[0].Metadata;
+        OutProductName = Fallback.ProductName;
+        OutSKU = Fallback.SKU;
+        OutURL = Fallback.URL;
+        return true;
+    }
+
+    return false;
 }

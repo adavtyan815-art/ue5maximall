@@ -143,6 +143,14 @@ public:
               meta = (DisplayName = "Focus Preview On Component"))
     void FocusPreviewOnComponent(EFurnitureComponentType ComponentType);
 
+    /**
+     * Resolves the active metadata for the specified component type based on the active booth configuration.
+     * If the combination is not explicitly defined in the catalog matrix, falls back to default values.
+     */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Preview",
+              meta = (DisplayName = "Get Active Component Metadata"))
+    bool GetActiveComponentMetadata(EFurnitureComponentType ComponentType, FText& OutProductName, FString& OutSKU, FString& OutURL) const;
+
     /** The showroom booth currently being inspected/previewed. Locked in via TraceFurnitureComponent. */
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Preview")
     TObjectPtr<AShowroomBooth> CurrentTargetBooth;

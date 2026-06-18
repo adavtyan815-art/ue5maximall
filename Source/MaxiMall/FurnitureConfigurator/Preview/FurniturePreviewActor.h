@@ -75,6 +75,12 @@ public:
     UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
     TObjectPtr<UStaticMeshComponent> ClosetMesh;
 
+    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot0;
+
+    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot1;
+
     /** SpringArm component to handle orbit distance and rotation. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Preview | Camera")
     TObjectPtr<USpringArmComponent> SpringArm;
@@ -157,6 +163,11 @@ public:
               meta = (DisplayName = "Reset Preview Rotation"))
     void ResetRotation();
 
+    /** Initializes the starting and default rotation for the preview camera. */
+    UFUNCTION(BlueprintCallable, Category = "Preview | Control",
+              meta = (DisplayName = "Set Initial Rotation"))
+    void SetInitialRotation(float InYaw, float InPitch);
+
     /**
      * Zooms the camera by adjusting the SpringArm TargetArmLength.
      *
@@ -180,6 +191,12 @@ private:
 
     /** Current accumulated pitch (vertical) rotation in degrees. */
     float CurrentPitch = 0.f;
+
+    /** Default Yaw (horizontal) camera angle in degrees. */
+    float DefaultYaw = 0.f;
+
+    /** Default Pitch (vertical) camera angle in degrees. */
+    float DefaultPitch = -15.f;
 
     /** Helper — applies dynamic size and color selections to a target mesh component. */
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,

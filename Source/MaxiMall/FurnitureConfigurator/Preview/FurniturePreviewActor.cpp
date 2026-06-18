@@ -79,12 +79,25 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     ClosetMesh->SetupAttachment(PreviewRoot);
     ConfigurePreviewMesh(ClosetMesh.Get());
 
+    // ── Closet Doors ──────────────────────────────────────────────────────
+    ClosetDoorMeshSlot0 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ClosetDoorSlot0"));
+    ClosetDoorMeshSlot0->SetupAttachment(ClosetMesh);
+    ConfigurePreviewMesh(ClosetDoorMeshSlot0.Get());
+
+    ClosetDoorMeshSlot1 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ClosetDoorSlot1"));
+    ClosetDoorMeshSlot1->SetupAttachment(ClosetMesh);
+    ConfigurePreviewMesh(ClosetDoorMeshSlot1.Get());
+
     // Set default parameter values explicitly in constructor body for CDO persistence
     PitchMin = -80.f;
     PitchMax = 80.f;
     BaseFillIntensity = 40000.f;
     ReferenceZoomDistance = 250.f;
     CurrentZoomLength = 250.f;
+    DefaultYaw = 0.f;
+    DefaultPitch = -15.f;
+    CurrentYaw = 0.f;
+    CurrentPitch = -15.f;
 
     // ── Spring Arm & Camera ───────────────────────────────────────────────
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
@@ -167,6 +180,14 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         if (ClosetMesh && SourceBooth->ClosetMesh)
         {
             ClosetMesh->SetRelativeTransform(SourceBooth->ClosetMesh->GetRelativeTransform());
+        }
+        if (ClosetDoorMeshSlot0 && SourceBooth->ClosetDoorMeshSlot0)
+        {
+            ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
+        }
+        if (ClosetDoorMeshSlot1 && SourceBooth->ClosetDoorMeshSlot1)
+        {
+            ClosetDoorMeshSlot1->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot1->GetRelativeTransform());
         }
         if (CountertopMesh && SourceBooth->CountertopMesh)
         {
@@ -267,6 +288,73 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         DoorMeshSlot1->SetStaticMesh(nullptr);
         DoorMeshSlot1->SetVisibility(false);
         DoorMeshSlot1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+
+    // ── Closet Doors ──────────────────────────────────────────────────────
+    if (!SourceBooth || (SourceBooth->ClosetDoorMeshSlot0 && SourceBooth->ClosetDoorMeshSlot0->GetStaticMesh() != nullptr))
+    {
+        const FFurnitureDoorGroup& ClosetDoors = ProductData.DoorsConfig.ClosetDoors;
+
+        ApplyDoorMeshAndMaterials(ClosetDoorMeshSlot0.Get(), ClosetDoors, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex, 0);
+        ApplyDoorMeshAndMaterials(ClosetDoorMeshSlot1.Get(), ClosetDoors, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex, 1);
+
+        switch (ClosetDoors.DoorCount)
+        {
+        case EDoorCount::NoDoors:
+            ClosetDoorMeshSlot0->SetVisibility(false);
+            ClosetDoorMeshSlot1->SetVisibility(false);
+            break;
+        case EDoorCount::OneDoor:
+            if (ClosetDoorMeshSlot0->GetStaticMesh())
+            {
+                ClosetDoorMeshSlot0->SetVisibility(true);
+            }
+            if (SourceBooth && SourceBooth->ClosetDoorMeshSlot0)
+            {
+                ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
+            }
+            else
+            {
+                ClosetDoorMeshSlot0->SetRelativeLocation(ClosetDoors.SingleDoor.SlotConfig.ClosedPositionOffset);
+            }
+            ClosetDoorMeshSlot1->SetVisibility(false);
+            break;
+        case EDoorCount::TwoDoors:
+            if (ClosetDoorMeshSlot0->GetStaticMesh())
+            {
+                ClosetDoorMeshSlot0->SetVisibility(true);
+            }
+            if (SourceBooth && SourceBooth->ClosetDoorMeshSlot0)
+            {
+                ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
+            }
+            else
+            {
+                ClosetDoorMeshSlot0->SetRelativeLocation(ClosetDoors.DoubleDoors.Slot0Config.ClosedPositionOffset);
+            }
+            if (ClosetDoorMeshSlot1->GetStaticMesh())
+            {
+                ClosetDoorMeshSlot1->SetVisibility(true);
+            }
+            if (SourceBooth && SourceBooth->ClosetDoorMeshSlot1)
+            {
+                ClosetDoorMeshSlot1->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot1->GetRelativeTransform());
+            }
+            else
+            {
+                ClosetDoorMeshSlot1->SetRelativeLocation(ClosetDoors.DoubleDoors.Slot1Config.ClosedPositionOffset);
+            }
+            break;
+        }
+    }
+    else
+    {
+        ClosetDoorMeshSlot0->SetStaticMesh(nullptr);
+        ClosetDoorMeshSlot0->SetVisibility(false);
+        ClosetDoorMeshSlot0->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        ClosetDoorMeshSlot1->SetStaticMesh(nullptr);
+        ClosetDoorMeshSlot1->SetVisibility(false);
+        ClosetDoorMeshSlot1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
     // ── Countertop ────────────────────────────────────────────────────────
@@ -441,8 +529,8 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 
 void AFurniturePreviewActor::ResetRotation()
 {
-    CurrentYaw   = 0.f;
-    CurrentPitch = -15.f;
+    CurrentYaw   = DefaultYaw;
+    CurrentPitch = DefaultPitch;
     CurrentZoomLength = 250.f;
 
     if (SpringArm)
@@ -451,6 +539,19 @@ void AFurniturePreviewActor::ResetRotation()
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
     UpdateLightIntensityForZoom();
+}
+
+void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
+{
+    DefaultYaw = InYaw;
+    DefaultPitch = FMath::Clamp(InPitch, PitchMin, PitchMax);
+    CurrentYaw = DefaultYaw;
+    CurrentPitch = DefaultPitch;
+
+    if (SpringArm)
+    {
+        SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

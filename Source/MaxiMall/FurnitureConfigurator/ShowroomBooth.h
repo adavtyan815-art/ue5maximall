@@ -133,6 +133,14 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
     TObjectPtr<UStaticMeshComponent> ClosetMesh;
 
+    /** Closet door Slot 0 mesh component. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
+    TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot0;
+
+    /** Closet door Slot 1 mesh component. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
+    TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot1;
+
     // ─────────────────────────────────────────────────────────────────────
     // CONFIGURATION (Designer-set in Editor)
     // ─────────────────────────────────────────────────────────────────────
@@ -234,6 +242,12 @@ public:
      */
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Booth | Query")
     bool IsValidProductID(FName ProductID) const;
+
+    /**
+     * Convenience: looks up a row from ProductCatalog by RowName.
+     * Returns nullptr if ProductCatalog is null or RowName does not exist.
+     */
+    const FFurnitureProductRow* FindProductRow(FName RowName) const;
 
     /**
      * Initializes default selections for a configuration state.
@@ -390,12 +404,6 @@ protected:
      */
     void InitializeDoorStateArray();
 
-    /**
-     * Convenience: looks up a row from ProductCatalog by RowName.
-     * Returns nullptr if ProductCatalog is null or RowName does not exist.
-     */
-    const FFurnitureProductRow* FindProductRow(FName RowName) const;
-
     /** Timer handle for driving door/drawer smooth opening/closing animations. */
     FTimerHandle DoorAnimationTimerHandle;
 
@@ -419,6 +427,12 @@ private:
 
     UPROPERTY(Transient)
     FTransform BaselineDoor1Transform;
+
+    UPROPERTY(Transient)
+    FTransform BaselineClosetDoor0Transform;
+
+    UPROPERTY(Transient)
+    FTransform BaselineClosetDoor1Transform;
 
     UPROPERTY(Transient)
     bool bBaselineTransformsCaptured;

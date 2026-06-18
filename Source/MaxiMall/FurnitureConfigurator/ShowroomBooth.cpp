@@ -58,14 +58,23 @@ AShowroomBooth::AShowroomBooth()
     ClosetMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ClosetMesh"));
     ClosetMesh->SetupAttachment(BoothRoot);
 
+    // ── Closet Doors ──────────────────────────────────────────────────────
+    ClosetDoorMeshSlot0 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ClosetDoorMeshSlot0"));
+    ClosetDoorMeshSlot0->SetupAttachment(ClosetMesh);
+
+    ClosetDoorMeshSlot1 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ClosetDoorMeshSlot1"));
+    ClosetDoorMeshSlot1->SetupAttachment(ClosetMesh);
+
     // ── Default state ─────────────────────────────────────────────────────
     ActiveState.ProductID = NAME_None;
     bBaselineTransformsCaptured = false;
 
-    // Pre-size to exactly 2 slots. Never grows beyond this.
-    DoorStates.SetNumZeroed(2);
+    // Pre-size to exactly 4 slots (Cabinet doors at 0,1; Closet doors at 2,3).
+    DoorStates.SetNumZeroed(4);
     DoorStates[0] = EDoorSlotState::NotPresent;
     DoorStates[1] = EDoorSlotState::NotPresent;
+    DoorStates[2] = EDoorSlotState::NotPresent;
+    DoorStates[3] = EDoorSlotState::NotPresent;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,6 +135,18 @@ void AShowroomBooth::UpdateDoorAnimation()
         bAnimating |= AnimateDoorSlot(DoorMeshSlot1, 1, DeltaTime);
     }
 
+    // Interpolate closet door 0 if it is present
+    if (DoorStates.IsValidIndex(2) && ClosetDoorMeshSlot0 && DoorStates[2] != EDoorSlotState::NotPresent)
+    {
+        bAnimating |= AnimateDoorSlot(ClosetDoorMeshSlot0, 2, DeltaTime);
+    }
+
+    // Interpolate closet door 1 if it is present
+    if (DoorStates.IsValidIndex(3) && ClosetDoorMeshSlot1 && DoorStates[3] != EDoorSlotState::NotPresent)
+    {
+        bAnimating |= AnimateDoorSlot(ClosetDoorMeshSlot1, 3, DeltaTime);
+    }
+
     // Stop ticking the timer once all active animations are complete
     if (!bAnimating)
     {
@@ -144,17 +165,37 @@ bool AShowroomBooth::AnimateDoorSlot(UStaticMeshComponent* Slot, int32 SlotIndex
     if (!Row) return false;
 
     FDoorSlotConfig SlotCfg;
-    const FFurnitureDoorGroup& CabDoors = Row->DoorsConfig.CabinetDoors;
-    if (CabDoors.DoorCount == EDoorCount::OneDoor)
+    FTransform BaselineTransform = FTransform::Identity;
+
+    if (SlotIndex < 2)
     {
-        SlotCfg = CabDoors.SingleDoor.SlotConfig;
+        const FFurnitureDoorGroup& CabDoors = Row->DoorsConfig.CabinetDoors;
+        if (CabDoors.DoorCount == EDoorCount::OneDoor)
+        {
+            SlotCfg = CabDoors.SingleDoor.SlotConfig;
+        }
+        else if (CabDoors.DoorCount == EDoorCount::TwoDoors)
+        {
+            SlotCfg = (SlotIndex == 0) ? CabDoors.DoubleDoors.Slot0Config : CabDoors.DoubleDoors.Slot1Config;
+        }
+        
+        BaselineTransform = (SlotIndex == 0) ? BaselineDoor0Transform : BaselineDoor1Transform;
     }
-    else if (CabDoors.DoorCount == EDoorCount::TwoDoors)
+    else
     {
-        SlotCfg = (SlotIndex == 0) ? CabDoors.DoubleDoors.Slot0Config : CabDoors.DoubleDoors.Slot1Config;
+        const FFurnitureDoorGroup& ClosetDoors = Row->DoorsConfig.ClosetDoors;
+        if (ClosetDoors.DoorCount == EDoorCount::OneDoor)
+        {
+            SlotCfg = ClosetDoors.SingleDoor.SlotConfig;
+        }
+        else if (ClosetDoors.DoorCount == EDoorCount::TwoDoors)
+        {
+            SlotCfg = (SlotIndex == 2) ? ClosetDoors.DoubleDoors.Slot0Config : ClosetDoors.DoubleDoors.Slot1Config;
+        }
+        
+        BaselineTransform = (SlotIndex == 2) ? BaselineClosetDoor0Transform : BaselineClosetDoor1Transform;
     }
 
-    FTransform BaselineTransform = (SlotIndex == 0) ? BaselineDoor0Transform : BaselineDoor1Transform;
     if (BaselineTransform.GetScale3D().IsNearlyZero())
     {
         BaselineTransform.SetScale3D(FVector::OneVector);
@@ -236,6 +277,14 @@ void AShowroomBooth::EnsureBaselineTransformsCaptured()
     if (DoorMeshSlot1)
     {
         BaselineDoor1Transform = DoorMeshSlot1->GetRelativeTransform();
+    }
+    if (ClosetDoorMeshSlot0)
+    {
+        BaselineClosetDoor0Transform = ClosetDoorMeshSlot0->GetRelativeTransform();
+    }
+    if (ClosetDoorMeshSlot1)
+    {
+        BaselineClosetDoor1Transform = ClosetDoorMeshSlot1->GetRelativeTransform();
     }
     bBaselineTransformsCaptured = true;
 }
@@ -320,6 +369,16 @@ void AShowroomBooth::InitializeDefaultBooth()
         UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] '%s': ClosetMesh component is null!"), *GetName());
         return;
     }
+    if (!ClosetDoorMeshSlot0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] '%s': ClosetDoorMeshSlot0 component is null!"), *GetName());
+        return;
+    }
+    if (!ClosetDoorMeshSlot1)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] '%s': ClosetDoorMeshSlot1 component is null!"), *GetName());
+        return;
+    }
 
     // Initialize ActiveState to default product options (Index 0 fallback) in the editor
     InitializeDefaultStateForProduct(ActiveState, InitialProductID, *ProductRow);
@@ -370,7 +429,7 @@ void AShowroomBooth::RequestProductChange(FName NewProductID)
 void AShowroomBooth::RequestDoorToggle(int32 SlotIndex)
 {
     // Clamp slot index to valid range.
-    const int32 ClampedIndex = FMath::Clamp(SlotIndex, 0, 1);
+    const int32 ClampedIndex = FMath::Clamp(SlotIndex, 0, 3);
 
     if (HasAuthority())
     {
@@ -523,18 +582,41 @@ void AShowroomBooth::Server_ToggleDoor_Implementation(int32 SlotIndex)
     if (Row)
     {
         FDoorSlotConfig SlotCfg;
-        const FFurnitureDoorGroup& CabDoors = Row->DoorsConfig.CabinetDoors;
-        if (CabDoors.DoorCount == EDoorCount::OneDoor)
+        UStaticMeshComponent* Slot = nullptr;
+
+        if (SlotIndex < 2)
         {
-            SlotCfg = CabDoors.SingleDoor.SlotConfig;
+            const FFurnitureDoorGroup& CabDoors = Row->DoorsConfig.CabinetDoors;
+            if (CabDoors.DoorCount == EDoorCount::OneDoor)
+            {
+                SlotCfg = CabDoors.SingleDoor.SlotConfig;
+            }
+            else if (CabDoors.DoorCount == EDoorCount::TwoDoors)
+            {
+                SlotCfg = (SlotIndex == 0) ? CabDoors.DoubleDoors.Slot0Config : CabDoors.DoubleDoors.Slot1Config;
+            }
+
+            Slot = (SlotIndex == 0) ? DoorMeshSlot0.Get() : DoorMeshSlot1.Get();
         }
-        else if (CabDoors.DoorCount == EDoorCount::TwoDoors)
+        else
         {
-            SlotCfg = (SlotIndex == 0) ? CabDoors.DoubleDoors.Slot0Config : CabDoors.DoubleDoors.Slot1Config;
+            const FFurnitureDoorGroup& ClosetDoors = Row->DoorsConfig.ClosetDoors;
+            if (ClosetDoors.DoorCount == EDoorCount::OneDoor)
+            {
+                SlotCfg = ClosetDoors.SingleDoor.SlotConfig;
+            }
+            else if (ClosetDoors.DoorCount == EDoorCount::TwoDoors)
+            {
+                SlotCfg = (SlotIndex == 2) ? ClosetDoors.DoubleDoors.Slot0Config : ClosetDoors.DoubleDoors.Slot1Config;
+            }
+
+            Slot = (SlotIndex == 2) ? ClosetDoorMeshSlot0.Get() : ClosetDoorMeshSlot1.Get();
         }
 
-        UStaticMeshComponent* Slot = (SlotIndex == 0) ? DoorMeshSlot0.Get() : DoorMeshSlot1.Get();
-        ApplyDoorSlotVisual(Slot, DoorStates[SlotIndex], SlotCfg);
+        if (Slot)
+        {
+            ApplyDoorSlotVisual(Slot, DoorStates[SlotIndex], SlotCfg);
+        }
     }
 
     OnDoorStateChanged.Broadcast(this, SlotIndex, DoorStates[SlotIndex]);
@@ -596,6 +678,36 @@ void AShowroomBooth::OnRep_DoorStates()
 
         ApplyDoorSlotVisual(DoorMeshSlot1.Get(), DoorStates[1], Cfg1);
         OnDoorStateChanged.Broadcast(this, 1, DoorStates[1]);
+    }
+
+    const FFurnitureDoorGroup& ClosetDoors = Row->DoorsConfig.ClosetDoors;
+
+    if (DoorStates.IsValidIndex(2))
+    {
+        FDoorSlotConfig Cfg2;
+        if (ClosetDoors.DoorCount == EDoorCount::OneDoor)
+        {
+            Cfg2 = ClosetDoors.SingleDoor.SlotConfig;
+        }
+        else if (ClosetDoors.DoorCount == EDoorCount::TwoDoors)
+        {
+            Cfg2 = ClosetDoors.DoubleDoors.Slot0Config;
+        }
+
+        ApplyDoorSlotVisual(ClosetDoorMeshSlot0.Get(), DoorStates[2], Cfg2);
+        OnDoorStateChanged.Broadcast(this, 2, DoorStates[2]);
+    }
+
+    if (DoorStates.IsValidIndex(3))
+    {
+        FDoorSlotConfig Cfg3;
+        if (ClosetDoors.DoorCount == EDoorCount::TwoDoors)
+        {
+            Cfg3 = ClosetDoors.DoubleDoors.Slot1Config;
+        }
+
+        ApplyDoorSlotVisual(ClosetDoorMeshSlot1.Get(), DoorStates[3], Cfg3);
+        OnDoorStateChanged.Broadcast(this, 3, DoorStates[3]);
     }
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -880,6 +992,56 @@ void AShowroomBooth::ApplyDoorConfiguration(const FFurnitureProductRow& Data)
 
     ApplyDoorSlotVisual(DoorMeshSlot0.Get(), DoorStates[0], Cfg0, false);
     ApplyDoorSlotVisual(DoorMeshSlot1.Get(), DoorStates[1], Cfg1, false);
+
+    // ── Closet Doors ──────────────────────────────────────────────────────
+    const FFurnitureDoorGroup& ClosetDoors = Data.DoorsConfig.ClosetDoors;
+
+    ApplyDoorMeshAndMaterials(ClosetDoorMeshSlot0.Get(), ClosetDoors, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex, 0);
+    ApplyDoorMeshAndMaterials(ClosetDoorMeshSlot1.Get(), ClosetDoors, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex, 1);
+
+    EDoorSlotState ClosetSlot0State = EDoorSlotState::NotPresent;
+    EDoorSlotState ClosetSlot1State = EDoorSlotState::NotPresent;
+
+    switch (ClosetDoors.DoorCount)
+    {
+    case EDoorCount::OneDoor:
+        ClosetSlot0State = EDoorSlotState::Closed;
+        ClosetSlot1State = EDoorSlotState::NotPresent;
+        break;
+
+    case EDoorCount::TwoDoors:
+        ClosetSlot0State = EDoorSlotState::Closed;
+        ClosetSlot1State = EDoorSlotState::Closed;
+        break;
+
+    case EDoorCount::NoDoors:
+    default:
+        ClosetSlot0State = EDoorSlotState::NotPresent;
+        ClosetSlot1State = EDoorSlotState::NotPresent;
+        break;
+    }
+
+    FDoorSlotConfig ClosetCfg0 = FDoorSlotConfig();
+    FDoorSlotConfig ClosetCfg1 = FDoorSlotConfig();
+
+    if (ClosetDoors.DoorCount == EDoorCount::OneDoor)
+    {
+        ClosetCfg0 = ClosetDoors.SingleDoor.SlotConfig;
+    }
+    else if (ClosetDoors.DoorCount == EDoorCount::TwoDoors)
+    {
+        ClosetCfg0 = ClosetDoors.DoubleDoors.Slot0Config;
+        ClosetCfg1 = ClosetDoors.DoubleDoors.Slot1Config;
+    }
+
+    if (HasAuthority())
+    {
+        DoorStates[2] = ClosetSlot0State;
+        DoorStates[3] = ClosetSlot1State;
+    }
+
+    ApplyDoorSlotVisual(ClosetDoorMeshSlot0.Get(), DoorStates[2], ClosetCfg0, false);
+    ApplyDoorSlotVisual(ClosetDoorMeshSlot1.Get(), DoorStates[3], ClosetCfg1, false);
 }
 
 void AShowroomBooth::ApplyDoorSlotVisual(UStaticMeshComponent* Slot,
@@ -913,6 +1075,14 @@ void AShowroomBooth::ApplyDoorSlotVisual(UStaticMeshComponent* Slot,
     else if (Slot == DoorMeshSlot1.Get())
     {
         BaselineTransform = BaselineDoor1Transform;
+    }
+    else if (Slot == ClosetDoorMeshSlot0.Get())
+    {
+        BaselineTransform = BaselineClosetDoor0Transform;
+    }
+    else if (Slot == ClosetDoorMeshSlot1.Get())
+    {
+        BaselineTransform = BaselineClosetDoor1Transform;
     }
 
     // Safety check: ensure scale is not zero
@@ -1007,12 +1177,14 @@ void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& 
 
 void AShowroomBooth::InitializeDoorStateArray()
 {
-    // Guarantee exactly 2 entries so DoorStates[0] / DoorStates[1] are always valid.
-    if (DoorStates.Num() != 2)
+    // Guarantee exactly 4 entries so DoorStates[0..3] are always valid.
+    if (DoorStates.Num() != 4)
     {
-        DoorStates.SetNum(2);
+        DoorStates.SetNum(4);
         DoorStates[0] = EDoorSlotState::NotPresent;
         DoorStates[1] = EDoorSlotState::NotPresent;
+        DoorStates[2] = EDoorSlotState::NotPresent;
+        DoorStates[3] = EDoorSlotState::NotPresent;
     }
 }
 

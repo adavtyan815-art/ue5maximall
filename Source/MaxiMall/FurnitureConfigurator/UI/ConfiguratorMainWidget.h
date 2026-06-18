@@ -9,7 +9,6 @@
 
 class UTextBlock;
 class UButton;
-class UComboBoxString;
 class UPanelWidget;
 class AMaxiMallPreviewController;
 class AShowroomBooth;
@@ -55,7 +54,7 @@ public:
 /**
  * UConfiguratorMainWidget
  * Direct C++ parent class for the main configurator UMG widget.
- * Uses strict BindWidget for core controls and BindWidgetOptional for selectors.
+ * Uses strict BindWidget for core controls.
  */
 UCLASS()
 class MAXIMALL_API UConfiguratorMainWidget : public UUserWidget
@@ -68,65 +67,25 @@ protected:
     // ── STRICT WIDGET BINDINGS ───────────────────────────────────────────────
     
     UPROPERTY(meta = (BindWidget))
-    TObjectPtr<UTextBlock> Txt_ProductName;
-
-    UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Btn_Viewmode;
 
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Btn_CloseUI;
 
-    // ── OPTIONAL WIDGET BINDINGS (allows designer visual flexibility) ─────────
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UButton> Txt_BtnURL;
 
-    /** Selectors for the active right-clicked component */
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Size;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Color;
-
-    /** Specific individual component selectors (optional layout table) */
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Cabinet_Size;
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Cabinet_Color;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Closet_Size;
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Closet_Color;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Doors_Size;
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Doors_Color;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Countertop_Size;
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Countertop_Color;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Sink_Size;
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Sink_Color;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Faucet_Size;
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Faucet_Color;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Mirror_Size;
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UComboBoxString> Combo_Mirror_Color;
-
-    UPROPERTY(meta = (BindWidgetOptional))
+    UPROPERTY(meta = (BindWidget))
     TObjectPtr<UPanelWidget> Size_Container;
 
-    UPROPERTY(meta = (BindWidgetOptional))
+    UPROPERTY(meta = (BindWidget))
     TObjectPtr<UPanelWidget> Color_Container;
 
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UTextBlock> Txt_SKU;
+
+    UPROPERTY(meta = (BindWidget))
+    TObjectPtr<UTextBlock> Txt_ProductName_1;
 
     // ── DELEGATE CALLBACKS ───────────────────────────────────────────────────
 
@@ -137,46 +96,7 @@ protected:
     void OnCloseUIClicked();
 
     UFUNCTION()
-    void OnSizeSelected(FString SelectedItem, ESelectInfo::Type SelectionType);
-
-    UFUNCTION()
-    void OnColorSelected(FString SelectedItem, ESelectInfo::Type SelectionType);
-
-    // Specific component selectors delegates
-    UFUNCTION()
-    void OnCabinetSizeChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-    UFUNCTION()
-    void OnCabinetColorChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-
-    UFUNCTION()
-    void OnClosetSizeChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-    UFUNCTION()
-    void OnClosetColorChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-
-    UFUNCTION()
-    void OnDoorsSizeChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-    UFUNCTION()
-    void OnDoorsColorChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-
-    UFUNCTION()
-    void OnCountertopSizeChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-    UFUNCTION()
-    void OnCountertopColorChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-
-    UFUNCTION()
-    void OnSinkSizeChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-    UFUNCTION()
-    void OnSinkColorChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-
-    UFUNCTION()
-    void OnFaucetSizeChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-    UFUNCTION()
-    void OnFaucetColorChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-
-    UFUNCTION()
-    void OnMirrorSizeChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
-    UFUNCTION()
-    void OnMirrorColorChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
+    void OnURLButtonClicked();
 
 public:
     /** Initialize and dynamically populate the widget. */
@@ -204,10 +124,6 @@ private:
     UPROPERTY()
     EFurnitureComponentType ActiveComponent;
 
-
     // Helper functions
     bool IsComponentMeshValid(AShowroomBooth* Booth, EFurnitureComponentType Component) const;
-    void PopulateCombo(UComboBoxString* Combo, const TArray<FText>& DisplayNames, int32 CurrentSelectionIndex);
-    void SetupIndividualComponentSelector(EFurnitureComponentType Component, UComboBoxString* SizeCombo, UComboBoxString* ColorCombo);
-    void UpdateSelectionForComponent(EFurnitureComponentType Component, UComboBoxString* SizeCombo, UComboBoxString* ColorCombo);
 };
