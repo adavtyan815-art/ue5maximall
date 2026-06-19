@@ -87,6 +87,9 @@ protected:
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UTextBlock> Txt_ProductName_1;
 
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> Txt_Warning;
+
     // ── DELEGATE CALLBACKS ───────────────────────────────────────────────────
 
     UFUNCTION()

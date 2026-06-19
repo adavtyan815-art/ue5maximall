@@ -154,19 +154,19 @@ public:
     TObjectPtr<UDataTable> ProductCatalog;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth | Config",
-              meta = (RequiredAssetDataTags = "RowStructure=FurnitureModelRow"))
+              meta = (RequiredAssetDataTags = "RowStructure=FurnitureCountertopRow"))
     TObjectPtr<UDataTable> SharedCountertopsCatalog;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth | Config",
-              meta = (RequiredAssetDataTags = "RowStructure=FurnitureModelRow"))
+              meta = (RequiredAssetDataTags = "RowStructure=FurnitureSinkRow"))
     TObjectPtr<UDataTable> SharedSinksCatalog;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth | Config",
-              meta = (RequiredAssetDataTags = "RowStructure=FurnitureModelRow"))
+              meta = (RequiredAssetDataTags = "RowStructure=FurnitureFaucetRow"))
     TObjectPtr<UDataTable> SharedFaucetsCatalog;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth | Config",
-              meta = (RequiredAssetDataTags = "RowStructure=FurnitureModelRow"))
+              meta = (RequiredAssetDataTags = "RowStructure=FurnitureMirrorRow"))
     TObjectPtr<UDataTable> SharedMirrorsCatalog;
 
     /**
@@ -203,6 +203,9 @@ public:
     UPROPERTY(ReplicatedUsing = OnRep_DoorStates, BlueprintReadOnly,
               Category = "Booth | State")
     TArray<EDoorSlotState> DoorStates;
+
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Booth | State")
+    bool bCountertopSizeFallbackActive;
 
     // ─────────────────────────────────────────────────────────────────────
     // PUBLIC API (Blueprint Callable)
@@ -284,6 +287,29 @@ public:
     /** Getter for BaselineFaucetTransform. */
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Booth | Transforms")
     FTransform GetBaselineFaucetTransform() const { return BaselineFaucetTransform; }
+
+    /** Getter for BaselineCountertopTransform. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Booth | Transforms")
+    FTransform GetBaselineCountertopTransform() const { return BaselineCountertopTransform; }
+
+    /** Getter for BaselineMirrorTransform. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Booth | Transforms")
+    FTransform GetBaselineMirrorTransform() const { return BaselineMirrorTransform; }
+
+    UFUNCTION(BlueprintCallable, Category = "Booth | Query")
+    ECountertopType GetActiveCountertopType() const;
+
+    UFUNCTION(BlueprintCallable, Category = "Booth | Query")
+    FFurniturePlacementOffset GetActiveSinkOffset() const;
+
+    UFUNCTION(BlueprintCallable, Category = "Booth | Query")
+    FFurniturePlacementOffset GetActiveFaucetOffset() const;
+
+    UFUNCTION(BlueprintCallable, Category = "Booth | Query")
+    FFurniturePlacementOffset GetActiveMirrorOffset() const;
+
+    UFUNCTION(BlueprintCallable, Category = "Booth | Query")
+    FFurniturePlacementOffset GetActiveCountertopOffset() const;
 
     // ─────────────────────────────────────────────────────────────────────
     // DELEGATES (Blueprint-Assignable)
@@ -449,6 +475,12 @@ private:
 
     UPROPERTY(Transient)
     FTransform BaselineFaucetTransform;
+
+    UPROPERTY(Transient)
+    FTransform BaselineCountertopTransform;
+
+    UPROPERTY(Transient)
+    FTransform BaselineMirrorTransform;
 
     UPROPERTY(Transient)
     FTransform BaselineDoor0Transform;

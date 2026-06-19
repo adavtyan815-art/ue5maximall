@@ -100,7 +100,7 @@ void UConfiguratorMainWidget::RefreshSelections()
                 ActiveSizeIdx = Booth->ActiveState.ActiveSizeIndex;
                 break;
             case EFurnitureComponentType::Countertop:
-                ActiveSizeIdx = Booth->ActiveState.ActiveSizeIndex; // Countertop size maps to cabinet size index
+                ActiveSizeIdx = Booth->ActiveState.CountertopSizeIndex;
                 break;
             case EFurnitureComponentType::Closet:
                 ActiveSizeIdx = Booth->ActiveState.ClosetSizeIndex;
@@ -133,12 +133,7 @@ void UConfiguratorMainWidget::RefreshSelections()
         // ── SIZE SELECTORS ──
         if (Size_Container)
         {
-            if (ActiveComponent == EFurnitureComponentType::Countertop)
-            {
-                Size_Container->SetVisibility(ESlateVisibility::Collapsed);
-                Size_Container->ClearChildren();
-            }
-            else if (ActiveComponent == EFurnitureComponentType::Cabinet)
+            if (ActiveComponent == EFurnitureComponentType::Cabinet)
             {
                 const FFurnitureCabinetOptions& CabinetOpts = ProductData.CabinetOptions;
                 if (CabinetOpts.Sizes.Num() <= 1)
@@ -402,6 +397,20 @@ void UConfiguratorMainWidget::RefreshSelections()
                 }
             }
         }
+
+        // ── Warning Popup ──
+        if (Txt_Warning)
+        {
+            if (Booth->bCountertopSizeFallbackActive)
+            {
+                Txt_Warning->SetText(FText::FromString(TEXT("Для этой модели нет встроенной столешницы соответствующего размера")));
+                Txt_Warning->SetVisibility(ESlateVisibility::Visible);
+            }
+            else
+            {
+                Txt_Warning->SetVisibility(ESlateVisibility::Collapsed);
+            }
+        }
     }
 }
 
@@ -456,7 +465,7 @@ void UConfiguratorMainWidget::HandleOptionSelected(EFurnitureComponentType Compo
 
     if (Component == EFurnitureComponentType::Countertop)
     {
-        SizeIndex = Booth->ActiveState.ActiveSizeIndex;
+        SizeIndex = Booth->ActiveState.CountertopSizeIndex;
         ColorIndex = Booth->ActiveState.ActiveCountertopColorIndex;
     }
     else if (Component == EFurnitureComponentType::Closet)
@@ -517,14 +526,7 @@ bool UConfiguratorMainWidget::IsComponentMeshValid(AShowroomBooth* Booth, EFurni
     case EFurnitureComponentType::Countertop:
         return Booth->CountertopMesh && Booth->CountertopMesh->GetStaticMesh() != nullptr;
     case EFurnitureComponentType::Sink:
-        {
-            FFurnitureProductRow Row;
-            if (Booth->GetActiveProductData(Row))
-            {
-                return Row.CountertopType == ECountertopType::SurfaceMounted && Booth->SinkMesh && Booth->SinkMesh->GetStaticMesh() != nullptr;
-            }
-            return false;
-        }
+        return Booth->GetActiveCountertopType() == ECountertopType::SurfaceMounted && Booth->SinkMesh && Booth->SinkMesh->GetStaticMesh() != nullptr;
     case EFurnitureComponentType::Faucet:
         return Booth->FaucetMesh && Booth->FaucetMesh->GetStaticMesh() != nullptr;
     case EFurnitureComponentType::Mirror:

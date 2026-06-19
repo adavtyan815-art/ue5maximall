@@ -69,6 +69,7 @@ AShowroomBooth::AShowroomBooth()
     // ── Default state ─────────────────────────────────────────────────────
     ActiveState.ProductID = NAME_None;
     bBaselineTransformsCaptured = false;
+    bCountertopSizeFallbackActive = false;
 
     // ── Shared Catalogs Fallbacks ─────────────────────────────────────────
     static ConstructorHelpers::FObjectFinder<UDataTable> CountertopsCatalogObj(TEXT("/Game/DT/DT_SharedCountertops"));
@@ -448,6 +449,9 @@ void AShowroomBooth::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 
     // DoorStates — replicated to all connected clients.
     DOREPLIFETIME(AShowroomBooth, DoorStates);
+
+    // bCountertopSizeFallbackActive — replicated to all connected clients.
+    DOREPLIFETIME(AShowroomBooth, bCountertopSizeFallbackActive);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -579,23 +583,53 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
             FFurnitureCountertopRow* SharedModel = TargetCatalog->FindRow<FFurnitureCountertopRow>(ID, ContextString);
             if (SharedModel)
             {
-                if (SharedModel->CabinetSizeIndex != ActiveState.ActiveSizeIndex)
-                {
-                    continue;
-                }
-
                 FFurnitureModelOption NewOption;
-                NewOption.Mesh = SharedModel->Mesh;
                 NewOption.Thumbnail = SharedModel->Thumbnail;
                 NewOption.Colors = SharedModel->Colors;
                 NewOption.CountertopType = SharedModel->CountertopType;
                 NewOption.RelativeOffset = SharedModel->RelativeOffset;
+
+                bool bMeshFound = false;
+                if (SharedModel->Sizes.IsValidIndex(ActiveState.ActiveSizeIndex) && !SharedModel->Sizes[ActiveState.ActiveSizeIndex].IsNull())
+                {
+                    NewOption.Mesh = SharedModel->Sizes[ActiveState.ActiveSizeIndex];
+                    bMeshFound = true;
+                }
+
+                if (!bMeshFound)
+                {
+                    if (SharedModel->CountertopType == ECountertopType::BuiltIn)
+                    {
+                        FFurnitureCountertopRow* FallbackModel = nullptr;
+                        for (const FName& FallbackID : AllowedIDs)
+                        {
+                            FFurnitureCountertopRow* CandidateModel = TargetCatalog->FindRow<FFurnitureCountertopRow>(FallbackID, ContextString);
+                            if (CandidateModel && CandidateModel->CountertopType == ECountertopType::SurfaceMounted)
+                            {
+                                if (CandidateModel->Sizes.IsValidIndex(ActiveState.ActiveSizeIndex) && !CandidateModel->Sizes[ActiveState.ActiveSizeIndex].IsNull())
+                                {
+                                    FallbackModel = CandidateModel;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (FallbackModel)
+                        {
+                            NewOption.Mesh = FallbackModel->Sizes[ActiveState.ActiveSizeIndex];
+                            NewOption.CountertopType = ECountertopType::SurfaceMounted;
+                            NewOption.RelativeOffset = FallbackModel->RelativeOffset;
+                            NewOption.Colors = FallbackModel->Colors;
+                        }
+                    }
+                }
+
                 OutOptions.Models.Add(NewOption);
 
                 int32 AddedModelIndex = OutOptions.Models.Num() - 1;
-                for (int32 ColorIdx = 0; ColorIdx < SharedModel->Colors.Num(); ++ColorIdx)
+                for (int32 ColorIdx = 0; ColorIdx < NewOption.Colors.Num(); ++ColorIdx)
                 {
-                    const FFurnitureColorOption& ColorOpt = SharedModel->Colors[ColorIdx];
+                    const FFurnitureColorOption& ColorOpt = NewOption.Colors[ColorIdx];
                     FFurnitureMetadataEntry Entry;
                     Entry.SizeIndex = AddedModelIndex;
                     Entry.ColorIndex = ColorIdx;
@@ -871,7 +905,6 @@ void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureCom
 
     if (bCabinetSizeChanged)
     {
-        ActiveState.CountertopSizeIndex = 0;
         ActiveState.FaucetSizeIndex = 0;
     }
     else if (bCountertopModelChanged)
@@ -1065,6 +1098,30 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
     FFurnitureComponentOptions ResolvedCountertop;
     GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedCountertop);
     ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.CountertopSizeIndex, ActiveState.ActiveCountertopColorIndex);
+
+    // Determine if the fallback is active (BuiltIn countertop resolved as SurfaceMounted)
+    bCountertopSizeFallbackActive = false;
+    if (Data.AllowedCountertopIDs.IsValidIndex(ActiveState.CountertopSizeIndex))
+    {
+        FName ActiveCountertopID = Data.AllowedCountertopIDs[ActiveState.CountertopSizeIndex];
+        UDataTable* TargetCatalog = SharedCountertopsCatalog.Get();
+        if (!TargetCatalog)
+        {
+            TargetCatalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedCountertops.DT_SharedCountertops")));
+        }
+        if (TargetCatalog)
+        {
+            static const FString ContextString(TEXT("CheckFallback"));
+            FFurnitureCountertopRow* RawRow = TargetCatalog->FindRow<FFurnitureCountertopRow>(ActiveCountertopID, ContextString);
+            if (RawRow && RawRow->CountertopType == ECountertopType::BuiltIn)
+            {
+                if (GetActiveCountertopType() == ECountertopType::SurfaceMounted)
+                {
+                    bCountertopSizeFallbackActive = true;
+                }
+            }
+        }
+    }
 
     // ── 5. Sink (visibility + mesh driven by CountertopType) ──────────────
     if (GetActiveCountertopType() == ECountertopType::BuiltIn)

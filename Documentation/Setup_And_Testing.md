@@ -17,12 +17,14 @@ To eliminate manual Blueprint graph event wiring and property polling, you must 
 ### B. Visual Component Naming (BindWidget Mapping)
 Verify that the visual components (buttons, combo boxes, text blocks) inside the designer match the C++ variable names **exactly** (case-sensitive) to bind automatically:
 * **`WBP_PreviewWindow` (inheriting from `UConfiguratorMainWidget`)**:
-  * `Txt_ProductName` (TextBlock)
   * `Btn_Viewmode` (Button)
   * `Btn_CloseUI` (Button)
-  * `Combo_Size` (ComboBoxString, optional)
-  * `Combo_Color` (ComboBoxString, optional)
-  * (Optional individual component combo boxes): `Combo_Cabinet_Size`, `Combo_Cabinet_Color`, `Combo_Closet_Size`, `Combo_Closet_Color`, etc.
+  * `Txt_BtnURL` (Button)
+  * `Size_Container` (PanelWidget)
+  * `Color_Container` (PanelWidget)
+  * `Txt_SKU` (TextBlock)
+  * `Txt_ProductName_1` (TextBlock)
+  * `Txt_Warning` (TextBlock, optional)
 * **`WBP_ViewmodeOverlay` (inheriting from `UViewmodeOverlayWidget`)**:
   * `Btn_Back` (Button)
 
@@ -94,4 +96,17 @@ Follow these scenarios to verify that the implementation is replication-safe, ha
    * Player 1's camera returns to the character's main world position.
    * Widget 2 is removed, and **Widget 1 (Main Configurator UI)** is re-opened, restoring focus and cursor state without losing the active booth target.
    * All other showroom booths in the level become visible again on Player 1's screen.
+
+### Scenario E: Countertop Dynamic Resizing and Fallback Warning
+1. Open the DataTable `DT_SharedCountertops` and configure an integrated (`BuiltIn`) countertop model to only have meshes for size 100 (index 1) and size 120 (index 2), leaving size 80 (index 0) empty. Ensure a standard (`SurfaceMounted`) countertop model contains a valid mesh for size 80.
+2. In the level, interact with a showroom booth configured with this integrated countertop model.
+3. Switch the Cabinet size to 100 or 120.
+   * **Verify**: The countertop updates to its integrated model mesh, hiding the standalone sink and faucet. No warning is displayed.
+4. Now, switch the Cabinet size to 80.
+   * **Verify**:
+     * The booth automatically falls back to the standard countertop model's size 80 mesh.
+     * The standalone sink and faucet are rendered at their correct baseline transforms.
+     * The Russian warning text block `Txt_Warning` pops up on the screen, stating `"Для этой модели нет встроенной столешницы соответствующего размера"`.
+5. Switch the Cabinet size back to 100 or 120.
+   * **Verify**: The warning message disappears, and the integrated countertop is restored.
 

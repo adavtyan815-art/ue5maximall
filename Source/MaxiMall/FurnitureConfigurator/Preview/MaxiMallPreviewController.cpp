@@ -361,7 +361,7 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
             if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
             break;
         case EFurnitureComponentType::Sink:
-            if (ProductSnapshot.CountertopType == ECountertopType::SurfaceMounted)
+            if (CurrentTargetBooth && CurrentTargetBooth->GetActiveCountertopType() == ECountertopType::SurfaceMounted)
             {
                 if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
             }
@@ -879,7 +879,7 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                     if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
                     break;
                 case EFurnitureComponentType::Sink:
-                    if (ProductSnapshot.CountertopType == ECountertopType::SurfaceMounted)
+                    if (CurrentTargetBooth && CurrentTargetBooth->GetActiveCountertopType() == ECountertopType::SurfaceMounted)
                     {
                         if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
                     }
@@ -1107,7 +1107,7 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
         switch (ComponentType)
         {
         case EFurnitureComponentType::Countertop:
-            TargetSizeIndex = CurrentTargetBooth->ActiveState.ActiveSizeIndex;
+            TargetSizeIndex = CurrentTargetBooth->ActiveState.CountertopSizeIndex;
             TargetColorIndex = CurrentTargetBooth->ActiveState.ActiveCountertopColorIndex;
             break;
         case EFurnitureComponentType::Sink:

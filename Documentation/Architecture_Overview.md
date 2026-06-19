@@ -30,13 +30,16 @@ Showroom booths (`AShowroomBooth`) are designed to be visually flexible and dyna
 We use the C++ UMG Widget Binding workflow to bypass manual Blueprint graph event wiring and property polling:
 
 * **Strict Bindings (`meta = (BindWidget)`)**: Core UI elements are marked strict, ensuring compilation fails if these elements are missing in the Blueprint Widget.
-  * `Txt_ProductName` (UTextBlock) - Displays the active product name.
   * `Btn_Viewmode` (UButton) - Transition to isolated viewmode.
   * `Btn_CloseUI` (UButton) - Close configurator UI and return to Game input mode.
+  * `Txt_BtnURL` (UButton) - Open manufacturer URL.
+  * `Size_Container` (UPanelWidget) - Container for the Cabinet size transparent buttons (pill style) or component models grid.
+  * `Color_Container` (UPanelWidget) - Container for color option thumbnails.
+  * `Txt_SKU` (UTextBlock) - Displays active SKU.
+  * `Txt_ProductName_1` (UTextBlock) - Displays active product name.
+* **Optional Bindings (`meta = (BindWidgetOptional)`)**:
+  * `Txt_Warning` (UTextBlock) - Displays Russian fallback warnings if countertop size is unavailable.
   * `Btn_Back` (UButton, on Widget 2) - Exit isolated viewmode and return to main UI.
-* **Optional Bindings (`meta = (BindWidgetOptional)`)**: Selector combo boxes are marked optional, giving designers visual layout flexibility.
-  * Generic selectors: `Combo_Size` and `Combo_Color` for the active right-clicked component.
-  * Component-specific selectors: `Combo_Cabinet_Size`, `Combo_Cabinet_Color`, `Combo_Closet_Size`, `Combo_Closet_Color`, etc., which drive a full configuration table.
 
 These base classes are implemented in:
 * **Widget 1 (Main Configurator UI)**: [ConfiguratorMainWidget.h](file:///c:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/UI/ConfiguratorMainWidget.h) / [ConfiguratorMainWidget.cpp](file:///c:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/UI/ConfiguratorMainWidget.cpp)

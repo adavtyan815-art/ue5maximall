@@ -74,6 +74,13 @@ enum class EFurnitureComponentType : uint8
     Mirror           UMETA(DisplayName = "Mirror"),
 };
 
+UENUM(BlueprintType)
+enum class EFaucetType : uint8
+{
+    Standard      UMETA(DisplayName = "Standard (Deck-Mounted)"),
+    Integrated    UMETA(DisplayName = "Integrated (Wall/Counter-Integrated)"),
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPPORTING SUB-STRUCTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,6 +133,15 @@ struct MAXIMALL_API FFurnitureColorOption
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option")
     TArray<FFurnitureMaterialSlot> MaterialOverrides;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option | Metadata")
+    FText ProductName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option | Metadata")
+    FString SKU;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option | Metadata")
+    FString URL;
 };
 
 /**
@@ -186,6 +202,21 @@ struct MAXIMALL_API FFurnitureCabinetOptions
 };
 
 USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurniturePlacementOffset
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement")
+    FVector RelativeLocation = FVector::ZeroVector;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement")
+    FRotator RelativeRotation = FRotator::ZeroRotator;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement")
+    FVector RelativeScale = FVector::OneVector;
+};
+
+USTRUCT(BlueprintType)
 struct MAXIMALL_API FFurnitureModelOption
 {
     GENERATED_BODY()
@@ -198,21 +229,90 @@ struct MAXIMALL_API FFurnitureModelOption
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
     TArray<FFurnitureColorOption> Colors;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option | Configuration")
+    ECountertopType CountertopType = ECountertopType::SurfaceMounted;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option | Configuration")
+    FFurniturePlacementOffset RelativeOffset;
 };
 
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureModelRow : public FTableRowBase
+struct MAXIMALL_API FFurnitureCountertopRow : public FTableRowBase
 {
     GENERATED_BODY()
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
-    TSoftObjectPtr<UStaticMesh> Mesh;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Countertop")
+    TArray<TSoftObjectPtr<UStaticMesh>> Sizes;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Countertop")
     TSoftObjectPtr<UTexture2D> Thumbnail;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Countertop")
     TArray<FFurnitureColorOption> Colors;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Countertop | Configuration")
+    ECountertopType CountertopType = ECountertopType::SurfaceMounted;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Countertop | Configuration")
+    FFurniturePlacementOffset RelativeOffset;
+};
+
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureSinkRow : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sink")
+    TSoftObjectPtr<UStaticMesh> Mesh;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sink")
+    TSoftObjectPtr<UTexture2D> Thumbnail;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sink")
+    TArray<FFurnitureColorOption> Colors;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sink | Configuration")
+    FFurniturePlacementOffset RelativeOffset;
+};
+
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureFaucetRow : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet")
+    TSoftObjectPtr<UStaticMesh> Mesh;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet")
+    TSoftObjectPtr<UTexture2D> Thumbnail;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet")
+    TArray<FFurnitureColorOption> Colors;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet | Configuration")
+    FFurniturePlacementOffset RelativeOffset;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet | Configuration")
+    EFaucetType FaucetType = EFaucetType::Standard;
+};
+
+USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureMirrorRow : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mirror")
+    TSoftObjectPtr<UStaticMesh> Mesh;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mirror")
+    TSoftObjectPtr<UTexture2D> Thumbnail;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mirror")
+    TArray<FFurnitureColorOption> Colors;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mirror | Configuration")
+    FFurniturePlacementOffset RelativeOffset;
 };
 
 USTRUCT(BlueprintType)
@@ -403,6 +503,9 @@ struct MAXIMALL_API FShowroomBoothConfigState
     int32 ActiveColorIndex = 0;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
+    int32 CountertopSizeIndex = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
     int32 ActiveCountertopColorIndex = 0;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth State")
@@ -431,44 +534,7 @@ struct MAXIMALL_API FShowroomBoothConfigState
 };
 
 
-/**
- * Relative transform offset (in the countertop's local space) for the
- * standalone Sink component when ECountertopType == SurfaceMounted.
- * Ignored entirely for BuiltIn countertops.
- */
-USTRUCT(BlueprintType)
-struct MAXIMALL_API FSinkPlacementOffset
-{
-    GENERATED_BODY()
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sink Placement")
-    FVector  RelativeLocation = FVector::ZeroVector;
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sink Placement")
-    FRotator RelativeRotation = FRotator::ZeroRotator;
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sink Placement")
-    FVector  RelativeScale    = FVector::OneVector;
-};
-
-/**
- * Relative transform offset (in the countertop's local space) for the Faucet
- * component. Always applied regardless of ECountertopType.
- */
-USTRUCT(BlueprintType)
-struct MAXIMALL_API FFaucetPlacementOffset
-{
-    GENERATED_BODY()
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet Placement")
-    FVector  RelativeLocation = FVector::ZeroVector;
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet Placement")
-    FRotator RelativeRotation = FRotator::ZeroRotator;
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet Placement")
-    FVector  RelativeScale    = FVector::OneVector;
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PRIMARY DATA TABLE ROW
@@ -509,63 +575,44 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     // ── Countertop ────────────────────────────────────────────────────────
 
-    /**
-     * Structural type — determines Sink component visibility and placement.
-     * BuiltIn  : Sink component hidden, no offset applied.
-     * Surface  : Sink component shown, SinkOffset applied relative to Countertop.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop")
-    ECountertopType CountertopType = ECountertopType::SurfaceMounted;
-
     /** Countertop allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetCountertopOptions"))
     TArray<FName> AllowedCountertopIDs;
-
-    /** Countertop combination metadata overrides. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop")
-    TArray<FFurnitureMetadataEntry> CountertopCombinationsMetadata;
 
     // ── Sink ──────────────────────────────────────────────────────────────
 
     /** Standalone sink allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetSinkOptions"))
     TArray<FName> AllowedSinkIDs;
-
-    /** Sink combination metadata overrides. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink")
-    TArray<FFurnitureMetadataEntry> SinkCombinationsMetadata;
-
-    /**
-     * Positional offset of the Sink component relative to the Countertop's local origin.
-     * Evaluated at runtime after the Countertop mesh is applied.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink")
-    FSinkPlacementOffset SinkOffset;
 
     // ── Faucet ────────────────────────────────────────────────────────────
 
     /** Faucet allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetFaucetOptions"))
     TArray<FName> AllowedFaucetIDs;
-
-    /** Faucet combination metadata overrides. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet")
-    TArray<FFurnitureMetadataEntry> FaucetCombinationsMetadata;
-
-    /**
-     * Positional offset of the Faucet component relative to the Countertop's local origin.
-     * Always applied regardless of CountertopType.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet")
-    FFaucetPlacementOffset FaucetOffset;
 
     // ── Mirror ────────────────────────────────────────────────────────────
 
     /** Mirror allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetMirrorOptions"))
     TArray<FName> AllowedMirrorIDs;
+};
 
-    /** Mirror combination metadata overrides. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror")
-    TArray<FFurnitureMetadataEntry> MirrorCombinationsMetadata;
+UCLASS()
+class MAXIMALL_API UFurnitureEditorHelper : public UObject
+{
+    GENERATED_BODY()
+
+public:
+    UFUNCTION()
+    static TArray<FString> GetCountertopOptions();
+
+    UFUNCTION()
+    static TArray<FString> GetSinkOptions();
+
+    UFUNCTION()
+    static TArray<FString> GetFaucetOptions();
+
+    UFUNCTION()
+    static TArray<FString> GetMirrorOptions();
 };
