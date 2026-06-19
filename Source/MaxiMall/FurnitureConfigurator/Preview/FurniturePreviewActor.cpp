@@ -383,18 +383,23 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.CountertopSizeIndex, ActiveState.ActiveCountertopColorIndex);
 
         FFurniturePlacementOffset CO = SourceBooth ? SourceBooth->GetActiveCountertopOffset() : FFurniturePlacementOffset();
-        FTransform ProductDelta;
-        ProductDelta.SetLocation(CO.RelativeLocation);
-        ProductDelta.SetRotation(CO.RelativeRotation.Quaternion());
-        ProductDelta.SetScale3D(CO.RelativeScale);
-
         if (SourceBooth && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
         {
-            // Integrated countertops align perfectly relative to the cabinet base with no baseline offset multiplier needed
-            CountertopMesh->SetRelativeTransform(ProductDelta);
+            // Integrated countertops align perfectly relative to the cabinet base using baseline location/scale but bypassing baseline rotation
+            const FTransform BaselineCountertop = SourceBooth->GetBaselineCountertopTransform();
+            FVector TargetLocation = CO.RelativeLocation + BaselineCountertop.GetLocation();
+            FRotator TargetRotation = CO.RelativeRotation;
+            FVector TargetScale = CO.RelativeScale * BaselineCountertop.GetScale3D();
+            CountertopMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
+            CountertopMesh->SetRelativeScale3D(TargetScale);
         }
         else
         {
+            FTransform ProductDelta;
+            ProductDelta.SetLocation(CO.RelativeLocation);
+            ProductDelta.SetRotation(CO.RelativeRotation.Quaternion());
+            ProductDelta.SetScale3D(CO.RelativeScale);
+
             const FTransform BaselineCountertop = SourceBooth ? SourceBooth->GetBaselineCountertopTransform() : FTransform::Identity;
             const FTransform FinalCountertopTransform = ProductDelta * BaselineCountertop;
             CountertopMesh->SetRelativeTransform(FinalCountertopTransform);
@@ -447,18 +452,23 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ResolvedFaucet, ActiveState.FaucetSizeIndex, ActiveState.FaucetColorIndex);
         {
             FFurniturePlacementOffset FO = SourceBooth ? SourceBooth->GetActiveFaucetOffset() : FFurniturePlacementOffset();
-            FTransform ProductDelta;
-            ProductDelta.SetLocation(FO.RelativeLocation);
-            ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
-            ProductDelta.SetScale3D(FO.RelativeScale);
-
             if (SourceBooth && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
             {
-                // Integrated faucets align perfectly relative to the cabinet base with no baseline offset multiplier needed
-                FaucetMesh->SetRelativeTransform(ProductDelta);
+                // Integrated faucets align perfectly relative to the cabinet base using baseline location/scale but bypassing baseline rotation
+                const FTransform BaselineFaucet = SourceBooth->GetBaselineFaucetTransform();
+                FVector TargetLocation = FO.RelativeLocation + BaselineFaucet.GetLocation();
+                FRotator TargetRotation = FO.RelativeRotation;
+                FVector TargetScale = FO.RelativeScale * BaselineFaucet.GetScale3D();
+                FaucetMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
+                FaucetMesh->SetRelativeScale3D(TargetScale);
             }
             else
             {
+                FTransform ProductDelta;
+                ProductDelta.SetLocation(FO.RelativeLocation);
+                ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
+                ProductDelta.SetScale3D(FO.RelativeScale);
+
                 const FTransform BaselineFaucet = SourceBooth ? SourceBooth->GetBaselineFaucetTransform() : FTransform::Identity;
                 const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucet;
                 FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
