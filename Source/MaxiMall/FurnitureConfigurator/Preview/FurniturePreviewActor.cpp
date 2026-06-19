@@ -45,10 +45,10 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     CountertopMesh->SetupAttachment(CabinetMesh);
 
     SinkMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Sink"));
-    SinkMesh->SetupAttachment(CountertopMesh);
+    SinkMesh->SetupAttachment(CabinetMesh);
 
     FaucetMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Faucet"));
-    FaucetMesh->SetupAttachment(CountertopMesh);
+    FaucetMesh->SetupAttachment(CabinetMesh);
 
     MirrorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mirror"));
     MirrorMesh->SetupAttachment(PreviewRoot);
@@ -163,6 +163,21 @@ void AFurniturePreviewActor::BeginPlay()
     // No runtime overrides: respects the Camera component PostProcessSettings configured in Blueprint
 
     UpdateLightIntensityForZoom();
+}
+
+void AFurniturePreviewActor::PostInitializeComponents()
+{
+    Super::PostInitializeComponents();
+
+    // Force flat attachment hierarchy at runtime to match C++ constructor design and override BP saved hierarchy
+    if (SinkMesh && CabinetMesh)
+    {
+        SinkMesh->AttachToComponent(CabinetMesh, FAttachmentTransformRules::KeepWorldTransform);
+    }
+    if (FaucetMesh && CabinetMesh)
+    {
+        FaucetMesh->AttachToComponent(CabinetMesh, FAttachmentTransformRules::KeepWorldTransform);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -365,7 +380,25 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         {
             SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedCountertop);
         }
-        ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.ActiveSizeIndex, ActiveState.ActiveCountertopColorIndex);
+        ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.CountertopSizeIndex, ActiveState.ActiveCountertopColorIndex);
+
+        FFurniturePlacementOffset CO = SourceBooth ? SourceBooth->GetActiveCountertopOffset() : FFurniturePlacementOffset();
+        FTransform ProductDelta;
+        ProductDelta.SetLocation(CO.RelativeLocation);
+        ProductDelta.SetRotation(CO.RelativeRotation.Quaternion());
+        ProductDelta.SetScale3D(CO.RelativeScale);
+
+        if (SourceBooth && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
+        {
+            // Integrated countertops align perfectly relative to the cabinet base with no baseline offset multiplier needed
+            CountertopMesh->SetRelativeTransform(ProductDelta);
+        }
+        else
+        {
+            const FTransform BaselineCountertop = SourceBooth ? SourceBooth->GetBaselineCountertopTransform() : FTransform::Identity;
+            const FTransform FinalCountertopTransform = ProductDelta * BaselineCountertop;
+            CountertopMesh->SetRelativeTransform(FinalCountertopTransform);
+        }
     }
     else
     {
@@ -375,7 +408,8 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Sink ──────────────────────────────────────────────────────────────
-    if (ProductData.CountertopType == ECountertopType::SurfaceMounted && 
+    ECountertopType ActiveCountertopType = SourceBooth ? SourceBooth->GetActiveCountertopType() : ECountertopType::SurfaceMounted;
+    if (ActiveCountertopType == ECountertopType::SurfaceMounted && 
         (!SourceBooth || (SourceBooth->SinkMesh && SourceBooth->SinkMesh->GetStaticMesh() != nullptr)))
     {
         FFurnitureComponentOptions ResolvedSink;
@@ -385,7 +419,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         }
         ApplyComponentMeshAndMaterials(SinkMesh.Get(), ResolvedSink, ActiveState.SinkSizeIndex, ActiveState.SinkColorIndex);
 
-        const FSinkPlacementOffset& SO = ProductData.SinkOffset;
+        FFurniturePlacementOffset SO = SourceBooth ? SourceBooth->GetActiveSinkOffset() : FFurniturePlacementOffset();
         FTransform ProductDelta;
         ProductDelta.SetLocation(SO.RelativeLocation);
         ProductDelta.SetRotation(SO.RelativeRotation.Quaternion());
@@ -412,15 +446,23 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         }
         ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ResolvedFaucet, ActiveState.FaucetSizeIndex, ActiveState.FaucetColorIndex);
         {
-            const FFaucetPlacementOffset& FO = ProductData.FaucetOffset;
+            FFurniturePlacementOffset FO = SourceBooth ? SourceBooth->GetActiveFaucetOffset() : FFurniturePlacementOffset();
             FTransform ProductDelta;
             ProductDelta.SetLocation(FO.RelativeLocation);
             ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
             ProductDelta.SetScale3D(FO.RelativeScale);
 
-            const FTransform BaselineFaucet = SourceBooth ? SourceBooth->GetBaselineFaucetTransform() : FTransform::Identity;
-            const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucet;
-            FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+            if (SourceBooth && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
+            {
+                // Integrated faucets align perfectly relative to the cabinet base with no baseline offset multiplier needed
+                FaucetMesh->SetRelativeTransform(ProductDelta);
+            }
+            else
+            {
+                const FTransform BaselineFaucet = SourceBooth ? SourceBooth->GetBaselineFaucetTransform() : FTransform::Identity;
+                const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucet;
+                FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+            }
         }
     }
     else
@@ -439,6 +481,17 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Mirror, ResolvedMirror);
         }
         ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ResolvedMirror, ActiveState.MirrorSizeIndex, ActiveState.MirrorColorIndex);
+        {
+            FFurniturePlacementOffset MO = SourceBooth ? SourceBooth->GetActiveMirrorOffset() : FFurniturePlacementOffset();
+            FTransform ProductDelta;
+            ProductDelta.SetLocation(MO.RelativeLocation);
+            ProductDelta.SetRotation(MO.RelativeRotation.Quaternion());
+            ProductDelta.SetScale3D(MO.RelativeScale);
+
+            const FTransform BaselineMirror = SourceBooth ? SourceBooth->GetBaselineMirrorTransform() : FTransform::Identity;
+            const FTransform FinalMirrorTransform = ProductDelta * BaselineMirror;
+            MirrorMesh->SetRelativeTransform(FinalMirrorTransform);
+        }
     }
     else
     {

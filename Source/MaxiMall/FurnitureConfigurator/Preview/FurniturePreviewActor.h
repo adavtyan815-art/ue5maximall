@@ -43,6 +43,7 @@ public:
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
     virtual void BeginPlay() override;
+    virtual void PostInitializeComponents() override;
 
     // ─────────────────────────────────────────────────────────────────────
     // VISUAL COMPONENTS (mirrors AShowroomBooth layout)

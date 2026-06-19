@@ -9,6 +9,7 @@
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
 #include "TimerManager.h"
+#include "UObject/ConstructorHelpers.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -44,11 +45,11 @@ AShowroomBooth::AShowroomBooth()
 
     // ── Sink (standalone — hidden for BuiltIn countertops) ────────────────
     SinkMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SinkMesh"));
-    SinkMesh->SetupAttachment(CountertopMesh);
+    SinkMesh->SetupAttachment(MainCabinet);
 
     // ── Faucet ────────────────────────────────────────────────────────────
     FaucetMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("FaucetMesh"));
-    FaucetMesh->SetupAttachment(CountertopMesh);
+    FaucetMesh->SetupAttachment(MainCabinet);
 
     // ── Mirror ────────────────────────────────────────────────────────────────
     MirrorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MirrorMesh"));
@@ -68,6 +69,31 @@ AShowroomBooth::AShowroomBooth()
     // ── Default state ─────────────────────────────────────────────────────
     ActiveState.ProductID = NAME_None;
     bBaselineTransformsCaptured = false;
+
+    // ── Shared Catalogs Fallbacks ─────────────────────────────────────────
+    static ConstructorHelpers::FObjectFinder<UDataTable> CountertopsCatalogObj(TEXT("/Game/DT/DT_SharedCountertops"));
+    if (CountertopsCatalogObj.Succeeded())
+    {
+        SharedCountertopsCatalog = CountertopsCatalogObj.Object;
+    }
+
+    static ConstructorHelpers::FObjectFinder<UDataTable> SinksCatalogObj(TEXT("/Game/DT/DT_SharedSinks"));
+    if (SinksCatalogObj.Succeeded())
+    {
+        SharedSinksCatalog = SinksCatalogObj.Object;
+    }
+
+    static ConstructorHelpers::FObjectFinder<UDataTable> FaucetsCatalogObj(TEXT("/Game/DT/DT_SharedFaucets"));
+    if (FaucetsCatalogObj.Succeeded())
+    {
+        SharedFaucetsCatalog = FaucetsCatalogObj.Object;
+    }
+
+    static ConstructorHelpers::FObjectFinder<UDataTable> MirrorsCatalogObj(TEXT("/Game/DT/DT_SharedMirrors"));
+    if (MirrorsCatalogObj.Succeeded())
+    {
+        SharedMirrorsCatalog = MirrorsCatalogObj.Object;
+    }
 
     // Pre-size to exactly 4 slots (Cabinet doors at 0,1; Closet doors at 2,3).
     DoorStates.SetNumZeroed(4);
@@ -244,6 +270,16 @@ void AShowroomBooth::PostInitializeComponents()
 {
     Super::PostInitializeComponents();
 
+    // Force components to attach directly to MainCabinet to override any Blueprint-serialized parenting overrides
+    if (SinkMesh && MainCabinet)
+    {
+        SinkMesh->AttachToComponent(MainCabinet, FAttachmentTransformRules::KeepWorldTransform);
+    }
+    if (FaucetMesh && MainCabinet)
+    {
+        FaucetMesh->AttachToComponent(MainCabinet, FAttachmentTransformRules::KeepWorldTransform);
+    }
+
     // Ensure baseline transforms are captured from the starting level editor state at component initialization time
     EnsureBaselineTransformsCaptured();
 }
@@ -269,6 +305,14 @@ void AShowroomBooth::EnsureBaselineTransformsCaptured()
     if (FaucetMesh)
     {
         BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
+    }
+    if (CountertopMesh)
+    {
+        BaselineCountertopTransform = CountertopMesh->GetRelativeTransform();
+    }
+    if (MirrorMesh)
+    {
+        BaselineMirrorTransform = MirrorMesh->GetRelativeTransform();
     }
     if (DoorMeshSlot0)
     {
@@ -476,22 +520,42 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
     case EFurnitureComponentType::Countertop:
         AllowedIDs = Row->AllowedCountertopIDs;
         TargetCatalog = SharedCountertopsCatalog.Get();
-        OutOptions.CombinationsMetadata = Row->CountertopCombinationsMetadata;
+        if (!TargetCatalog)
+        {
+            TargetCatalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedCountertops.DT_SharedCountertops")));
+        }
         break;
     case EFurnitureComponentType::Sink:
         AllowedIDs = Row->AllowedSinkIDs;
         TargetCatalog = SharedSinksCatalog.Get();
-        OutOptions.CombinationsMetadata = Row->SinkCombinationsMetadata;
+        if (!TargetCatalog)
+        {
+            TargetCatalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedSinks.DT_SharedSinks")));
+        }
         break;
     case EFurnitureComponentType::Faucet:
         AllowedIDs = Row->AllowedFaucetIDs;
         TargetCatalog = SharedFaucetsCatalog.Get();
-        OutOptions.CombinationsMetadata = Row->FaucetCombinationsMetadata;
+        if (!TargetCatalog)
+        {
+            TargetCatalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedFaucets.DT_SharedFaucets")));
+        }
+        if (!TargetCatalog)
+        {
+            TargetCatalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/AllowedFaucetIDs.AllowedFaucetIDs")));
+        }
         break;
     case EFurnitureComponentType::Mirror:
         AllowedIDs = Row->AllowedMirrorIDs;
         TargetCatalog = SharedMirrorsCatalog.Get();
-        OutOptions.CombinationsMetadata = Row->MirrorCombinationsMetadata;
+        if (!TargetCatalog)
+        {
+            TargetCatalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedMirrors.DT_SharedMirrors")));
+        }
+        if (!TargetCatalog)
+        {
+            TargetCatalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/AllowedMirrorIDs.AllowedMirrorIDs")));
+        }
         break;
     default:
         return false;
@@ -506,22 +570,194 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
     for (const FName& ID : AllowedIDs)
     {
         static const FString ContextString(TEXT("ResolveSharedModel"));
-        FFurnitureModelRow* SharedModel = TargetCatalog->FindRow<FFurnitureModelRow>(ID, ContextString);
-        if (SharedModel)
+        if (ComponentType == EFurnitureComponentType::Countertop)
         {
-            FFurnitureModelOption NewOption;
-            NewOption.Mesh = SharedModel->Mesh;
-            NewOption.Thumbnail = SharedModel->Thumbnail;
-            NewOption.Colors = SharedModel->Colors;
-            OutOptions.Models.Add(NewOption);
+            FFurnitureCountertopRow* SharedModel = TargetCatalog->FindRow<FFurnitureCountertopRow>(ID, ContextString);
+            if (SharedModel)
+            {
+                if (SharedModel->CabinetSizeIndex != ActiveState.ActiveSizeIndex)
+                {
+                    continue;
+                }
+
+                FFurnitureModelOption NewOption;
+                NewOption.Mesh = SharedModel->Mesh;
+                NewOption.Thumbnail = SharedModel->Thumbnail;
+                NewOption.Colors = SharedModel->Colors;
+                NewOption.CountertopType = SharedModel->CountertopType;
+                NewOption.RelativeOffset = SharedModel->RelativeOffset;
+                OutOptions.Models.Add(NewOption);
+
+                int32 AddedModelIndex = OutOptions.Models.Num() - 1;
+                for (int32 ColorIdx = 0; ColorIdx < SharedModel->Colors.Num(); ++ColorIdx)
+                {
+                    const FFurnitureColorOption& ColorOpt = SharedModel->Colors[ColorIdx];
+                    FFurnitureMetadataEntry Entry;
+                    Entry.SizeIndex = AddedModelIndex;
+                    Entry.ColorIndex = ColorIdx;
+                    Entry.Metadata.ProductName = ColorOpt.ProductName;
+                    Entry.Metadata.SKU = ColorOpt.SKU;
+                    Entry.Metadata.URL = ColorOpt.URL;
+                    OutOptions.CombinationsMetadata.Add(Entry);
+                }
+            }
         }
-        else
+        else if (ComponentType == EFurnitureComponentType::Sink)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] GetResolvedComponentOptions: Row '%s' not found in shared catalog"), *ID.ToString());
+            FFurnitureSinkRow* SharedModel = TargetCatalog->FindRow<FFurnitureSinkRow>(ID, ContextString);
+            if (SharedModel)
+            {
+                FFurnitureModelOption NewOption;
+                NewOption.Mesh = SharedModel->Mesh;
+                NewOption.Thumbnail = SharedModel->Thumbnail;
+                NewOption.Colors = SharedModel->Colors;
+                NewOption.RelativeOffset = SharedModel->RelativeOffset;
+                OutOptions.Models.Add(NewOption);
+
+                int32 AddedModelIndex = OutOptions.Models.Num() - 1;
+                for (int32 ColorIdx = 0; ColorIdx < SharedModel->Colors.Num(); ++ColorIdx)
+                {
+                    const FFurnitureColorOption& ColorOpt = SharedModel->Colors[ColorIdx];
+                    FFurnitureMetadataEntry Entry;
+                    Entry.SizeIndex = AddedModelIndex;
+                    Entry.ColorIndex = ColorIdx;
+                    Entry.Metadata.ProductName = ColorOpt.ProductName;
+                    Entry.Metadata.SKU = ColorOpt.SKU;
+                    Entry.Metadata.URL = ColorOpt.URL;
+                    OutOptions.CombinationsMetadata.Add(Entry);
+                }
+            }
+        }
+        else if (ComponentType == EFurnitureComponentType::Faucet)
+        {
+            FFurnitureFaucetRow* SharedModel = TargetCatalog->FindRow<FFurnitureFaucetRow>(ID, ContextString);
+            if (SharedModel)
+            {
+                ECountertopType ActiveCountertopType = GetActiveCountertopType();
+                if (ActiveCountertopType == ECountertopType::BuiltIn && SharedModel->FaucetType != EFaucetType::Integrated)
+                {
+                    continue;
+                }
+                if (ActiveCountertopType == ECountertopType::SurfaceMounted && SharedModel->FaucetType != EFaucetType::Standard)
+                {
+                    continue;
+                }
+
+                FFurnitureModelOption NewOption;
+                NewOption.Mesh = SharedModel->Mesh;
+                NewOption.Thumbnail = SharedModel->Thumbnail;
+                NewOption.Colors = SharedModel->Colors;
+                NewOption.RelativeOffset = SharedModel->RelativeOffset;
+                OutOptions.Models.Add(NewOption);
+
+                int32 AddedModelIndex = OutOptions.Models.Num() - 1;
+                for (int32 ColorIdx = 0; ColorIdx < SharedModel->Colors.Num(); ++ColorIdx)
+                {
+                    const FFurnitureColorOption& ColorOpt = SharedModel->Colors[ColorIdx];
+                    FFurnitureMetadataEntry Entry;
+                    Entry.SizeIndex = AddedModelIndex;
+                    Entry.ColorIndex = ColorIdx;
+                    Entry.Metadata.ProductName = ColorOpt.ProductName;
+                    Entry.Metadata.SKU = ColorOpt.SKU;
+                    Entry.Metadata.URL = ColorOpt.URL;
+                    OutOptions.CombinationsMetadata.Add(Entry);
+                }
+            }
+        }
+        else if (ComponentType == EFurnitureComponentType::Mirror)
+        {
+            FFurnitureMirrorRow* SharedModel = TargetCatalog->FindRow<FFurnitureMirrorRow>(ID, ContextString);
+            if (SharedModel)
+            {
+                FFurnitureModelOption NewOption;
+                NewOption.Mesh = SharedModel->Mesh;
+                NewOption.Thumbnail = SharedModel->Thumbnail;
+                NewOption.Colors = SharedModel->Colors;
+                NewOption.RelativeOffset = SharedModel->RelativeOffset;
+                OutOptions.Models.Add(NewOption);
+
+                int32 AddedModelIndex = OutOptions.Models.Num() - 1;
+                for (int32 ColorIdx = 0; ColorIdx < SharedModel->Colors.Num(); ++ColorIdx)
+                {
+                    const FFurnitureColorOption& ColorOpt = SharedModel->Colors[ColorIdx];
+                    FFurnitureMetadataEntry Entry;
+                    Entry.SizeIndex = AddedModelIndex;
+                    Entry.ColorIndex = ColorIdx;
+                    Entry.Metadata.ProductName = ColorOpt.ProductName;
+                    Entry.Metadata.SKU = ColorOpt.SKU;
+                    Entry.Metadata.URL = ColorOpt.URL;
+                    OutOptions.CombinationsMetadata.Add(Entry);
+                }
+            }
         }
     }
 
     return true;
+}
+
+ECountertopType AShowroomBooth::GetActiveCountertopType() const
+{
+    FFurnitureComponentOptions ResolvedOptions;
+    if (GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedOptions))
+    {
+        if (ResolvedOptions.Models.IsValidIndex(ActiveState.CountertopSizeIndex))
+        {
+            return ResolvedOptions.Models[ActiveState.CountertopSizeIndex].CountertopType;
+        }
+    }
+    return ECountertopType::SurfaceMounted;
+}
+
+FFurniturePlacementOffset AShowroomBooth::GetActiveSinkOffset() const
+{
+    FFurnitureComponentOptions ResolvedOptions;
+    if (GetResolvedComponentOptions(EFurnitureComponentType::Sink, ResolvedOptions))
+    {
+        if (ResolvedOptions.Models.IsValidIndex(ActiveState.SinkSizeIndex))
+        {
+            return ResolvedOptions.Models[ActiveState.SinkSizeIndex].RelativeOffset;
+        }
+    }
+    return FFurniturePlacementOffset();
+}
+
+FFurniturePlacementOffset AShowroomBooth::GetActiveFaucetOffset() const
+{
+    FFurnitureComponentOptions ResolvedOptions;
+    if (GetResolvedComponentOptions(EFurnitureComponentType::Faucet, ResolvedOptions))
+    {
+        if (ResolvedOptions.Models.IsValidIndex(ActiveState.FaucetSizeIndex))
+        {
+            return ResolvedOptions.Models[ActiveState.FaucetSizeIndex].RelativeOffset;
+        }
+    }
+    return FFurniturePlacementOffset();
+}
+
+FFurniturePlacementOffset AShowroomBooth::GetActiveMirrorOffset() const
+{
+    FFurnitureComponentOptions ResolvedOptions;
+    if (GetResolvedComponentOptions(EFurnitureComponentType::Mirror, ResolvedOptions))
+    {
+        if (ResolvedOptions.Models.IsValidIndex(ActiveState.MirrorSizeIndex))
+        {
+            return ResolvedOptions.Models[ActiveState.MirrorSizeIndex].RelativeOffset;
+        }
+    }
+    return FFurniturePlacementOffset();
+}
+
+FFurniturePlacementOffset AShowroomBooth::GetActiveCountertopOffset() const
+{
+    FFurnitureComponentOptions ResolvedOptions;
+    if (GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedOptions))
+    {
+        if (ResolvedOptions.Models.IsValidIndex(ActiveState.CountertopSizeIndex))
+        {
+            return ResolvedOptions.Models[ActiveState.CountertopSizeIndex].RelativeOffset;
+        }
+    }
+    return FFurniturePlacementOffset();
 }
 
 EDoorSlotState AShowroomBooth::GetDoorSlotState(int32 SlotIndex) const
@@ -587,13 +823,25 @@ bool AShowroomBooth::Server_ApplyComponentSelection_Validate(EFurnitureComponent
 
 void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex)
 {
+    bool bCabinetSizeChanged = false;
+    bool bCountertopModelChanged = false;
+
     if (ComponentType == EFurnitureComponentType::Cabinet)
     {
-        ActiveState.ActiveSizeIndex = SizeIndex;
+        if (ActiveState.ActiveSizeIndex != SizeIndex)
+        {
+            ActiveState.ActiveSizeIndex = SizeIndex;
+            bCabinetSizeChanged = true;
+        }
         ActiveState.ActiveColorIndex = ColorIndex;
     }
     else if (ComponentType == EFurnitureComponentType::Countertop)
     {
+        if (ActiveState.CountertopSizeIndex != SizeIndex)
+        {
+            ActiveState.CountertopSizeIndex = SizeIndex;
+            bCountertopModelChanged = true;
+        }
         ActiveState.ActiveCountertopColorIndex = ColorIndex;
     }
     else if (ComponentType == EFurnitureComponentType::Closet)
@@ -615,6 +863,16 @@ void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureCom
     {
         ActiveState.MirrorSizeIndex = SizeIndex;
         ActiveState.MirrorColorIndex = ColorIndex;
+    }
+
+    if (bCabinetSizeChanged)
+    {
+        ActiveState.CountertopSizeIndex = 0;
+        ActiveState.FaucetSizeIndex = 0;
+    }
+    else if (bCountertopModelChanged)
+    {
+        ActiveState.FaucetSizeIndex = 0;
     }
 
     const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
@@ -802,10 +1060,10 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
     // ── 4. Countertop ─────────────────────────────────────────────────────
     FFurnitureComponentOptions ResolvedCountertop;
     GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedCountertop);
-    ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.ActiveSizeIndex, ActiveState.ActiveCountertopColorIndex);
+    ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.CountertopSizeIndex, ActiveState.ActiveCountertopColorIndex);
 
     // ── 5. Sink (visibility + mesh driven by CountertopType) ──────────────
-    if (Data.CountertopType == ECountertopType::BuiltIn)
+    if (GetActiveCountertopType() == ECountertopType::BuiltIn)
     {
         if (SinkMesh)
         {
@@ -1296,10 +1554,34 @@ void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& 
         return;
     }
 
-    // ── Sink ──────────────────────────────────────────────────────────────
-    if (SinkMesh && Data.CountertopType == ECountertopType::SurfaceMounted)
+    const ECountertopType CountertopType = GetActiveCountertopType();
+
+    // ── Countertop ────────────────────────────────────────────────────────
+    if (CountertopMesh)
     {
-        const FSinkPlacementOffset& SO = Data.SinkOffset;
+        FFurniturePlacementOffset CO = GetActiveCountertopOffset();
+
+        FTransform ProductDelta;
+        ProductDelta.SetLocation(CO.RelativeLocation);
+        ProductDelta.SetRotation(CO.RelativeRotation.Quaternion());
+        ProductDelta.SetScale3D(CO.RelativeScale);
+
+        if (CountertopType == ECountertopType::BuiltIn)
+        {
+            // Integrated countertops align perfectly relative to the cabinet base with no baseline offset multiplier needed
+            CountertopMesh->SetRelativeTransform(ProductDelta);
+        }
+        else
+        {
+            const FTransform FinalCountertopTransform = ProductDelta * BaselineCountertopTransform;
+            CountertopMesh->SetRelativeTransform(FinalCountertopTransform);
+        }
+    }
+
+    // ── Sink ──────────────────────────────────────────────────────────────
+    if (SinkMesh && CountertopType == ECountertopType::SurfaceMounted)
+    {
+        FFurniturePlacementOffset SO = GetActiveSinkOffset();
 
         FTransform ProductDelta;
         ProductDelta.SetLocation(SO.RelativeLocation);
@@ -1314,15 +1596,37 @@ void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& 
     // ── Faucet ────────────────────────────────────────────────────────────
     if (FaucetMesh)
     {
-        const FFaucetPlacementOffset& FO = Data.FaucetOffset;
+        FFurniturePlacementOffset FO = GetActiveFaucetOffset();
 
         FTransform ProductDelta;
         ProductDelta.SetLocation(FO.RelativeLocation);
         ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
         ProductDelta.SetScale3D(FO.RelativeScale);
 
-        const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucetTransform;
-        FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+        if (CountertopType == ECountertopType::BuiltIn)
+        {
+            // Integrated faucets align perfectly relative to the cabinet base with no baseline offset multiplier needed
+            FaucetMesh->SetRelativeTransform(ProductDelta);
+        }
+        else
+        {
+            const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucetTransform;
+            FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
+        }
+    }
+
+    // ── Mirror ────────────────────────────────────────────────────────────
+    if (MirrorMesh)
+    {
+        FFurniturePlacementOffset MO = GetActiveMirrorOffset();
+
+        FTransform ProductDelta;
+        ProductDelta.SetLocation(MO.RelativeLocation);
+        ProductDelta.SetRotation(MO.RelativeRotation.Quaternion());
+        ProductDelta.SetScale3D(MO.RelativeScale);
+
+        const FTransform FinalMirrorTransform = ProductDelta * BaselineMirrorTransform;
+        MirrorMesh->SetRelativeTransform(FinalMirrorTransform);
     }
 }
 
@@ -1358,6 +1662,7 @@ void AShowroomBooth::InitializeDefaultStateForProduct(FShowroomBoothConfigState&
     State.ProductID = ProductID;
     State.ActiveSizeIndex = 0;
     State.ActiveColorIndex = 0;
+    State.CountertopSizeIndex = 0;
     State.ActiveCountertopColorIndex = 0;
     State.ClosetSizeIndex = 0;
     State.ClosetColorIndex = 0;
