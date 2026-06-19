@@ -385,9 +385,9 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         FFurniturePlacementOffset CO = SourceBooth ? SourceBooth->GetActiveCountertopOffset() : FFurniturePlacementOffset();
         if (SourceBooth && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
         {
-            // Integrated countertops align perfectly relative to the cabinet base using baseline location/scale but bypassing baseline rotation
+            // Integrated countertops align perfectly relative to the cabinet base using baseline Z height and scale but resetting baseline X/Y and rotation
             const FTransform BaselineCountertop = SourceBooth->GetBaselineCountertopTransform();
-            FVector TargetLocation = CO.RelativeLocation + BaselineCountertop.GetLocation();
+            FVector TargetLocation = FVector(0.f, 0.f, BaselineCountertop.GetLocation().Z) + CO.RelativeLocation;
             FRotator TargetRotation = CO.RelativeRotation;
             FVector TargetScale = CO.RelativeScale * BaselineCountertop.GetScale3D();
             CountertopMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
@@ -454,9 +454,9 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             FFurniturePlacementOffset FO = SourceBooth ? SourceBooth->GetActiveFaucetOffset() : FFurniturePlacementOffset();
             if (SourceBooth && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
             {
-                // Integrated faucets align perfectly relative to the cabinet base using baseline location/scale but bypassing baseline rotation
+                // Integrated faucets align perfectly relative to the cabinet base using baseline Z height and scale but resetting baseline X/Y and rotation
                 const FTransform BaselineFaucet = SourceBooth->GetBaselineFaucetTransform();
-                FVector TargetLocation = FO.RelativeLocation + BaselineFaucet.GetLocation();
+                FVector TargetLocation = FVector(0.f, 0.f, BaselineFaucet.GetLocation().Z) + FO.RelativeLocation;
                 FRotator TargetRotation = FO.RelativeRotation;
                 FVector TargetScale = FO.RelativeScale * BaselineFaucet.GetScale3D();
                 FaucetMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);

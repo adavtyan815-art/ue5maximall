@@ -1568,8 +1568,8 @@ void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& 
 
         if (CountertopType == ECountertopType::BuiltIn)
         {
-            // Integrated countertops align perfectly relative to the cabinet base using baseline location/scale but bypassing baseline rotation
-            FVector TargetLocation = CO.RelativeLocation + BaselineCountertopTransform.GetLocation();
+            // Integrated countertops align perfectly relative to the cabinet base using baseline Z height and scale but resetting baseline X/Y and rotation
+            FVector TargetLocation = FVector(0.f, 0.f, BaselineCountertopTransform.GetLocation().Z) + CO.RelativeLocation;
             FRotator TargetRotation = CO.RelativeRotation;
             FVector TargetScale = CO.RelativeScale * BaselineCountertopTransform.GetScale3D();
             CountertopMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
@@ -1609,8 +1609,8 @@ void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& 
 
         if (CountertopType == ECountertopType::BuiltIn)
         {
-            // Integrated faucets align perfectly relative to the cabinet base using baseline location/scale but bypassing baseline rotation
-            FVector TargetLocation = FO.RelativeLocation + BaselineFaucetTransform.GetLocation();
+            // Integrated faucets align perfectly relative to the cabinet base using baseline Z height and scale but resetting baseline X/Y and rotation
+            FVector TargetLocation = FVector(0.f, 0.f, BaselineFaucetTransform.GetLocation().Z) + FO.RelativeLocation;
             FRotator TargetRotation = FO.RelativeRotation;
             FVector TargetScale = FO.RelativeScale * BaselineFaucetTransform.GetScale3D();
             FaucetMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
