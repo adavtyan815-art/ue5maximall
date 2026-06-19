@@ -23,6 +23,13 @@ Showroom booths (`AShowroomBooth`) are designed to be visually flexible and dyna
 * **Gating Method**: `UConfiguratorMainWidget::IsComponentMeshValid` checks the mesh component's validity and calls `GetStaticMesh()`.
 * **Visibility Collapse**: If invalid, the corresponding combo box selectors or row layout visibility is updated to `ESlateVisibility::Collapsed` in C++, hiding them cleanly from the designer's UI layout.
 
+### Countertop Dynamic Resizing & Size Fallback System
+Countertop model selections are decoupled from the cabinet. However, the countertop mesh is dynamically selected to match the cabinet size by querying the `Sizes` array at the active cabinet size index (`ActiveState.ActiveSizeIndex`):
+* **Size Matching**: [AShowroomBooth::GetResolvedComponentOptions](file:///c:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/ShowroomBooth.cpp#L507) resolves option meshes by checking the cabinet size index against the countertop's `Sizes` array.
+* **Missing Sizes**: If the active cabinet size index is out of bounds of the countertop's `Sizes` array, or if the element at that index is explicitly set to `None`, it is evaluated as a missing mesh.
+* **Automatic Fallback**: For a `BuiltIn` (Integrated) countertop type, a missing size triggers an automatic fallback to the first allowed standard (`SurfaceMounted`) countertop that has a valid mesh for the active cabinet size.
+* **Replicated Warning State**: The helper [AShowroomBooth::CalculateCountertopFallbackActive](file:///c:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/ShowroomBooth.cpp#L778) authoritatively determines if the fallback is active. When true, `bCountertopSizeFallbackActive` replicates to clients, forcing [AShowroomBooth::GetActiveCountertopType](file:///c:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/ShowroomBooth.cpp#L827) to return `SurfaceMounted` (ensuring standalone sink and faucet meshes render) and displaying the warning popup `Txt_Warning` on screen.
+
 ---
 
 ## 2. C++ Widget Bindings & Layout Integration
