@@ -590,7 +590,9 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                 NewOption.RelativeOffset = SharedModel->RelativeOffset;
 
                 bool bMeshFound = false;
-                if (SharedModel->Sizes.IsValidIndex(ActiveState.ActiveSizeIndex) && !SharedModel->Sizes[ActiveState.ActiveSizeIndex].IsNull())
+                if (SharedModel->Sizes.IsValidIndex(ActiveState.ActiveSizeIndex) && 
+                    !SharedModel->Sizes[ActiveState.ActiveSizeIndex].IsNull() &&
+                    !SharedModel->Sizes[ActiveState.ActiveSizeIndex].ToSoftObjectPath().ToString().IsEmpty())
                 {
                     NewOption.Mesh = SharedModel->Sizes[ActiveState.ActiveSizeIndex];
                     bMeshFound = true;
@@ -601,15 +603,39 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                     if (SharedModel->CountertopType == ECountertopType::BuiltIn)
                     {
                         FFurnitureCountertopRow* FallbackModel = nullptr;
+                        
+                        // 1. Search in Allowed IDs first
                         for (const FName& FallbackID : AllowedIDs)
                         {
                             FFurnitureCountertopRow* CandidateModel = TargetCatalog->FindRow<FFurnitureCountertopRow>(FallbackID, ContextString);
                             if (CandidateModel && CandidateModel->CountertopType == ECountertopType::SurfaceMounted)
                             {
-                                if (CandidateModel->Sizes.IsValidIndex(ActiveState.ActiveSizeIndex) && !CandidateModel->Sizes[ActiveState.ActiveSizeIndex].IsNull())
+                                if (CandidateModel->Sizes.IsValidIndex(ActiveState.ActiveSizeIndex) && 
+                                    !CandidateModel->Sizes[ActiveState.ActiveSizeIndex].IsNull() &&
+                                    !CandidateModel->Sizes[ActiveState.ActiveSizeIndex].ToSoftObjectPath().ToString().IsEmpty())
                                 {
                                     FallbackModel = CandidateModel;
                                     break;
+                                }
+                            }
+                        }
+
+                        // 2. Search entire catalog as backup
+                        if (!FallbackModel)
+                        {
+                            TArray<FName> AllRowNames = TargetCatalog->GetRowNames();
+                            for (const FName& FallbackID : AllRowNames)
+                            {
+                                FFurnitureCountertopRow* CandidateModel = TargetCatalog->FindRow<FFurnitureCountertopRow>(FallbackID, ContextString);
+                                if (CandidateModel && CandidateModel->CountertopType == ECountertopType::SurfaceMounted)
+                                {
+                                    if (CandidateModel->Sizes.IsValidIndex(ActiveState.ActiveSizeIndex) && 
+                                        !CandidateModel->Sizes[ActiveState.ActiveSizeIndex].IsNull() &&
+                                        !CandidateModel->Sizes[ActiveState.ActiveSizeIndex].ToSoftObjectPath().ToString().IsEmpty())
+                                    {
+                                        FallbackModel = CandidateModel;
+                                        break;
+                                    }
                                 }
                             }
                         }
