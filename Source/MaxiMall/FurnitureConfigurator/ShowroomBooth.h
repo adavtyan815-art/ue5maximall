@@ -153,6 +153,22 @@ public:
               meta = (RequiredAssetDataTags = "RowStructure=FurnitureProductRow"))
     TObjectPtr<UDataTable> ProductCatalog;
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth | Config",
+              meta = (RequiredAssetDataTags = "RowStructure=FurnitureModelRow"))
+    TObjectPtr<UDataTable> SharedCountertopsCatalog;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth | Config",
+              meta = (RequiredAssetDataTags = "RowStructure=FurnitureModelRow"))
+    TObjectPtr<UDataTable> SharedSinksCatalog;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth | Config",
+              meta = (RequiredAssetDataTags = "RowStructure=FurnitureModelRow"))
+    TObjectPtr<UDataTable> SharedFaucetsCatalog;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth | Config",
+              meta = (RequiredAssetDataTags = "RowStructure=FurnitureModelRow"))
+    TObjectPtr<UDataTable> SharedMirrorsCatalog;
+
     /**
      * Product loaded when the game starts (RowName from ProductCatalog).
      * Designers set this per-booth to establish the default display.
@@ -228,6 +244,13 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Booth | Query",
               meta = (DisplayName = "Get Active Product Data"))
     bool GetActiveProductData(FFurnitureProductRow& OutData) const;
+
+    /**
+     * Resolves and returns the full component options for a given component type,
+     * loading model entries dynamically from the shared catalogs if applicable.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Booth | Query")
+    bool GetResolvedComponentOptions(EFurnitureComponentType ComponentType, FFurnitureComponentOptions& OutOptions) const;
 
     /**
      * Returns the current open/closed state of a door slot.

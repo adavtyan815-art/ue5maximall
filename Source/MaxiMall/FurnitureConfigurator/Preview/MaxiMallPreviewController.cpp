@@ -1086,44 +1086,45 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
         return false;
     }
 
+    FFurnitureComponentOptions ResolvedOptions;
     const FFurnitureComponentOptions* TargetOptions = nullptr;
     int32 TargetSizeIndex = 0;
     int32 TargetColorIndex = 0;
 
-    switch (ComponentType)
+    if (ComponentType == EFurnitureComponentType::Closet)
     {
-    case EFurnitureComponentType::Countertop:
-        TargetOptions = &Row->CountertopOptions;
-        TargetSizeIndex = CurrentTargetBooth->ActiveState.ActiveSizeIndex;
-        TargetColorIndex = CurrentTargetBooth->ActiveState.ActiveCountertopColorIndex;
-        break;
-
-    case EFurnitureComponentType::Closet:
         TargetOptions = &Row->ClosetOptions;
         TargetSizeIndex = CurrentTargetBooth->ActiveState.ClosetSizeIndex;
         TargetColorIndex = CurrentTargetBooth->ActiveState.ClosetColorIndex;
-        break;
+    }
+    else
+    {
+        if (CurrentTargetBooth->GetResolvedComponentOptions(ComponentType, ResolvedOptions))
+        {
+            TargetOptions = &ResolvedOptions;
+        }
 
-    case EFurnitureComponentType::Sink:
-        TargetOptions = &Row->SinkOptions;
-        TargetSizeIndex = CurrentTargetBooth->ActiveState.SinkSizeIndex;
-        TargetColorIndex = CurrentTargetBooth->ActiveState.SinkColorIndex;
-        break;
-
-    case EFurnitureComponentType::Faucet:
-        TargetOptions = &Row->FaucetOptions;
-        TargetSizeIndex = CurrentTargetBooth->ActiveState.FaucetSizeIndex;
-        TargetColorIndex = CurrentTargetBooth->ActiveState.FaucetColorIndex;
-        break;
-
-    case EFurnitureComponentType::Mirror:
-        TargetOptions = &Row->MirrorOptions;
-        TargetSizeIndex = CurrentTargetBooth->ActiveState.MirrorSizeIndex;
-        TargetColorIndex = CurrentTargetBooth->ActiveState.MirrorColorIndex;
-        break;
-
-    default:
-        return false;
+        switch (ComponentType)
+        {
+        case EFurnitureComponentType::Countertop:
+            TargetSizeIndex = CurrentTargetBooth->ActiveState.ActiveSizeIndex;
+            TargetColorIndex = CurrentTargetBooth->ActiveState.ActiveCountertopColorIndex;
+            break;
+        case EFurnitureComponentType::Sink:
+            TargetSizeIndex = CurrentTargetBooth->ActiveState.SinkSizeIndex;
+            TargetColorIndex = CurrentTargetBooth->ActiveState.SinkColorIndex;
+            break;
+        case EFurnitureComponentType::Faucet:
+            TargetSizeIndex = CurrentTargetBooth->ActiveState.FaucetSizeIndex;
+            TargetColorIndex = CurrentTargetBooth->ActiveState.FaucetColorIndex;
+            break;
+        case EFurnitureComponentType::Mirror:
+            TargetSizeIndex = CurrentTargetBooth->ActiveState.MirrorSizeIndex;
+            TargetColorIndex = CurrentTargetBooth->ActiveState.MirrorColorIndex;
+            break;
+        default:
+            return false;
+        }
     }
 
     if (!TargetOptions)

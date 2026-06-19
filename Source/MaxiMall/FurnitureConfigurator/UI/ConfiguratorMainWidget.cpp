@@ -119,6 +119,17 @@ void UConfiguratorMainWidget::RefreshSelections()
             }
         }
 
+        // Dynamically resolve component options if not Cabinet
+        FFurnitureComponentOptions ResolvedOpts;
+        const FFurnitureComponentOptions* ComponentOpts = nullptr;
+        if (ActiveComponent != EFurnitureComponentType::Cabinet)
+        {
+            if (Booth->GetResolvedComponentOptions(ActiveComponent, ResolvedOpts))
+            {
+                ComponentOpts = &ResolvedOpts;
+            }
+        }
+
         // ── SIZE SELECTORS ──
         if (Size_Container)
         {
@@ -147,8 +158,21 @@ void UConfiguratorMainWidget::RefreshSelections()
                             UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
                             if (NewBtn)
                             {
-                                // Set button background transparent
-                                NewBtn->SetBackgroundColor(FLinearColor::Transparent);
+                                // Apply Pill-Style with Glassmorphism Hover/Active effects
+                                FButtonStyle CustomStyle = NewBtn->GetStyle();
+                                if (i == ActiveSizeIdx)
+                                {
+                                    CustomStyle.Normal.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.3f));
+                                    CustomStyle.Hovered.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.45f));
+                                    CustomStyle.Pressed.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.6f));
+                                }
+                                else
+                                {
+                                    CustomStyle.Normal.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.05f));
+                                    CustomStyle.Hovered.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.15f));
+                                    CustomStyle.Pressed.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.25f));
+                                }
+                                NewBtn->SetStyle(CustomStyle);
 
                                 UTextBlock* BtnText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
                                 if (BtnText)
@@ -194,25 +218,6 @@ void UConfiguratorMainWidget::RefreshSelections()
             }
             else // General components options (Models list)
             {
-                const FFurnitureComponentOptions* ComponentOpts = nullptr;
-                switch (ActiveComponent)
-                {
-                case EFurnitureComponentType::Closet:
-                    ComponentOpts = &ProductData.ClosetOptions;
-                    break;
-                case EFurnitureComponentType::Sink:
-                    ComponentOpts = &ProductData.SinkOptions;
-                    break;
-                case EFurnitureComponentType::Faucet:
-                    ComponentOpts = &ProductData.FaucetOptions;
-                    break;
-                case EFurnitureComponentType::Mirror:
-                    ComponentOpts = &ProductData.MirrorOptions;
-                    break;
-                default:
-                    break;
-                }
-
                 if (!ComponentOpts || ComponentOpts->Models.Num() <= 1)
                 {
                     Size_Container->SetVisibility(ESlateVisibility::Collapsed);
@@ -228,6 +233,8 @@ void UConfiguratorMainWidget::RefreshSelections()
                         UScrollBox* ScrollBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
                         if (ScrollBox)
                         {
+                            ScrollBox->SetScrollBarVisibility(ESlateVisibility::Visible);
+
                             UUniformGridPanel* GridPanel = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
                             if (GridPanel)
                             {
@@ -284,7 +291,19 @@ void UConfiguratorMainWidget::RefreshSelections()
                                 }
                                 ScrollBox->AddChild(GridPanel);
                             }
-                            Size_Container->AddChild(ScrollBox);
+
+                            // Wrap ScrollBox inside a SizeBox with a maximum height limit of 255.0f
+                            USizeBox* ScrollLimitBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+                            if (ScrollLimitBox)
+                            {
+                                ScrollLimitBox->SetMaxDesiredHeight(255.f);
+                                ScrollLimitBox->AddChild(ScrollBox);
+                                Size_Container->AddChild(ScrollLimitBox);
+                            }
+                            else
+                            {
+                                Size_Container->AddChild(ScrollBox);
+                            }
                         }
                     }
                 }
@@ -299,28 +318,6 @@ void UConfiguratorMainWidget::RefreshSelections()
         }
         else
         {
-            const FFurnitureComponentOptions* ComponentOpts = nullptr;
-            switch (ActiveComponent)
-            {
-            case EFurnitureComponentType::Countertop:
-                ComponentOpts = &ProductData.CountertopOptions;
-                break;
-            case EFurnitureComponentType::Closet:
-                ComponentOpts = &ProductData.ClosetOptions;
-                break;
-            case EFurnitureComponentType::Sink:
-                ComponentOpts = &ProductData.SinkOptions;
-                break;
-            case EFurnitureComponentType::Faucet:
-                ComponentOpts = &ProductData.FaucetOptions;
-                break;
-            case EFurnitureComponentType::Mirror:
-                ComponentOpts = &ProductData.MirrorOptions;
-                break;
-            default:
-                break;
-            }
-
             if (ComponentOpts && ComponentOpts->Models.IsValidIndex(ActiveSizeIdx))
             {
                 ActiveColors = ComponentOpts->Models[ActiveSizeIdx].Colors;

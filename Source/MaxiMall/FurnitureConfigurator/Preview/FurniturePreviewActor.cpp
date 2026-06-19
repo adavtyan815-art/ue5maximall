@@ -360,7 +360,12 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     // ── Countertop ────────────────────────────────────────────────────────
     if (!SourceBooth || (SourceBooth->CountertopMesh && SourceBooth->CountertopMesh->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ProductData.CountertopOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveCountertopColorIndex);
+        FFurnitureComponentOptions ResolvedCountertop;
+        if (SourceBooth)
+        {
+            SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedCountertop);
+        }
+        ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.ActiveSizeIndex, ActiveState.ActiveCountertopColorIndex);
     }
     else
     {
@@ -373,7 +378,12 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     if (ProductData.CountertopType == ECountertopType::SurfaceMounted && 
         (!SourceBooth || (SourceBooth->SinkMesh && SourceBooth->SinkMesh->GetStaticMesh() != nullptr)))
     {
-        ApplyComponentMeshAndMaterials(SinkMesh.Get(), ProductData.SinkOptions, ActiveState.SinkSizeIndex, ActiveState.SinkColorIndex);
+        FFurnitureComponentOptions ResolvedSink;
+        if (SourceBooth)
+        {
+            SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Sink, ResolvedSink);
+        }
+        ApplyComponentMeshAndMaterials(SinkMesh.Get(), ResolvedSink, ActiveState.SinkSizeIndex, ActiveState.SinkColorIndex);
 
         const FSinkPlacementOffset& SO = ProductData.SinkOffset;
         FTransform ProductDelta;
@@ -395,7 +405,12 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     // ── Faucet ────────────────────────────────────────────────────────────
     if (!SourceBooth || (SourceBooth->FaucetMesh && SourceBooth->FaucetMesh->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ProductData.FaucetOptions, ActiveState.FaucetSizeIndex, ActiveState.FaucetColorIndex);
+        FFurnitureComponentOptions ResolvedFaucet;
+        if (SourceBooth)
+        {
+            SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Faucet, ResolvedFaucet);
+        }
+        ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ResolvedFaucet, ActiveState.FaucetSizeIndex, ActiveState.FaucetColorIndex);
         {
             const FFaucetPlacementOffset& FO = ProductData.FaucetOffset;
             FTransform ProductDelta;
@@ -418,7 +433,12 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     // ── Mirror ────────────────────────────────────────────────────────────
     if (!SourceBooth || (SourceBooth->MirrorMesh && SourceBooth->MirrorMesh->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ProductData.MirrorOptions, ActiveState.MirrorSizeIndex, ActiveState.MirrorColorIndex);
+        FFurnitureComponentOptions ResolvedMirror;
+        if (SourceBooth)
+        {
+            SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Mirror, ResolvedMirror);
+        }
+        ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ResolvedMirror, ActiveState.MirrorSizeIndex, ActiveState.MirrorColorIndex);
     }
     else
     {

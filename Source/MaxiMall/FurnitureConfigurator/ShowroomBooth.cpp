@@ -452,6 +452,78 @@ bool AShowroomBooth::GetActiveProductData(FFurnitureProductRow& OutData) const
     return false;
 }
 
+bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType ComponentType, FFurnitureComponentOptions& OutOptions) const
+{
+    OutOptions = FFurnitureComponentOptions();
+
+    const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
+    if (!Row)
+    {
+        return false;
+    }
+
+    if (ComponentType == EFurnitureComponentType::Closet)
+    {
+        OutOptions = Row->ClosetOptions;
+        return true;
+    }
+
+    TArray<FName> AllowedIDs;
+    UDataTable* TargetCatalog = nullptr;
+
+    switch (ComponentType)
+    {
+    case EFurnitureComponentType::Countertop:
+        AllowedIDs = Row->AllowedCountertopIDs;
+        TargetCatalog = SharedCountertopsCatalog.Get();
+        OutOptions.CombinationsMetadata = Row->CountertopCombinationsMetadata;
+        break;
+    case EFurnitureComponentType::Sink:
+        AllowedIDs = Row->AllowedSinkIDs;
+        TargetCatalog = SharedSinksCatalog.Get();
+        OutOptions.CombinationsMetadata = Row->SinkCombinationsMetadata;
+        break;
+    case EFurnitureComponentType::Faucet:
+        AllowedIDs = Row->AllowedFaucetIDs;
+        TargetCatalog = SharedFaucetsCatalog.Get();
+        OutOptions.CombinationsMetadata = Row->FaucetCombinationsMetadata;
+        break;
+    case EFurnitureComponentType::Mirror:
+        AllowedIDs = Row->AllowedMirrorIDs;
+        TargetCatalog = SharedMirrorsCatalog.Get();
+        OutOptions.CombinationsMetadata = Row->MirrorCombinationsMetadata;
+        break;
+    default:
+        return false;
+    }
+
+    if (!TargetCatalog)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] GetResolvedComponentOptions: Shared catalog is null for component type %d"), (int32)ComponentType);
+        return false;
+    }
+
+    for (const FName& ID : AllowedIDs)
+    {
+        static const FString ContextString(TEXT("ResolveSharedModel"));
+        FFurnitureModelRow* SharedModel = TargetCatalog->FindRow<FFurnitureModelRow>(ID, ContextString);
+        if (SharedModel)
+        {
+            FFurnitureModelOption NewOption;
+            NewOption.Mesh = SharedModel->Mesh;
+            NewOption.Thumbnail = SharedModel->Thumbnail;
+            NewOption.Colors = SharedModel->Colors;
+            OutOptions.Models.Add(NewOption);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] GetResolvedComponentOptions: Row '%s' not found in shared catalog"), *ID.ToString());
+        }
+    }
+
+    return true;
+}
+
 EDoorSlotState AShowroomBooth::GetDoorSlotState(int32 SlotIndex) const
 {
     if (!DoorStates.IsValidIndex(SlotIndex))
@@ -728,7 +800,9 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
     ApplyDoorConfiguration(Data);
 
     // ── 4. Countertop ─────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(CountertopMesh.Get(), Data.CountertopOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveCountertopColorIndex);
+    FFurnitureComponentOptions ResolvedCountertop;
+    GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedCountertop);
+    ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.ActiveSizeIndex, ActiveState.ActiveCountertopColorIndex);
 
     // ── 5. Sink (visibility + mesh driven by CountertopType) ──────────────
     if (Data.CountertopType == ECountertopType::BuiltIn)
@@ -742,14 +816,20 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
     }
     else // SurfaceMounted
     {
-        ApplyComponentMeshAndMaterials(SinkMesh.Get(), Data.SinkOptions, ActiveState.SinkSizeIndex, ActiveState.SinkColorIndex);
+        FFurnitureComponentOptions ResolvedSink;
+        GetResolvedComponentOptions(EFurnitureComponentType::Sink, ResolvedSink);
+        ApplyComponentMeshAndMaterials(SinkMesh.Get(), ResolvedSink, ActiveState.SinkSizeIndex, ActiveState.SinkColorIndex);
     }
 
     // ── 6. Faucet ─────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(FaucetMesh.Get(), Data.FaucetOptions, ActiveState.FaucetSizeIndex, ActiveState.FaucetColorIndex);
+    FFurnitureComponentOptions ResolvedFaucet;
+    GetResolvedComponentOptions(EFurnitureComponentType::Faucet, ResolvedFaucet);
+    ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ResolvedFaucet, ActiveState.FaucetSizeIndex, ActiveState.FaucetColorIndex);
 
     // ── 7. Mirror ─────────────────────────────────────────────────────────
-    ApplyComponentMeshAndMaterials(MirrorMesh.Get(), Data.MirrorOptions, ActiveState.MirrorSizeIndex, ActiveState.MirrorColorIndex);
+    FFurnitureComponentOptions ResolvedMirror;
+    GetResolvedComponentOptions(EFurnitureComponentType::Mirror, ResolvedMirror);
+    ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ResolvedMirror, ActiveState.MirrorSizeIndex, ActiveState.MirrorColorIndex);
 
     // ── 8. Recalculate Sink + Faucet positions relative to Countertop ─────
     RecalculateDependentTransforms(Data);

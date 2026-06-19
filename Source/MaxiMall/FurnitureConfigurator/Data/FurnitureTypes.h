@@ -201,6 +201,21 @@ struct MAXIMALL_API FFurnitureModelOption
 };
 
 USTRUCT(BlueprintType)
+struct MAXIMALL_API FFurnitureModelRow : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
+    TSoftObjectPtr<UStaticMesh> Mesh;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
+    TSoftObjectPtr<UTexture2D> Thumbnail;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
+    TArray<FFurnitureColorOption> Colors;
+};
+
+USTRUCT(BlueprintType)
 struct MAXIMALL_API FFurnitureComponentOptions
 {
     GENERATED_BODY()
@@ -502,15 +517,23 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop")
     ECountertopType CountertopType = ECountertopType::SurfaceMounted;
 
-    /** Countertop mesh and color options. */
+    /** Countertop allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop")
-    FFurnitureComponentOptions CountertopOptions;
+    TArray<FName> AllowedCountertopIDs;
+
+    /** Countertop combination metadata overrides. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop")
+    TArray<FFurnitureMetadataEntry> CountertopCombinationsMetadata;
 
     // ── Sink ──────────────────────────────────────────────────────────────
 
-    /** Standalone sink options. */
+    /** Standalone sink allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink")
-    FFurnitureComponentOptions SinkOptions;
+    TArray<FName> AllowedSinkIDs;
+
+    /** Sink combination metadata overrides. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink")
+    TArray<FFurnitureMetadataEntry> SinkCombinationsMetadata;
 
     /**
      * Positional offset of the Sink component relative to the Countertop's local origin.
@@ -521,9 +544,13 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     // ── Faucet ────────────────────────────────────────────────────────────
 
-    /** Faucet options. */
+    /** Faucet allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet")
-    FFurnitureComponentOptions FaucetOptions;
+    TArray<FName> AllowedFaucetIDs;
+
+    /** Faucet combination metadata overrides. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet")
+    TArray<FFurnitureMetadataEntry> FaucetCombinationsMetadata;
 
     /**
      * Positional offset of the Faucet component relative to the Countertop's local origin.
@@ -534,7 +561,11 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 
     // ── Mirror ────────────────────────────────────────────────────────────
 
-    /** Mirror options. */
+    /** Mirror allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror")
-    FFurnitureComponentOptions MirrorOptions;
+    TArray<FName> AllowedMirrorIDs;
+
+    /** Mirror combination metadata overrides. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror")
+    TArray<FFurnitureMetadataEntry> MirrorCombinationsMetadata;
 };
