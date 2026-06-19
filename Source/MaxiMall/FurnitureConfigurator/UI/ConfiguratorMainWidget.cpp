@@ -401,6 +401,8 @@ void UConfiguratorMainWidget::RefreshSelections()
         // ── Warning Popup ──
         if (Txt_Warning)
         {
+            UE_LOG(LogTemp, Warning, TEXT("[Widget] RefreshSelections: Txt_Warning is valid. bCountertopSizeFallbackActive = %s"), 
+                Booth->bCountertopSizeFallbackActive ? TEXT("True") : TEXT("False"));
             if (Booth->bCountertopSizeFallbackActive)
             {
                 Txt_Warning->SetText(FText::FromString(TEXT("Для этой модели нет встроенной столешницы соответствующего размера")));
@@ -410,6 +412,10 @@ void UConfiguratorMainWidget::RefreshSelections()
             {
                 Txt_Warning->SetVisibility(ESlateVisibility::Collapsed);
             }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[Widget] RefreshSelections: Txt_Warning is NULL (unbound)! Check your WBP_PreviewWindow layout."));
         }
     }
 }

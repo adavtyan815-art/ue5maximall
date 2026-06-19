@@ -598,11 +598,23 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                     bMeshFound = true;
                 }
 
+                if (bMeshFound)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] GetResolvedComponentOptions (Countertop): ID = %s, SizeIndex = %d, bMeshFound = True, MeshPath = %s"), 
+                        *ID.ToString(), ActiveState.ActiveSizeIndex, *NewOption.Mesh.ToSoftObjectPath().ToString());
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] GetResolvedComponentOptions (Countertop): ID = %s, SizeIndex = %d, bMeshFound = False"), 
+                        *ID.ToString(), ActiveState.ActiveSizeIndex);
+                }
+
                 if (!bMeshFound)
                 {
                     if (SharedModel->CountertopType == ECountertopType::BuiltIn)
                     {
                         FFurnitureCountertopRow* FallbackModel = nullptr;
+                        FName FallbackModelID = NAME_None;
                         
                         // 1. Search in Allowed IDs first
                         for (const FName& FallbackID : AllowedIDs)
@@ -615,6 +627,7 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                                     !CandidateModel->Sizes[ActiveState.ActiveSizeIndex].ToSoftObjectPath().ToString().IsEmpty())
                                 {
                                     FallbackModel = CandidateModel;
+                                    FallbackModelID = FallbackID;
                                     break;
                                 }
                             }
@@ -634,6 +647,7 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                                         !CandidateModel->Sizes[ActiveState.ActiveSizeIndex].ToSoftObjectPath().ToString().IsEmpty())
                                     {
                                         FallbackModel = CandidateModel;
+                                        FallbackModelID = FallbackID;
                                         break;
                                     }
                                 }
@@ -642,10 +656,15 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
 
                         if (FallbackModel)
                         {
+                            UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] Countertop Fallback SUCCESS: Found model %s for size %d"), *FallbackModelID.ToString(), ActiveState.ActiveSizeIndex);
                             NewOption.Mesh = FallbackModel->Sizes[ActiveState.ActiveSizeIndex];
                             NewOption.CountertopType = ECountertopType::SurfaceMounted;
                             NewOption.RelativeOffset = FallbackModel->RelativeOffset;
                             NewOption.Colors = FallbackModel->Colors;
+                        }
+                        else
+                        {
+                            UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] Countertop Fallback FAILED: No standard countertop found with size %d"), ActiveState.ActiveSizeIndex);
                         }
                     }
                 }
@@ -759,8 +778,56 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
     return true;
 }
 
+bool AShowroomBooth::CalculateCountertopFallbackActive() const
+{
+    const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
+    if (!Row)
+    {
+        return false;
+    }
+
+    if (Row->AllowedCountertopIDs.IsValidIndex(ActiveState.CountertopSizeIndex))
+    {
+        FName ActiveCountertopID = Row->AllowedCountertopIDs[ActiveState.CountertopSizeIndex];
+        UDataTable* TargetCatalog = SharedCountertopsCatalog.Get();
+        if (!TargetCatalog)
+        {
+            TargetCatalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedCountertops.DT_SharedCountertops")));
+        }
+        if (TargetCatalog)
+        {
+            static const FString ContextString(TEXT("CalculateFallback"));
+            FFurnitureCountertopRow* RawRow = TargetCatalog->FindRow<FFurnitureCountertopRow>(ActiveCountertopID, ContextString);
+            if (RawRow && RawRow->CountertopType == ECountertopType::BuiltIn)
+            {
+                // It is BuiltIn. Check if the mesh is missing for the active cabinet size index
+                bool bMeshMissing = true;
+                if (RawRow->Sizes.IsValidIndex(ActiveState.ActiveSizeIndex))
+                {
+                    const TSoftObjectPtr<UStaticMesh>& MeshPtr = RawRow->Sizes[ActiveState.ActiveSizeIndex];
+                    if (!MeshPtr.IsNull() && !MeshPtr.ToSoftObjectPath().ToString().IsEmpty())
+                    {
+                        bMeshMissing = false;
+                    }
+                }
+                
+                if (bMeshMissing)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 ECountertopType AShowroomBooth::GetActiveCountertopType() const
 {
+    if (bCountertopSizeFallbackActive)
+    {
+        return ECountertopType::SurfaceMounted;
+    }
+
     FFurnitureComponentOptions ResolvedOptions;
     if (GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedOptions))
     {
@@ -1111,6 +1178,11 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
 {
     EnsureBaselineTransformsCaptured();
 
+    // Determine if the fallback is active
+    bCountertopSizeFallbackActive = CalculateCountertopFallbackActive();
+    UE_LOG(LogTemp, Warning, TEXT("[ShowroomBooth] ApplyProductData: bCountertopSizeFallbackActive = %s"), 
+        bCountertopSizeFallbackActive ? TEXT("True") : TEXT("False"));
+
     // ── 1. Cabinet ────────────────────────────────────────────────────────
     ApplyComponentMeshAndMaterials(MainCabinet.Get(), Data.CabinetOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
 
@@ -1124,30 +1196,6 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
     FFurnitureComponentOptions ResolvedCountertop;
     GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedCountertop);
     ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.CountertopSizeIndex, ActiveState.ActiveCountertopColorIndex);
-
-    // Determine if the fallback is active (BuiltIn countertop resolved as SurfaceMounted)
-    bCountertopSizeFallbackActive = false;
-    if (Data.AllowedCountertopIDs.IsValidIndex(ActiveState.CountertopSizeIndex))
-    {
-        FName ActiveCountertopID = Data.AllowedCountertopIDs[ActiveState.CountertopSizeIndex];
-        UDataTable* TargetCatalog = SharedCountertopsCatalog.Get();
-        if (!TargetCatalog)
-        {
-            TargetCatalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedCountertops.DT_SharedCountertops")));
-        }
-        if (TargetCatalog)
-        {
-            static const FString ContextString(TEXT("CheckFallback"));
-            FFurnitureCountertopRow* RawRow = TargetCatalog->FindRow<FFurnitureCountertopRow>(ActiveCountertopID, ContextString);
-            if (RawRow && RawRow->CountertopType == ECountertopType::BuiltIn)
-            {
-                if (GetActiveCountertopType() == ECountertopType::SurfaceMounted)
-                {
-                    bCountertopSizeFallbackActive = true;
-                }
-            }
-        }
-    }
 
     // ── 5. Sink (visibility + mesh driven by CountertopType) ──────────────
     if (GetActiveCountertopType() == ECountertopType::BuiltIn)

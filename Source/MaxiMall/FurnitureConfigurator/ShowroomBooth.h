@@ -496,4 +496,6 @@ private:
 
     UPROPERTY(Transient)
     bool bBaselineTransformsCaptured;
+
+    bool CalculateCountertopFallbackActive() const;
 };
