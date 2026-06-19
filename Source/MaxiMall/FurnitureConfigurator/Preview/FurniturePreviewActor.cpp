@@ -170,6 +170,10 @@ void AFurniturePreviewActor::PostInitializeComponents()
     Super::PostInitializeComponents();
 
     // Force flat attachment hierarchy at runtime to match C++ constructor design and override BP saved hierarchy
+    if (CountertopMesh && CabinetMesh)
+    {
+        CountertopMesh->AttachToComponent(CabinetMesh, FAttachmentTransformRules::KeepWorldTransform);
+    }
     if (SinkMesh && CabinetMesh)
     {
         SinkMesh->AttachToComponent(CabinetMesh, FAttachmentTransformRules::KeepWorldTransform);

@@ -271,6 +271,10 @@ void AShowroomBooth::PostInitializeComponents()
     Super::PostInitializeComponents();
 
     // Force components to attach directly to MainCabinet to override any Blueprint-serialized parenting overrides
+    if (CountertopMesh && MainCabinet)
+    {
+        CountertopMesh->AttachToComponent(MainCabinet, FAttachmentTransformRules::KeepWorldTransform);
+    }
     if (SinkMesh && MainCabinet)
     {
         SinkMesh->AttachToComponent(MainCabinet, FAttachmentTransformRules::KeepWorldTransform);
