@@ -271,10 +271,6 @@ void AShowroomBooth::PostInitializeComponents()
     Super::PostInitializeComponents();
 
     // Force components to attach directly to MainCabinet to override any Blueprint-serialized parenting overrides
-    if (CountertopMesh && MainCabinet)
-    {
-        CountertopMesh->AttachToComponent(MainCabinet, FAttachmentTransformRules::KeepWorldTransform);
-    }
     if (SinkMesh && MainCabinet)
     {
         SinkMesh->AttachToComponent(MainCabinet, FAttachmentTransformRules::KeepWorldTransform);
@@ -290,37 +286,51 @@ void AShowroomBooth::PostInitializeComponents()
 
 void AShowroomBooth::EnsureBaselineTransformsCaptured()
 {
-    // If already captured, do not recapture
+    // Do not capture baseline transforms in the level editor, only in the game/PIE world.
+    if (!GetWorld() || !GetWorld()->IsGameWorld())
+    {
+        return;
+    }
+
+    // In game world, if already captured, do not recapture
     if (bBaselineTransformsCaptured)
     {
         return;
     }
 
-    AShowroomBooth* CDO = Cast<AShowroomBooth>(GetClass()->GetDefaultObject());
-    if (CDO)
+    if (SinkMesh)
     {
-        if (CDO->SinkMesh) BaselineSinkTransform = CDO->SinkMesh->GetRelativeTransform();
-        if (CDO->FaucetMesh) BaselineFaucetTransform = CDO->FaucetMesh->GetRelativeTransform();
-        if (CDO->CountertopMesh) BaselineCountertopTransform = CDO->CountertopMesh->GetRelativeTransform();
-        if (CDO->MirrorMesh) BaselineMirrorTransform = CDO->MirrorMesh->GetRelativeTransform();
-        if (CDO->DoorMeshSlot0) BaselineDoor0Transform = CDO->DoorMeshSlot0->GetRelativeTransform();
-        if (CDO->DoorMeshSlot1) BaselineDoor1Transform = CDO->DoorMeshSlot1->GetRelativeTransform();
-        if (CDO->ClosetDoorMeshSlot0) BaselineClosetDoor0Transform = CDO->ClosetDoorMeshSlot0->GetRelativeTransform();
-        if (CDO->ClosetDoorMeshSlot1) BaselineClosetDoor1Transform = CDO->ClosetDoorMeshSlot1->GetRelativeTransform();
-        bBaselineTransformsCaptured = true;
+        BaselineSinkTransform = SinkMesh->GetRelativeTransform();
     }
-    else
+    if (FaucetMesh)
     {
-        if (SinkMesh) BaselineSinkTransform = SinkMesh->GetRelativeTransform();
-        if (FaucetMesh) BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
-        if (CountertopMesh) BaselineCountertopTransform = CountertopMesh->GetRelativeTransform();
-        if (MirrorMesh) BaselineMirrorTransform = MirrorMesh->GetRelativeTransform();
-        if (DoorMeshSlot0) BaselineDoor0Transform = DoorMeshSlot0->GetRelativeTransform();
-        if (DoorMeshSlot1) BaselineDoor1Transform = DoorMeshSlot1->GetRelativeTransform();
-        if (ClosetDoorMeshSlot0) BaselineClosetDoor0Transform = ClosetDoorMeshSlot0->GetRelativeTransform();
-        if (ClosetDoorMeshSlot1) BaselineClosetDoor1Transform = ClosetDoorMeshSlot1->GetRelativeTransform();
-        bBaselineTransformsCaptured = true;
+        BaselineFaucetTransform = FaucetMesh->GetRelativeTransform();
     }
+    if (CountertopMesh)
+    {
+        BaselineCountertopTransform = CountertopMesh->GetRelativeTransform();
+    }
+    if (MirrorMesh)
+    {
+        BaselineMirrorTransform = MirrorMesh->GetRelativeTransform();
+    }
+    if (DoorMeshSlot0)
+    {
+        BaselineDoor0Transform = DoorMeshSlot0->GetRelativeTransform();
+    }
+    if (DoorMeshSlot1)
+    {
+        BaselineDoor1Transform = DoorMeshSlot1->GetRelativeTransform();
+    }
+    if (ClosetDoorMeshSlot0)
+    {
+        BaselineClosetDoor0Transform = ClosetDoorMeshSlot0->GetRelativeTransform();
+    }
+    if (ClosetDoorMeshSlot1)
+    {
+        BaselineClosetDoor1Transform = ClosetDoorMeshSlot1->GetRelativeTransform();
+    }
+    bBaselineTransformsCaptured = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,20 +340,6 @@ void AShowroomBooth::EnsureBaselineTransformsCaptured()
 void AShowroomBooth::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
-
-    // Force flat attachment in editor construction script to align with C++ constructor layout
-    if (CountertopMesh && MainCabinet)
-    {
-        CountertopMesh->AttachToComponent(MainCabinet, FAttachmentTransformRules::KeepRelativeTransform);
-    }
-    if (SinkMesh && MainCabinet)
-    {
-        SinkMesh->AttachToComponent(MainCabinet, FAttachmentTransformRules::KeepRelativeTransform);
-    }
-    if (FaucetMesh && MainCabinet)
-    {
-        FaucetMesh->AttachToComponent(MainCabinet, FAttachmentTransformRules::KeepRelativeTransform);
-    }
 
     // Only run editor-side visualization and baseline capturing in the editor viewport (not in game/PIE)
     if (GetWorld() && !GetWorld()->IsGameWorld())
@@ -1552,7 +1548,11 @@ void AShowroomBooth::RecalculateDependentTransforms(const FFurnitureProductRow& 
     // All transforms are expressed in CountertopMesh local space so they
     // stay correct regardless of how the designer positioned the countertop.
 
-    // In both editor and game, proceduralize transforms to align components correctly with the cabinet base
+    if (GetWorld() && !GetWorld()->IsGameWorld())
+    {
+        // In the editor, do not proceduralize transforms so we do not break native editor overrides
+        return;
+    }
 
     const ECountertopType CountertopType = GetActiveCountertopType();
 
