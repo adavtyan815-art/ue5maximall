@@ -15,6 +15,13 @@
 // ENUMERATIONS
 // ─────────────────────────────────────────────────────────────────────────────
 
+UENUM(BlueprintType)
+enum class EOptionType : uint8
+{
+    Size,
+    Color
+};
+
 /**
  * Defines how the countertop and sink geometry interact structurally.
  *

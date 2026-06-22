@@ -269,8 +269,8 @@ void UConfiguratorMainWidget::RefreshSelections()
                                         USizeBox* SizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
                                         if (SizeBox)
                                         {
-                                            SizeBox->SetWidthOverride(120.f);
-                                            SizeBox->SetHeightOverride(120.f);
+                                            SizeBox->SetWidthOverride(GridItemWidth);
+                                            SizeBox->SetHeightOverride(GridItemHeight);
                                             SizeBox->AddChild(NewBtn);
 
                                             int32 RowIdx = i / 2;

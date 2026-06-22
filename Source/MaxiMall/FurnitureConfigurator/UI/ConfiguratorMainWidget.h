@@ -13,13 +13,6 @@ class UPanelWidget;
 class AMaxiMallPreviewController;
 class AShowroomBooth;
 
-UENUM(BlueprintType)
-enum class EOptionType : uint8
-{
-    Size,
-    Color
-};
-
 UCLASS()
 class MAXIMALL_API UFurnitureOptionListener : public UObject
 {
@@ -113,6 +106,12 @@ public:
     void HandleOptionSelected(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
     void HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
     void HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
+    float GridItemWidth = 120.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
+    float GridItemHeight = 120.f;
 
 private:
     UPROPERTY()
