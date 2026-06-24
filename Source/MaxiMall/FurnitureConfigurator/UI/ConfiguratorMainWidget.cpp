@@ -231,12 +231,14 @@ void UConfiguratorMainWidget::RefreshSelections()
                         UScrollBox* ScrollBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
                         if (ScrollBox)
                         {
+                            ScrollBox->SetVisibility(ESlateVisibility::Visible);
                             ScrollBox->SetScrollBarVisibility(ESlateVisibility::Visible);
                             ScrollBox->SetAnimateWheelScrolling(true);
 
                             UUniformGridPanel* GridPanel = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
                             if (GridPanel)
                             {
+                                GridPanel->SetVisibility(ESlateVisibility::Visible);
                                 GridPanel->SetMinDesiredSlotWidth(0.f);
                                 GridPanel->SetMinDesiredSlotHeight(0.f);
                                 GridPanel->SetSlotPadding(FMargin(GridSlotPadding));
@@ -251,6 +253,11 @@ void UConfiguratorMainWidget::RefreshSelections()
                                         PRAGMA_DISABLE_DEPRECATION_WARNINGS
                                         NewBtn->IsFocusable = false;
                                         PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+                                        FButtonStyle CustomStyle = NewBtn->GetStyle();
+                                        CustomStyle.NormalPadding = ButtonPadding;
+                                        CustomStyle.PressedPadding = ButtonPadding;
+                                        NewBtn->SetStyle(CustomStyle);
 
                                         UScaleBox* ScaleBox = WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass());
                                         UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
@@ -288,8 +295,9 @@ void UConfiguratorMainWidget::RefreshSelections()
                                         USizeBox* SizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
                                         if (SizeBox)
                                         {
-                                            SizeBox->SetWidthOverride(GridItemWidth);
-                                            SizeBox->SetHeightOverride(GridItemHeight);
+                                            SizeBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+                                            SizeBox->SetWidthOverride(ButtonWidth);
+                                            SizeBox->SetHeightOverride(ButtonHeight);
                                             SizeBox->AddChild(NewBtn);
 
                                             int32 RowIdx = i / 2;

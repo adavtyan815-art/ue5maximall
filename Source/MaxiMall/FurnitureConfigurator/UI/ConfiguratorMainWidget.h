@@ -115,6 +115,12 @@ public:
     float GridItemHeight = 120.f;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
+    float ButtonWidth = 100.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
+    float ButtonHeight = 100.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
     FMargin ButtonPadding = FMargin(0.f);
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
