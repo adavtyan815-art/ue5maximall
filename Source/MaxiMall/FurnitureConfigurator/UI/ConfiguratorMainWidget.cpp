@@ -224,6 +224,29 @@ void UConfiguratorMainWidget::RefreshSelections()
                 else
                 {
                     Size_Container->SetVisibility(TargetVisibility);
+
+                    float SavedScrollOffset = 0.f;
+                    bool bHasSavedOffset = false;
+                    for (int32 ChildIdx = 0; ChildIdx < Size_Container->GetChildrenCount(); ++ChildIdx)
+                    {
+                        UWidget* ChildWidget = Size_Container->GetChildAt(ChildIdx);
+                        if (UScrollBox* FoundScrollBox = Cast<UScrollBox>(ChildWidget))
+                        {
+                            SavedScrollOffset = FoundScrollBox->GetScrollOffset();
+                            bHasSavedOffset = true;
+                            break;
+                        }
+                        else if (USizeBox* SizeBoxWrapper = Cast<USizeBox>(ChildWidget))
+                        {
+                            if (UScrollBox* InnerScrollBox = Cast<UScrollBox>(SizeBoxWrapper->GetContent()))
+                            {
+                                SavedScrollOffset = InnerScrollBox->GetScrollOffset();
+                                bHasSavedOffset = true;
+                                break;
+                            }
+                        }
+                    }
+
                     Size_Container->ClearChildren();
 
                     if (bIsValidMesh)
@@ -234,6 +257,10 @@ void UConfiguratorMainWidget::RefreshSelections()
                             ScrollBox->SetVisibility(ESlateVisibility::Visible);
                             ScrollBox->SetScrollBarVisibility(ESlateVisibility::Visible);
                             ScrollBox->SetAnimateWheelScrolling(true);
+                            if (bHasSavedOffset)
+                            {
+                                ScrollBox->SetScrollOffset(SavedScrollOffset);
+                            }
 
                             UUniformGridPanel* GridPanel = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
                             if (GridPanel)
