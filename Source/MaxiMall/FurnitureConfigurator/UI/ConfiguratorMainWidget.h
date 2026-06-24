@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "FurnitureConfigurator/Data/FurnitureTypes.h"
+#include "Widgets/Layout/SScaleBox.h"
 #include "ConfiguratorMainWidget.generated.h"
 
 class UTextBlock;
@@ -112,6 +113,15 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
     float GridItemHeight = 120.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
+    FMargin ButtonPadding = FMargin(0.f);
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
+    TEnumAsByte<EStretch::Type> ImageStretch = EStretch::ScaleToFit;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
+    float GridSlotPadding = 5.f;
 
 private:
     UPROPERTY()

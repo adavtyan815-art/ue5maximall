@@ -14,6 +14,8 @@
 #include "Components/UniformGridPanel.h"
 #include "Components/UniformGridSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/ScaleBox.h"
+#include "Components/ButtonSlot.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/WrapBoxSlot.h"
 
@@ -229,13 +231,14 @@ void UConfiguratorMainWidget::RefreshSelections()
                         if (ScrollBox)
                         {
                             ScrollBox->SetScrollBarVisibility(ESlateVisibility::Visible);
+                            ScrollBox->SetAnimateWheelScrolling(true);
 
                             UUniformGridPanel* GridPanel = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
                             if (GridPanel)
                             {
                                 GridPanel->SetMinDesiredSlotWidth(0.f);
                                 GridPanel->SetMinDesiredSlotHeight(0.f);
-                                GridPanel->SetSlotPadding(FMargin(5.f));
+                                GridPanel->SetSlotPadding(FMargin(GridSlotPadding));
 
                                 for (int32 i = 0; i < ComponentOpts->Models.Num(); ++i)
                                 {
@@ -244,18 +247,30 @@ void UConfiguratorMainWidget::RefreshSelections()
                                     UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
                                     if (NewBtn)
                                     {
+                                        PRAGMA_DISABLE_DEPRECATION_WARNINGS
+                                        NewBtn->IsFocusable = false;
+                                        PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+                                        UScaleBox* ScaleBox = WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass());
                                         UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-                                        if (BtnImg)
+                                        if (ScaleBox && BtnImg)
                                         {
+                                            ScaleBox->SetStretch(ImageStretch);
                                             if (!ModelOpt.Thumbnail.IsNull())
                                             {
                                                 UTexture2D* LoadedTex = ModelOpt.Thumbnail.LoadSynchronous();
                                                 if (LoadedTex)
                                                 {
-                                                    BtnImg->SetBrushFromTexture(LoadedTex);
+                                                    BtnImg->SetBrushFromTexture(LoadedTex, false);
                                                 }
                                             }
-                                            NewBtn->AddChild(BtnImg);
+                                            ScaleBox->AddChild(BtnImg);
+                                            NewBtn->AddChild(ScaleBox);
+
+                                            if (UButtonSlot* BtnSlot = Cast<UButtonSlot>(ScaleBox->Slot))
+                                            {
+                                                BtnSlot->SetPadding(ButtonPadding);
+                                            }
                                         }
 
                                         UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
