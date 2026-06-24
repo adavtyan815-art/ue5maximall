@@ -108,9 +108,16 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     KeyLightOuterConeAngle = 50.f;
     KeyLightAttenuationRadius = 1000.f;
     FillLightAttenuationRadius = 1000.f;
+    KeyLightShadowBias = 1.0f;
+    KeyLightShadowSlopeBias = 1.0f;
+    KeyLightContactShadowLength = 0.0f;
+    FillLightShadowBias = 1.0f;
+    FillLightShadowSlopeBias = 1.0f;
+    FillLightContactShadowLength = 0.0f;
 
 
     // ── Spring Arm & Camera ───────────────────────────────────────────────
+
 
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
     SpringArm->SetupAttachment(PreviewRoot);
@@ -983,6 +990,10 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         KeyLight->SetAttenuationRadius(KeyLightAttenuationRadius);
         KeyLight->SetIntensity(BaseKeyIntensity);
         KeyLight->SetLightColor(KeyLightColor);
+
+        KeyLight->ShadowBias = KeyLightShadowBias;
+        KeyLight->ShadowSlopeBias = KeyLightShadowSlopeBias;
+        KeyLight->ContactShadowLength = KeyLightContactShadowLength;
     }
     if (FillLight)
     {
@@ -994,7 +1005,12 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         FillLight->SetAttenuationRadius(FillLightAttenuationRadius);
         FillLight->SetLightColor(FillLightColor);
         UpdateLightIntensityForZoom();
+
+        FillLight->ShadowBias = FillLightShadowBias;
+        FillLight->ShadowSlopeBias = FillLightShadowSlopeBias;
+        FillLight->ContactShadowLength = FillLightContactShadowLength;
     }
+
 }
 
 

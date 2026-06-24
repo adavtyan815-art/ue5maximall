@@ -151,9 +151,34 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
     float FillLightAttenuationRadius = 1000.f;
 
+    /** Shadow bias for the key light spotlight to resolve shadow acne. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    float KeyLightShadowBias = 1.0f;
+
+    /** Shadow slope bias for the key light spotlight. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    float KeyLightShadowSlopeBias = 1.0f;
+
+    /** Contact shadow length for the key light spotlight (0.0 = disabled). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    float KeyLightContactShadowLength = 0.0f;
+
+    /** Shadow bias for the fill light PointLight to resolve shadow acne. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    float FillLightShadowBias = 1.0f;
+
+    /** Shadow slope bias for the fill light PointLight. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    float FillLightShadowSlopeBias = 1.0f;
+
+    /** Contact shadow length for the fill light PointLight (0.0 = disabled). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    float FillLightContactShadowLength = 0.0f;
+
     /** Toggle to isolate preview lighting using lighting channel 1. If false, uses default channel 0. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
     bool bUseLightingChannels = true;
+
 
 
 
