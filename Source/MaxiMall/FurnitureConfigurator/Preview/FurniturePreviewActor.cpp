@@ -103,9 +103,15 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     KeyLightColor = FLinearColor::White;
     FillLightColor = FLinearColor::White;
     bUseLightingChannels = true;
+    KeyLightRelativeLocation = FVector(-300.f, -300.f, 300.f);
+    KeyLightInnerConeAngle = 30.f;
+    KeyLightOuterConeAngle = 50.f;
+    KeyLightAttenuationRadius = 1000.f;
+    FillLightAttenuationRadius = 1000.f;
 
 
     // ── Spring Arm & Camera ───────────────────────────────────────────────
+
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
     SpringArm->SetupAttachment(PreviewRoot);
     SpringArm->TargetArmLength = CurrentZoomLength;
@@ -967,6 +973,14 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         KeyLight->LightingChannels.bChannel0 = !bUseLightingChannels;
         KeyLight->LightingChannels.bChannel1 = bUseLightingChannels;
         KeyLight->LightingChannels.bChannel2 = false;
+        
+        KeyLight->SetRelativeLocation(KeyLightRelativeLocation);
+        FVector LookAtTarget = FVector(0.f, 0.f, 50.f) - KeyLightRelativeLocation;
+        KeyLight->SetRelativeRotation(LookAtTarget.Rotation());
+        
+        KeyLight->InnerConeAngle = KeyLightInnerConeAngle;
+        KeyLight->OuterConeAngle = KeyLightOuterConeAngle;
+        KeyLight->SetAttenuationRadius(KeyLightAttenuationRadius);
         KeyLight->SetIntensity(BaseKeyIntensity);
         KeyLight->SetLightColor(KeyLightColor);
     }
@@ -976,8 +990,11 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         FillLight->LightingChannels.bChannel0 = !bUseLightingChannels;
         FillLight->LightingChannels.bChannel1 = bUseLightingChannels;
         FillLight->LightingChannels.bChannel2 = false;
+        
+        FillLight->SetAttenuationRadius(FillLightAttenuationRadius);
         FillLight->SetLightColor(FillLightColor);
         UpdateLightIntensityForZoom();
     }
 }
+
 

@@ -131,9 +131,30 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
     FLinearColor FillLightColor = FLinearColor::White;
 
+    /** Position of the spotlight relative to the preview studio center. C++ will auto-rotate the light to look at target. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    FVector KeyLightRelativeLocation = FVector(-300.f, -300.f, 300.f);
+
+    /** Inner spotlight cone angle in degrees. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting", meta = (ClampMin = "0.0", ClampMax = "80.0"))
+    float KeyLightInnerConeAngle = 30.f;
+
+    /** Outer spotlight cone angle in degrees. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting", meta = (ClampMin = "0.0", ClampMax = "80.0"))
+    float KeyLightOuterConeAngle = 50.f;
+
+    /** Max reach distance of the spotlight. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    float KeyLightAttenuationRadius = 1000.f;
+
+    /** Max reach distance of the headlight. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    float FillLightAttenuationRadius = 1000.f;
+
     /** Toggle to isolate preview lighting using lighting channel 1. If false, uses default channel 0. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
     bool bUseLightingChannels = true;
+
 
 
 
