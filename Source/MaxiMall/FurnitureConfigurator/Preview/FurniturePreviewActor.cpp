@@ -92,13 +92,16 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // Set default parameter values explicitly in constructor body for CDO persistence
     PitchMin = -80.f;
     PitchMax = 80.f;
+    DefaultCameraDistance = 250.f;
+    CameraFOV = 90.f;
     BaseFillIntensity = 40000.f;
     ReferenceZoomDistance = 250.f;
-    CurrentZoomLength = 250.f;
+    CurrentZoomLength = DefaultCameraDistance;
     DefaultYaw = 0.f;
     DefaultPitch = -15.f;
     CurrentYaw = 0.f;
     CurrentPitch = -15.f;
+
     BaseKeyIntensity = 80000.f;
     KeyLightColor = FLinearColor::White;
     FillLightColor = FLinearColor::White;
@@ -192,9 +195,20 @@ void AFurniturePreviewActor::PostInitializeComponents()
 {
     Super::PostInitializeComponents();
 
+    CurrentZoomLength = DefaultCameraDistance;
+    if (SpringArm)
+    {
+        SpringArm->TargetArmLength = CurrentZoomLength;
+    }
+    if (Camera)
+    {
+        Camera->FieldOfView = CameraFOV;
+    }
+
     EnforceLightingSettings();
 
     // Force flat attachment hierarchy at runtime to match C++ constructor design and override BP saved hierarchy
+
     if (CountertopMesh && CabinetMesh)
     {
         CountertopMesh->AttachToComponent(CabinetMesh, FAttachmentTransformRules::KeepWorldTransform);
@@ -596,8 +610,8 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType Component
         else
         {
             SpringArm->SetRelativeLocation(FVector::ZeroVector);
-            SpringArm->TargetArmLength = 250.f;
-            CurrentZoomLength = 250.f;
+            SpringArm->TargetArmLength = DefaultCameraDistance;
+            CurrentZoomLength = DefaultCameraDistance;
         }
         UpdateLightIntensityForZoom();
     }
@@ -646,15 +660,20 @@ void AFurniturePreviewActor::ResetRotation()
 {
     CurrentYaw   = DefaultYaw;
     CurrentPitch = DefaultPitch;
-    CurrentZoomLength = 250.f;
+    CurrentZoomLength = DefaultCameraDistance;
 
     if (SpringArm)
     {
         SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
+    if (Camera)
+    {
+        Camera->FieldOfView = CameraFOV;
+    }
     UpdateLightIntensityForZoom();
 }
+
 
 void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
 {
@@ -944,8 +963,20 @@ void AFurniturePreviewActor::UpdateLightIntensityForZoom()
 void AFurniturePreviewActor::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
+    
+    CurrentZoomLength = DefaultCameraDistance;
+    if (SpringArm)
+    {
+        SpringArm->TargetArmLength = CurrentZoomLength;
+    }
+    if (Camera)
+    {
+        Camera->FieldOfView = CameraFOV;
+    }
+
     EnforceLightingSettings();
 }
+
 
 void AFurniturePreviewActor::EnforceLightingSettings()
 {

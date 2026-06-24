@@ -111,6 +111,15 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Camera Clamping")
     float PitchMax = 80.f;
 
+    /** Default distance of the camera from the actor (SpringArm target length). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Camera")
+    float DefaultCameraDistance = 250.f;
+
+    /** Field of view of the camera in degrees. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Camera")
+    float CameraFOV = 90.f;
+
+
     /** Base intensity for the camera headlight (FillLight) in Lumens. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
     float BaseFillIntensity = 40000.f;
