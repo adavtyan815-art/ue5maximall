@@ -58,6 +58,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     {
         if (Comp)
         {
+            Comp->SetMobility(EComponentMobility::Movable);
             Comp->SetCastShadow(true);
             Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
             Comp->LightingChannels.bChannel0 = false;
@@ -119,8 +120,12 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // ── Studio Backdrop ───────────────────────────────────────────────────
     BackdropMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BackdropMesh"));
     BackdropMesh->SetupAttachment(PreviewRoot);
+    BackdropMesh->SetMobility(EComponentMobility::Movable);
     BackdropMesh->SetCastShadow(false);
     BackdropMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    BackdropMesh->LightingChannels.bChannel0 = false;
+    BackdropMesh->LightingChannels.bChannel1 = true;
+    BackdropMesh->LightingChannels.bChannel2 = false;
     // Scale it huge so it encapsulates the camera orbit range (SpringArm TargetArmLength up to 500)
     BackdropMesh->SetRelativeScale3D(FVector(15.f, 15.f, 15.f));
 
