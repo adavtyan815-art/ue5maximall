@@ -538,12 +538,12 @@ void UConfiguratorMainWidget::HandleOptionSelected(EFurnitureComponentType Compo
 
 void UConfiguratorMainWidget::HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex)
 {
-    // No-op for metadata-free phase
+    // No-op
 }
 
 void UConfiguratorMainWidget::HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex)
 {
-    RefreshSelections();
+    // No-op
 }
 
 bool UConfiguratorMainWidget::IsComponentMeshValid(AShowroomBooth* Booth, EFurnitureComponentType Component) const
