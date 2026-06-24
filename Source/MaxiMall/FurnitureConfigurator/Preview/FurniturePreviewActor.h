@@ -119,6 +119,23 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
     float ReferenceZoomDistance = 250.f;
 
+    /** Base intensity for the spotlight (KeyLight) in Lumens. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    float BaseKeyIntensity = 80000.f;
+
+    /** Color of the key light. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    FLinearColor KeyLightColor = FLinearColor::White;
+
+    /** Color of the fill light. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    FLinearColor FillLightColor = FLinearColor::White;
+
+    /** Toggle to isolate preview lighting using lighting channel 1. If false, uses default channel 0. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    bool bUseLightingChannels = true;
+
+
 
 
     // ─────────────────────────────────────────────────────────────────────

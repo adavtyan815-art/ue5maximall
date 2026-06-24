@@ -99,6 +99,11 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     DefaultPitch = -15.f;
     CurrentYaw = 0.f;
     CurrentPitch = -15.f;
+    BaseKeyIntensity = 80000.f;
+    KeyLightColor = FLinearColor::White;
+    FillLightColor = FLinearColor::White;
+    bUseLightingChannels = true;
+
 
     // ── Spring Arm & Camera ───────────────────────────────────────────────
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
@@ -520,7 +525,10 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         MirrorMesh->SetVisibility(false);
         MirrorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
+
+    EnforceLightingSettings();
 }
+
 
 void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType ComponentType)
 {
@@ -928,15 +936,15 @@ void AFurniturePreviewActor::OnConstruction(const FTransform& Transform)
 
 void AFurniturePreviewActor::EnforceLightingSettings()
 {
-    auto ForceConfigureMesh = [](UStaticMeshComponent* Comp, bool bCastShadow)
+    auto ForceConfigureMesh = [this](UStaticMeshComponent* Comp, bool bCastShadow)
     {
         if (Comp)
         {
             Comp->SetMobility(EComponentMobility::Movable);
             Comp->SetCastShadow(bCastShadow);
             Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-            Comp->LightingChannels.bChannel0 = false;
-            Comp->LightingChannels.bChannel1 = true;
+            Comp->LightingChannels.bChannel0 = !bUseLightingChannels;
+            Comp->LightingChannels.bChannel1 = bUseLightingChannels;
             Comp->LightingChannels.bChannel2 = false;
         }
     };
@@ -956,15 +964,20 @@ void AFurniturePreviewActor::EnforceLightingSettings()
     if (KeyLight)
     {
         KeyLight->SetMobility(EComponentMobility::Movable);
-        KeyLight->LightingChannels.bChannel0 = false;
-        KeyLight->LightingChannels.bChannel1 = true;
+        KeyLight->LightingChannels.bChannel0 = !bUseLightingChannels;
+        KeyLight->LightingChannels.bChannel1 = bUseLightingChannels;
         KeyLight->LightingChannels.bChannel2 = false;
+        KeyLight->SetIntensity(BaseKeyIntensity);
+        KeyLight->SetLightColor(KeyLightColor);
     }
     if (FillLight)
     {
         FillLight->SetMobility(EComponentMobility::Movable);
-        FillLight->LightingChannels.bChannel0 = false;
-        FillLight->LightingChannels.bChannel1 = true;
+        FillLight->LightingChannels.bChannel0 = !bUseLightingChannels;
+        FillLight->LightingChannels.bChannel1 = bUseLightingChannels;
         FillLight->LightingChannels.bChannel2 = false;
+        FillLight->SetLightColor(FillLightColor);
+        UpdateLightIntensityForZoom();
     }
 }
+
