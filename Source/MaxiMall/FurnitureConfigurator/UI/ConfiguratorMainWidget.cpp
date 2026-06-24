@@ -174,6 +174,7 @@ void UConfiguratorMainWidget::RefreshSelections()
                                 UTextBlock* BtnText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
                                 if (BtnText)
                                 {
+                                    BtnText->SetVisibility(ESlateVisibility::HitTestInvisible);
                                     FText SizeText;
                                     if (CabinetOpts.SizeNames.IsValidIndex(i) && !CabinetOpts.SizeNames[i].IsEmpty())
                                     {
@@ -256,12 +257,13 @@ void UConfiguratorMainWidget::RefreshSelections()
                                         if (ScaleBox && BtnImg)
                                         {
                                             ScaleBox->SetStretch(ImageStretch);
+                                            ScaleBox->SetVisibility(ESlateVisibility::HitTestInvisible);
                                             if (!ModelOpt.Thumbnail.IsNull())
                                             {
                                                 UTexture2D* LoadedTex = ModelOpt.Thumbnail.LoadSynchronous();
                                                 if (LoadedTex)
                                                 {
-                                                    BtnImg->SetBrushFromTexture(LoadedTex, false);
+                                                    BtnImg->SetBrushFromTexture(LoadedTex, true);
                                                 }
                                             }
                                             ScaleBox->AddChild(BtnImg);
@@ -270,6 +272,8 @@ void UConfiguratorMainWidget::RefreshSelections()
                                             if (UButtonSlot* BtnSlot = Cast<UButtonSlot>(ScaleBox->Slot))
                                             {
                                                 BtnSlot->SetPadding(ButtonPadding);
+                                                BtnSlot->SetHorizontalAlignment(EHorizontalAlignment::HAlign_Fill);
+                                                BtnSlot->SetVerticalAlignment(EVerticalAlignment::VAlign_Fill);
                                             }
                                         }
 
@@ -357,6 +361,7 @@ void UConfiguratorMainWidget::RefreshSelections()
                             UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
                             if (BtnImg)
                             {
+                                BtnImg->SetVisibility(ESlateVisibility::HitTestInvisible);
                                 if (!ColorOpt.Thumbnail.IsNull())
                                 {
                                     UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
