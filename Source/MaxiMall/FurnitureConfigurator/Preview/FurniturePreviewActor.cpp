@@ -174,6 +174,8 @@ void AFurniturePreviewActor::PostInitializeComponents()
 {
     Super::PostInitializeComponents();
 
+    EnforceLightingSettings();
+
     // Force flat attachment hierarchy at runtime to match C++ constructor design and override BP saved hierarchy
     if (CountertopMesh && CabinetMesh)
     {
@@ -915,5 +917,54 @@ void AFurniturePreviewActor::UpdateLightIntensityForZoom()
     {
         float ScaleFactor = FMath::Square(CurrentZoomLength / ReferenceZoomDistance);
         FillLight->SetIntensity(BaseFillIntensity * ScaleFactor);
+    }
+}
+
+void AFurniturePreviewActor::OnConstruction(const FTransform& Transform)
+{
+    Super::OnConstruction(Transform);
+    EnforceLightingSettings();
+}
+
+void AFurniturePreviewActor::EnforceLightingSettings()
+{
+    auto ForceConfigureMesh = [](UStaticMeshComponent* Comp, bool bCastShadow)
+    {
+        if (Comp)
+        {
+            Comp->SetMobility(EComponentMobility::Movable);
+            Comp->SetCastShadow(bCastShadow);
+            Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            Comp->LightingChannels.bChannel0 = false;
+            Comp->LightingChannels.bChannel1 = true;
+            Comp->LightingChannels.bChannel2 = false;
+        }
+    };
+
+    ForceConfigureMesh(CabinetMesh.Get(), true);
+    ForceConfigureMesh(DoorMeshSlot0.Get(), true);
+    ForceConfigureMesh(DoorMeshSlot1.Get(), true);
+    ForceConfigureMesh(CountertopMesh.Get(), true);
+    ForceConfigureMesh(SinkMesh.Get(), true);
+    ForceConfigureMesh(FaucetMesh.Get(), true);
+    ForceConfigureMesh(MirrorMesh.Get(), true);
+    ForceConfigureMesh(ClosetMesh.Get(), true);
+    ForceConfigureMesh(ClosetDoorMeshSlot0.Get(), true);
+    ForceConfigureMesh(ClosetDoorMeshSlot1.Get(), true);
+    ForceConfigureMesh(BackdropMesh.Get(), false);
+
+    if (KeyLight)
+    {
+        KeyLight->SetMobility(EComponentMobility::Movable);
+        KeyLight->LightingChannels.bChannel0 = false;
+        KeyLight->LightingChannels.bChannel1 = true;
+        KeyLight->LightingChannels.bChannel2 = false;
+    }
+    if (FillLight)
+    {
+        FillLight->SetMobility(EComponentMobility::Movable);
+        FillLight->LightingChannels.bChannel0 = false;
+        FillLight->LightingChannels.bChannel1 = true;
+        FillLight->LightingChannels.bChannel2 = false;
     }
 }

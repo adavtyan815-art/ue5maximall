@@ -44,6 +44,7 @@ public:
     // ── Lifecycle ─────────────────────────────────────────────────────────
     virtual void BeginPlay() override;
     virtual void PostInitializeComponents() override;
+    virtual void OnConstruction(const FTransform& Transform) override;
 
     // ─────────────────────────────────────────────────────────────────────
     // VISUAL COMPONENTS (mirrors AShowroomBooth layout)
@@ -219,4 +220,6 @@ private:
 
     /** Dynamically adjusts the camera-mounted FillLight intensity to compensate for distance attenuation. */
     void UpdateLightIntensityForZoom();
+
+    void EnforceLightingSettings();
 };
