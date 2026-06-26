@@ -1061,7 +1061,29 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
         int32 TargetSizeIndex = CurrentTargetBooth->ActiveState.ActiveSizeIndex;
         int32 TargetColorIndex = CurrentTargetBooth->ActiveState.ActiveColorIndex;
         
-        // Search for combination match in the Cabinet metadata matrix
+        // 1. Try to fetch metadata directly from the filtered color option
+        TArray<FFurnitureColorOption> FilteredColors;
+        for (const FFurnitureColorOption& ColorOpt : Row->CabinetOptions.Colors)
+        {
+            if (ColorOpt.SizeIndices.Num() == 0 || ColorOpt.SizeIndices.Contains(TargetSizeIndex))
+            {
+                FilteredColors.Add(ColorOpt);
+            }
+        }
+        
+        if (FilteredColors.IsValidIndex(TargetColorIndex))
+        {
+            const FFurnitureColorOption& SelectedColor = FilteredColors[TargetColorIndex];
+            if (!SelectedColor.ProductName.IsEmpty() || !SelectedColor.SKU.IsEmpty() || !SelectedColor.URL.IsEmpty())
+            {
+                OutProductName = SelectedColor.ProductName;
+                OutSKU = SelectedColor.SKU;
+                OutURL = SelectedColor.URL;
+                return true;
+            }
+        }
+        
+        // 2. Fall back to legacy CombinationsMetadata mapping
         for (const FFurnitureMetadataEntry& Entry : Row->CabinetOptions.CombinationsMetadata)
         {
             if (Entry.SizeIndex == TargetSizeIndex && Entry.ColorIndex == TargetColorIndex)
@@ -1073,7 +1095,6 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
             }
         }
         
-        // Fallback: If no combination is found, try to use the first combination
         if (Row->CabinetOptions.CombinationsMetadata.Num() > 0)
         {
             const FFurnitureMetadata& Fallback = Row->CabinetOptions.CombinationsMetadata[0].Metadata;

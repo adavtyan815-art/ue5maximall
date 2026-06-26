@@ -94,6 +94,15 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     PitchMax = 80.f;
     DefaultCameraDistance = 250.f;
     CameraFOV = 90.f;
+    ZoomMin = 100.f;
+    ZoomMax = 500.f;
+    CabinetFocusDistance = 250.f;
+    ClosetFocusDistance = 250.f;
+    DoorsFocusDistance = 200.f;
+    CountertopFocusDistance = 200.f;
+    SinkFocusDistance = 150.f;
+    FaucetFocusDistance = 100.f;
+    MirrorFocusDistance = 150.f;
     BaseFillIntensity = 40000.f;
     ReferenceZoomDistance = 250.f;
     CurrentZoomLength = DefaultCameraDistance;
@@ -117,6 +126,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     FillLightShadowBias = 1.0f;
     FillLightShadowSlopeBias = 1.0f;
     FillLightContactShadowLength = 0.0f;
+
 
 
     // ── Spring Arm & Camera ───────────────────────────────────────────────
@@ -186,7 +196,16 @@ void AFurniturePreviewActor::BeginPlay()
 {
     Super::BeginPlay();
 
-    // No runtime overrides: respects the Camera component PostProcessSettings configured in Blueprint
+    // Enforce default camera properties on startup
+    CurrentZoomLength = DefaultCameraDistance;
+    if (SpringArm)
+    {
+        SpringArm->TargetArmLength = CurrentZoomLength;
+    }
+    if (Camera)
+    {
+        Camera->FieldOfView = CameraFOV;
+    }
 
     UpdateLightIntensityForZoom();
 }
@@ -560,37 +579,37 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType ComponentType)
 {
     UStaticMeshComponent* TargetComponent = nullptr;
-    float DefaultZoomDistance = 250.f;
+    float DefaultZoomDistance = DefaultCameraDistance;
 
     switch (ComponentType)
     {
     case EFurnitureComponentType::Cabinet:
         TargetComponent = CabinetMesh.Get();
-        DefaultZoomDistance = 250.f;
+        DefaultZoomDistance = (CabinetFocusDistance == 250.f) ? DefaultCameraDistance : CabinetFocusDistance;
         break;
     case EFurnitureComponentType::Closet:
         TargetComponent = ClosetMesh.Get();
-        DefaultZoomDistance = 250.f;
+        DefaultZoomDistance = (ClosetFocusDistance == 250.f) ? DefaultCameraDistance : ClosetFocusDistance;
         break;
     case EFurnitureComponentType::Doors:
         TargetComponent = DoorMeshSlot0.Get();
-        DefaultZoomDistance = 200.f;
+        DefaultZoomDistance = DoorsFocusDistance;
         break;
     case EFurnitureComponentType::Countertop:
         TargetComponent = CountertopMesh.Get();
-        DefaultZoomDistance = 200.f;
+        DefaultZoomDistance = CountertopFocusDistance;
         break;
     case EFurnitureComponentType::Sink:
         TargetComponent = SinkMesh.Get();
-        DefaultZoomDistance = 150.f;
+        DefaultZoomDistance = SinkFocusDistance;
         break;
     case EFurnitureComponentType::Faucet:
         TargetComponent = FaucetMesh.Get();
-        DefaultZoomDistance = 100.f;
+        DefaultZoomDistance = FaucetFocusDistance;
         break;
     case EFurnitureComponentType::Mirror:
         TargetComponent = MirrorMesh.Get();
-        DefaultZoomDistance = 150.f;
+        DefaultZoomDistance = MirrorFocusDistance;
         break;
     case EFurnitureComponentType::None:
     default:
@@ -808,14 +827,23 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
             Target->SetMaterial(i, nullptr);
         }
 
-        const FFurnitureColorOption* SelectedColor = nullptr;
-        if (Options.Colors.IsValidIndex(ColorIndex))
+        TArray<FFurnitureColorOption> FilteredColors;
+        for (const FFurnitureColorOption& ColorOpt : Options.Colors)
         {
-            SelectedColor = &Options.Colors[ColorIndex];
+            if (ColorOpt.SizeIndices.Num() == 0 || ColorOpt.SizeIndices.Contains(SizeIndex))
+            {
+                FilteredColors.Add(ColorOpt);
+            }
         }
-        else if (Options.Colors.Num() > 0)
+
+        const FFurnitureColorOption* SelectedColor = nullptr;
+        if (FilteredColors.IsValidIndex(ColorIndex))
         {
-            SelectedColor = &Options.Colors[0];
+            SelectedColor = &FilteredColors[ColorIndex];
+        }
+        else if (FilteredColors.Num() > 0)
+        {
+            SelectedColor = &FilteredColors[0];
         }
 
         if (SelectedColor)

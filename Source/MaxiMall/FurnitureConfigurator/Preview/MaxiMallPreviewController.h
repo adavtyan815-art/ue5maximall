@@ -39,6 +39,7 @@ class AShowroomBooth;
 // ─────────────────────────────────────────────────────────────────────────────
 
 UCLASS(ClassGroup = (MaxiMall),
+       HideCategories = (Collision, Physics, Rendering, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData),
        meta = (DisplayName = "MaxiMall Preview Player Controller"))
 class MAXIMALL_API AMaxiMallPreviewController : public APlayerController
 {

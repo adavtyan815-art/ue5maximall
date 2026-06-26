@@ -575,6 +575,19 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
         return false;
     }
 
+    auto FilterColors = [this](const TArray<FFurnitureColorOption>& InColors) -> TArray<FFurnitureColorOption>
+    {
+        TArray<FFurnitureColorOption> OutColors;
+        for (const FFurnitureColorOption& ColorOpt : InColors)
+        {
+            if (ColorOpt.SizeIndices.Num() == 0 || ColorOpt.SizeIndices.Contains(ActiveState.ActiveSizeIndex))
+            {
+                OutColors.Add(ColorOpt);
+            }
+        }
+        return OutColors;
+    };
+
     for (const FName& ID : AllowedIDs)
     {
         static const FString ContextString(TEXT("ResolveSharedModel"));
@@ -585,7 +598,7 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
             {
                 FFurnitureModelOption NewOption;
                 NewOption.Thumbnail = SharedModel->Thumbnail;
-                NewOption.Colors = SharedModel->Colors;
+                NewOption.Colors = FilterColors(SharedModel->Colors);
                 NewOption.CountertopType = SharedModel->CountertopType;
                 NewOption.RelativeOffset = SharedModel->RelativeOffset;
 
@@ -660,7 +673,7 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                             NewOption.Mesh = FallbackModel->Sizes[ActiveState.ActiveSizeIndex];
                             NewOption.CountertopType = ECountertopType::SurfaceMounted;
                             NewOption.RelativeOffset = FallbackModel->RelativeOffset;
-                            NewOption.Colors = FallbackModel->Colors;
+                            NewOption.Colors = FilterColors(FallbackModel->Colors);
                         }
                         else
                         {
@@ -693,7 +706,7 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                 FFurnitureModelOption NewOption;
                 NewOption.Mesh = SharedModel->Mesh;
                 NewOption.Thumbnail = SharedModel->Thumbnail;
-                NewOption.Colors = SharedModel->Colors;
+                NewOption.Colors = FilterColors(SharedModel->Colors);
                 NewOption.RelativeOffset = SharedModel->RelativeOffset;
                 OutOptions.Models.Add(NewOption);
 
@@ -729,7 +742,7 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                 FFurnitureModelOption NewOption;
                 NewOption.Mesh = SharedModel->Mesh;
                 NewOption.Thumbnail = SharedModel->Thumbnail;
-                NewOption.Colors = SharedModel->Colors;
+                NewOption.Colors = FilterColors(SharedModel->Colors);
                 NewOption.RelativeOffset = SharedModel->RelativeOffset;
                 OutOptions.Models.Add(NewOption);
 
@@ -755,7 +768,7 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                 FFurnitureModelOption NewOption;
                 NewOption.Mesh = SharedModel->Mesh;
                 NewOption.Thumbnail = SharedModel->Thumbnail;
-                NewOption.Colors = SharedModel->Colors;
+                NewOption.Colors = FilterColors(SharedModel->Colors);
                 NewOption.RelativeOffset = SharedModel->RelativeOffset;
                 OutOptions.Models.Add(NewOption);
 
@@ -1344,14 +1357,23 @@ void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target
             Target->SetMaterial(i, nullptr);
         }
 
-        const FFurnitureColorOption* SelectedColor = nullptr;
-        if (Options.Colors.IsValidIndex(ColorIndex))
+        TArray<FFurnitureColorOption> FilteredColors;
+        for (const FFurnitureColorOption& ColorOpt : Options.Colors)
         {
-            SelectedColor = &Options.Colors[ColorIndex];
+            if (ColorOpt.SizeIndices.Num() == 0 || ColorOpt.SizeIndices.Contains(SizeIndex))
+            {
+                FilteredColors.Add(ColorOpt);
+            }
         }
-        else if (Options.Colors.Num() > 0)
+
+        const FFurnitureColorOption* SelectedColor = nullptr;
+        if (FilteredColors.IsValidIndex(ColorIndex))
         {
-            SelectedColor = &Options.Colors[0];
+            SelectedColor = &FilteredColors[ColorIndex];
+        }
+        else if (FilteredColors.Num() > 0)
+        {
+            SelectedColor = &FilteredColors[0];
         }
 
         if (SelectedColor)

@@ -32,6 +32,7 @@ class USpotLightComponent;
 class UPointLightComponent;
 
 UCLASS(Blueprintable, BlueprintType, NotPlaceable,
+       HideCategories = (Rendering, Physics, Collision, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData),
        meta = (DisplayName = "Furniture Preview Actor (Client Only)"))
 class MAXIMALL_API AFurniturePreviewActor : public AActor
 {
@@ -50,143 +51,179 @@ public:
     // VISUAL COMPONENTS (mirrors AShowroomBooth layout)
     // ─────────────────────────────────────────────────────────────────────
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<USceneComponent> PreviewRoot;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> CabinetMesh;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> DoorMeshSlot0;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> DoorMeshSlot1;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> CountertopMesh;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> SinkMesh;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> FaucetMesh;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> MirrorMesh;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> ClosetMesh;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot0;
 
-    UPROPERTY(VisibleAnywhere, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot1;
 
     /** SpringArm component to handle orbit distance and rotation. */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Preview | Camera")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<USpringArmComponent> SpringArm;
 
     /** Camera component to render the high quality viewport. */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Preview | Camera")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UCameraComponent> Camera;
 
     /** Backdrop mesh component for the clean studio background. */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Preview | Components")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> BackdropMesh;
 
     /** Key light for the studio setup. */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Preview | Lighting")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<USpotLightComponent> KeyLight;
 
     /** Camera-mounted fill light (headlight). */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Preview | Lighting")
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UPointLightComponent> FillLight;
 
     /** Minimum pitch angle limit for camera orbit (in degrees). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Camera Clamping")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float PitchMin = -80.f;
 
     /** Maximum pitch angle limit for camera orbit (in degrees). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Camera Clamping")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float PitchMax = 80.f;
 
     /** Default distance of the camera from the actor (SpringArm target length). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Camera")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float DefaultCameraDistance = 250.f;
 
     /** Field of view of the camera in degrees. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Camera")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float CameraFOV = 90.f;
 
+    /** Minimum distance the camera can zoom in. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    float ZoomMin = 100.f;
+
+    /** Maximum distance the camera can zoom out. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    float ZoomMax = 500.f;
+
+    /** Focus distance for Cabinet inspect mode. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    float CabinetFocusDistance = 250.f;
+
+    /** Focus distance for Closet inspect mode. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    float ClosetFocusDistance = 250.f;
+
+    /** Focus distance for Cabinet Doors inspect mode. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    float DoorsFocusDistance = 200.f;
+
+    /** Focus distance for Countertop inspect mode. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    float CountertopFocusDistance = 200.f;
+
+    /** Focus distance for Sink inspect mode. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    float SinkFocusDistance = 150.f;
+
+    /** Focus distance for Faucet inspect mode. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    float FaucetFocusDistance = 100.f;
+
+    /** Focus distance for Mirror inspect mode. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    float MirrorFocusDistance = 150.f;
 
     /** Base intensity for the camera headlight (FillLight) in Lumens. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float BaseFillIntensity = 40000.f;
 
     /** Reference zoom distance corresponding to the BaseFillIntensity. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float ReferenceZoomDistance = 250.f;
 
     /** Base intensity for the spotlight (KeyLight) in Lumens. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float BaseKeyIntensity = 80000.f;
 
     /** Color of the key light. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FLinearColor KeyLightColor = FLinearColor::White;
 
     /** Color of the fill light. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FLinearColor FillLightColor = FLinearColor::White;
 
     /** Position of the spotlight relative to the preview studio center. C++ will auto-rotate the light to look at target. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FVector KeyLightRelativeLocation = FVector(-300.f, -300.f, 300.f);
 
     /** Inner spotlight cone angle in degrees. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting", meta = (ClampMin = "0.0", ClampMax = "80.0"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "80.0"))
     float KeyLightInnerConeAngle = 30.f;
 
     /** Outer spotlight cone angle in degrees. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting", meta = (ClampMin = "0.0", ClampMax = "80.0"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "80.0"))
     float KeyLightOuterConeAngle = 50.f;
 
     /** Max reach distance of the spotlight. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float KeyLightAttenuationRadius = 1000.f;
 
     /** Max reach distance of the headlight. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float FillLightAttenuationRadius = 1000.f;
 
     /** Shadow bias for the key light spotlight to resolve shadow acne. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float KeyLightShadowBias = 1.0f;
 
     /** Shadow slope bias for the key light spotlight. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float KeyLightShadowSlopeBias = 1.0f;
 
     /** Contact shadow length for the key light spotlight (0.0 = disabled). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float KeyLightContactShadowLength = 0.0f;
 
     /** Shadow bias for the fill light PointLight to resolve shadow acne. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float FillLightShadowBias = 1.0f;
 
     /** Shadow slope bias for the fill light PointLight. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float FillLightShadowSlopeBias = 1.0f;
 
     /** Contact shadow length for the fill light PointLight (0.0 = disabled). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float FillLightContactShadowLength = 0.0f;
 
     /** Toggle to isolate preview lighting using lighting channel 1. If false, uses default channel 0. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview | Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     bool bUseLightingChannels = true;
+
 
 
 
@@ -256,9 +293,7 @@ private:
     /** Current accumulated spring arm length. */
     float CurrentZoomLength = 250.f;
 
-    /** Zoom limit settings. */
-    static constexpr float ZoomMin = 100.f;
-    static constexpr float ZoomMax = 500.f;
+
 
     /** Current accumulated yaw (horizontal) rotation in degrees. */
     float CurrentYaw   = 0.f;

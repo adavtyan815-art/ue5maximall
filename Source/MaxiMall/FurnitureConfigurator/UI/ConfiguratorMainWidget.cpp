@@ -268,7 +268,7 @@ void UConfiguratorMainWidget::RefreshSelections()
                                 GridPanel->SetVisibility(ESlateVisibility::Visible);
                                 GridPanel->SetMinDesiredSlotWidth(0.f);
                                 GridPanel->SetMinDesiredSlotHeight(0.f);
-                                GridPanel->SetSlotPadding(FMargin(GridSlotPadding));
+                                GridPanel->SetSlotPadding(FMargin(SizeGridSlotPadding));
 
                                 for (int32 i = 0; i < ComponentOpts->Models.Num(); ++i)
                                 {
@@ -282,15 +282,15 @@ void UConfiguratorMainWidget::RefreshSelections()
                                         PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
                                         FButtonStyle CustomStyle = NewBtn->GetStyle();
-                                        CustomStyle.NormalPadding = ButtonPadding;
-                                        CustomStyle.PressedPadding = ButtonPadding;
+                                        CustomStyle.NormalPadding = SizeButtonPadding;
+                                        CustomStyle.PressedPadding = SizeButtonPadding;
                                         NewBtn->SetStyle(CustomStyle);
 
                                         UScaleBox* ScaleBox = WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass());
                                         UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
                                         if (ScaleBox && BtnImg)
                                         {
-                                            ScaleBox->SetStretch(ImageStretch);
+                                            ScaleBox->SetStretch(SizeImageStretch);
                                             ScaleBox->SetVisibility(ESlateVisibility::HitTestInvisible);
                                             if (!ModelOpt.Thumbnail.IsNull())
                                             {
@@ -305,7 +305,7 @@ void UConfiguratorMainWidget::RefreshSelections()
 
                                             if (UButtonSlot* BtnSlot = Cast<UButtonSlot>(ScaleBox->Slot))
                                             {
-                                                BtnSlot->SetPadding(ButtonPadding);
+                                                BtnSlot->SetPadding(SizeButtonPadding);
                                                 BtnSlot->SetHorizontalAlignment(EHorizontalAlignment::HAlign_Fill);
                                                 BtnSlot->SetVerticalAlignment(EVerticalAlignment::VAlign_Fill);
                                             }
@@ -323,12 +323,13 @@ void UConfiguratorMainWidget::RefreshSelections()
                                         if (SizeBox)
                                         {
                                             SizeBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-                                            SizeBox->SetWidthOverride(ButtonWidth);
-                                            SizeBox->SetHeightOverride(ButtonHeight);
+                                            SizeBox->SetWidthOverride(SizeButtonWidth);
+                                            SizeBox->SetHeightOverride(SizeButtonHeight);
                                             SizeBox->AddChild(NewBtn);
 
-                                            int32 RowIdx = i / 2;
-                                            int32 ColIdx = i % 2;
+                                            int32 Columns = SizeColumns > 0 ? SizeColumns : 2;
+                                            int32 RowIdx = i / Columns;
+                                            int32 ColIdx = i % Columns;
                                             UUniformGridSlot* GridSlot = GridPanel->AddChildToUniformGrid(SizeBox, RowIdx, ColIdx);
                                             if (GridSlot)
                                             {
@@ -363,7 +364,13 @@ void UConfiguratorMainWidget::RefreshSelections()
         TArray<FFurnitureColorOption> ActiveColors;
         if (ActiveComponent == EFurnitureComponentType::Cabinet)
         {
-            ActiveColors = ProductData.CabinetOptions.Colors;
+            for (const FFurnitureColorOption& ColorOpt : ProductData.CabinetOptions.Colors)
+            {
+                if (ColorOpt.SizeIndices.Num() == 0 || ColorOpt.SizeIndices.Contains(ActiveSizeIdx))
+                {
+                    ActiveColors.Add(ColorOpt);
+                }
+            }
         }
         else
         {
@@ -371,6 +378,41 @@ void UConfiguratorMainWidget::RefreshSelections()
             {
                 ActiveColors = ComponentOpts->Models[ActiveSizeIdx].Colors;
             }
+        }
+
+        // Query active color index for this component
+        int32 ActiveColorIdx = 0;
+        if (Booth)
+        {
+            switch (ActiveComponent)
+            {
+            case EFurnitureComponentType::Cabinet:
+            case EFurnitureComponentType::Doors:
+                ActiveColorIdx = Booth->ActiveState.ActiveColorIndex;
+                break;
+            case EFurnitureComponentType::Countertop:
+                ActiveColorIdx = Booth->ActiveState.ActiveCountertopColorIndex;
+                break;
+            case EFurnitureComponentType::Closet:
+                ActiveColorIdx = Booth->ActiveState.ClosetColorIndex;
+                break;
+            case EFurnitureComponentType::Sink:
+                ActiveColorIdx = Booth->ActiveState.SinkColorIndex;
+                break;
+            case EFurnitureComponentType::Faucet:
+                ActiveColorIdx = Booth->ActiveState.FaucetColorIndex;
+                break;
+            case EFurnitureComponentType::Mirror:
+                ActiveColorIdx = Booth->ActiveState.MirrorColorIndex;
+                break;
+            default:
+                break;
+            }
+        }
+
+        if (!ActiveColors.IsValidIndex(ActiveColorIdx))
+        {
+            ActiveColorIdx = 0;
         }
 
         if (Color_Container)
@@ -383,40 +425,147 @@ void UConfiguratorMainWidget::RefreshSelections()
             else
             {
                 Color_Container->SetVisibility(TargetVisibility);
+
+                float SavedColorScrollOffset = 0.f;
+                bool bHasColorSavedOffset = false;
+                for (int32 ChildIdx = 0; ChildIdx < Color_Container->GetChildrenCount(); ++ChildIdx)
+                {
+                    UWidget* ChildWidget = Color_Container->GetChildAt(ChildIdx);
+                    if (UScrollBox* FoundScrollBox = Cast<UScrollBox>(ChildWidget))
+                    {
+                        SavedColorScrollOffset = FoundScrollBox->GetScrollOffset();
+                        bHasColorSavedOffset = true;
+                        break;
+                    }
+                    else if (USizeBox* SizeBoxWrapper = Cast<USizeBox>(ChildWidget))
+                    {
+                        if (UScrollBox* InnerScrollBox = Cast<UScrollBox>(SizeBoxWrapper->GetContent()))
+                        {
+                            SavedColorScrollOffset = InnerScrollBox->GetScrollOffset();
+                            bHasColorSavedOffset = true;
+                            break;
+                        }
+                    }
+                }
+
                 Color_Container->ClearChildren();
 
                 if (bIsValidMesh)
                 {
-                    for (int32 i = 0; i < ActiveColors.Num(); ++i)
+                    UScrollBox* ColorScrollBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+                    if (ColorScrollBox)
                     {
-                        const FFurnitureColorOption& ColorOpt = ActiveColors[i];
-                        UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
-                        if (NewBtn)
+                        ColorScrollBox->SetVisibility(ESlateVisibility::Visible);
+                        ColorScrollBox->SetScrollBarVisibility(ESlateVisibility::Visible);
+                        ColorScrollBox->SetAnimateWheelScrolling(true);
+                        if (bHasColorSavedOffset)
                         {
-                            UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-                            if (BtnImg)
+                            ColorScrollBox->SetScrollOffset(SavedColorScrollOffset);
+                        }
+
+                        UUniformGridPanel* ColorGridPanel = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
+                        if (ColorGridPanel)
+                        {
+                            ColorGridPanel->SetVisibility(ESlateVisibility::Visible);
+                            ColorGridPanel->SetMinDesiredSlotWidth(0.f);
+                            ColorGridPanel->SetMinDesiredSlotHeight(0.f);
+                            ColorGridPanel->SetSlotPadding(FMargin(ColorGridSlotPadding));
+
+                            for (int32 i = 0; i < ActiveColors.Num(); ++i)
                             {
-                                BtnImg->SetVisibility(ESlateVisibility::HitTestInvisible);
-                                if (!ColorOpt.Thumbnail.IsNull())
+                                const FFurnitureColorOption& ColorOpt = ActiveColors[i];
+                                UButton* NewBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                                if (NewBtn)
                                 {
-                                    UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
-                                    if (LoadedTex)
+                                    PRAGMA_DISABLE_DEPRECATION_WARNINGS
+                                    NewBtn->IsFocusable = false;
+                                    PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+                                    // Apply Pill-Style with Glassmorphism Hover/Active effects
+                                    FButtonStyle CustomStyle = NewBtn->GetStyle();
+                                    CustomStyle.NormalPadding = ColorButtonPadding;
+                                    CustomStyle.PressedPadding = ColorButtonPadding;
+                                    if (i == ActiveColorIdx)
                                     {
-                                        BtnImg->SetBrushFromTexture(LoadedTex);
+                                        CustomStyle.Normal.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.3f));
+                                        CustomStyle.Hovered.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.45f));
+                                        CustomStyle.Pressed.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.6f));
+                                    }
+                                    else
+                                    {
+                                        CustomStyle.Normal.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.05f));
+                                        CustomStyle.Hovered.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.15f));
+                                        CustomStyle.Pressed.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.25f));
+                                    }
+                                    NewBtn->SetStyle(CustomStyle);
+
+                                    UScaleBox* ScaleBox = WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass());
+                                    UImage* BtnImg = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+                                    if (ScaleBox && BtnImg)
+                                    {
+                                        ScaleBox->SetStretch(ColorImageStretch);
+                                        ScaleBox->SetVisibility(ESlateVisibility::HitTestInvisible);
+                                        if (!ColorOpt.Thumbnail.IsNull())
+                                        {
+                                            UTexture2D* LoadedTex = ColorOpt.Thumbnail.LoadSynchronous();
+                                            if (LoadedTex)
+                                            {
+                                                BtnImg->SetBrushFromTexture(LoadedTex, true);
+                                            }
+                                        }
+                                        ScaleBox->AddChild(BtnImg);
+                                        NewBtn->AddChild(ScaleBox);
+
+                                        if (UButtonSlot* BtnSlot = Cast<UButtonSlot>(ScaleBox->Slot))
+                                        {
+                                            BtnSlot->SetPadding(ColorButtonPadding);
+                                            BtnSlot->SetHorizontalAlignment(EHorizontalAlignment::HAlign_Fill);
+                                            BtnSlot->SetVerticalAlignment(EVerticalAlignment::VAlign_Fill);
+                                        }
+                                    }
+
+                                    UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
+                                    Listener->Init(this, ActiveComponent, EOptionType::Color, i);
+                                    OptionListeners.Add(Listener);
+
+                                    NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
+                                    NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
+                                    NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
+
+                                    USizeBox* SizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+                                    if (SizeBox)
+                                    {
+                                        SizeBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+                                        SizeBox->SetWidthOverride(ColorButtonWidth);
+                                        SizeBox->SetHeightOverride(ColorButtonHeight);
+                                        SizeBox->AddChild(NewBtn);
+
+                                        int32 Columns = ColorColumns > 0 ? ColorColumns : 2;
+                                        int32 RowIdx = i / Columns;
+                                        int32 ColIdx = i % Columns;
+                                        UUniformGridSlot* GridSlot = ColorGridPanel->AddChildToUniformGrid(SizeBox, RowIdx, ColIdx);
+                                        if (GridSlot)
+                                        {
+                                            GridSlot->SetHorizontalAlignment(EHorizontalAlignment::HAlign_Fill);
+                                            GridSlot->SetVerticalAlignment(EVerticalAlignment::VAlign_Fill);
+                                        }
                                     }
                                 }
-                                NewBtn->AddChild(BtnImg);
                             }
+                            ColorScrollBox->AddChild(ColorGridPanel);
+                        }
 
-                            UFurnitureOptionListener* Listener = NewObject<UFurnitureOptionListener>(this);
-                            Listener->Init(this, ActiveComponent, EOptionType::Color, i);
-                            OptionListeners.Add(Listener);
-
-                            NewBtn->OnClicked.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonClicked);
-                            NewBtn->OnHovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonHovered);
-                            NewBtn->OnUnhovered.AddDynamic(Listener, &UFurnitureOptionListener::OnButtonUnhovered);
-
-                            Color_Container->AddChild(NewBtn);
+                        // Wrap ScrollBox inside a SizeBox with a maximum height limit of 255.0f
+                        USizeBox* ColorScrollLimitBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+                        if (ColorScrollLimitBox)
+                        {
+                            ColorScrollLimitBox->SetMaxDesiredHeight(255.f);
+                            ColorScrollLimitBox->AddChild(ColorScrollBox);
+                            Color_Container->AddChild(ColorScrollLimitBox);
+                        }
+                        else
+                        {
+                            Color_Container->AddChild(ColorScrollBox);
                         }
                     }
                 }

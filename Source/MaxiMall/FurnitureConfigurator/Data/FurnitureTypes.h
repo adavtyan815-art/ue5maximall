@@ -149,6 +149,9 @@ struct MAXIMALL_API FFurnitureColorOption
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option | Metadata")
     FString URL;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Color Option | Metadata")
+    TArray<int32> SizeIndices;
 };
 
 /**

@@ -108,26 +108,43 @@ public:
     void HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
     void HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
-    float GridItemWidth = 120.f;
+    // ── SIZE CONTAINER CONFIGURATION ─────────────────────────────────────────
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    float SizeButtonWidth = 100.f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
-    float GridItemHeight = 120.f;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    float SizeButtonHeight = 100.f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
-    float ButtonWidth = 100.f;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FMargin SizeButtonPadding = FMargin(0.f);
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
-    float ButtonHeight = 100.f;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    TEnumAsByte<EStretch::Type> SizeImageStretch = EStretch::ScaleToFit;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
-    FMargin ButtonPadding = FMargin(0.f);
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    float SizeGridSlotPadding = 5.f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
-    TEnumAsByte<EStretch::Type> ImageStretch = EStretch::ScaleToFit;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    int32 SizeColumns = 2;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing")
-    float GridSlotPadding = 5.f;
+    // ── COLOR CONTAINER CONFIGURATION ────────────────────────────────────────
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    float ColorButtonWidth = 100.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    float ColorButtonHeight = 100.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    FMargin ColorButtonPadding = FMargin(0.f);
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    TEnumAsByte<EStretch::Type> ColorImageStretch = EStretch::ScaleToFit;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    float ColorGridSlotPadding = 5.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    int32 ColorColumns = 2;
 
 private:
     UPROPERTY()

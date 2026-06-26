@@ -59,7 +59,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
 // AShowroomBooth
 // ─────────────────────────────────────────────────────────────────────────────
 
-UCLASS(ClassGroup = (MaxiMall), meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (MaxiMall),
+       HideCategories = (Rendering, Physics, Collision, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData),
+       meta = (BlueprintSpawnableComponent))
 class MAXIMALL_API AShowroomBooth : public AActor
 {
     GENERATED_BODY()
