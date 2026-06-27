@@ -30,6 +30,43 @@ class USpringArmComponent;
 class UCameraComponent;
 class USpotLightComponent;
 class UPointLightComponent;
+class USkyLightComponent;
+
+USTRUCT(BlueprintType)
+struct FFurniturePreviewLightingConfig
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float KeyLightIntensity = 80000.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float FillLightIntensity = 10000.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    FVector KeyLightLocation = FVector(-300.f, -300.f, 300.f);
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float KeyLightInnerConeAngle = 30.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float KeyLightOuterConeAngle = 50.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float AttenuationRadius = 1000.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float ShadowBias = 0.02f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float ShadowSlopeBias = 0.02f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float ContactShadowLength = 0.05f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float KeyLightSourceRadius = 15.f;
+};
 
 UCLASS(Blueprintable, BlueprintType, NotPlaceable,
        HideCategories = (Rendering, Physics, Collision, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData),
@@ -104,6 +141,10 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UPointLightComponent> FillLight;
 
+    /** Skylight component to provide ambient reflections for mirror/metallic surfaces. */
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    TObjectPtr<USkyLightComponent> PreviewSkyLight;
+
     /** Minimum pitch angle limit for camera orbit (in degrees). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float PitchMin = -80.f;
@@ -157,15 +198,15 @@ public:
     float MirrorFocusDistance = 150.f;
 
     /** Base intensity for the camera headlight (FillLight) in Lumens. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float BaseFillIntensity = 40000.f;
 
     /** Reference zoom distance corresponding to the BaseFillIntensity. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float ReferenceZoomDistance = 250.f;
 
     /** Base intensity for the spotlight (KeyLight) in Lumens. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float BaseKeyIntensity = 80000.f;
 
     /** Color of the key light. */
@@ -177,52 +218,70 @@ public:
     FLinearColor FillLightColor = FLinearColor::White;
 
     /** Position of the spotlight relative to the preview studio center. C++ will auto-rotate the light to look at target. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     FVector KeyLightRelativeLocation = FVector(-300.f, -300.f, 300.f);
 
     /** Inner spotlight cone angle in degrees. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "80.0"))
+    UPROPERTY()
     float KeyLightInnerConeAngle = 30.f;
 
     /** Outer spotlight cone angle in degrees. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "80.0"))
+    UPROPERTY()
     float KeyLightOuterConeAngle = 50.f;
 
     /** Max reach distance of the spotlight. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float KeyLightAttenuationRadius = 1000.f;
 
     /** Max reach distance of the headlight. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float FillLightAttenuationRadius = 1000.f;
 
     /** Shadow bias for the key light spotlight to resolve shadow acne. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float KeyLightShadowBias = 1.0f;
 
     /** Shadow slope bias for the key light spotlight. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float KeyLightShadowSlopeBias = 1.0f;
 
     /** Contact shadow length for the key light spotlight (0.0 = disabled). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float KeyLightContactShadowLength = 0.0f;
 
     /** Shadow bias for the fill light PointLight to resolve shadow acne. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float FillLightShadowBias = 1.0f;
 
     /** Shadow slope bias for the fill light PointLight. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float FillLightShadowSlopeBias = 1.0f;
 
     /** Contact shadow length for the fill light PointLight (0.0 = disabled). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY()
     float FillLightContactShadowLength = 0.0f;
 
     /** Toggle to isolate preview lighting using lighting channel 1. If false, uses default channel 0. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     bool bUseLightingChannels = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    FFurniturePreviewLightingConfig CabinetLighting;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    FFurniturePreviewLightingConfig ClosetLighting;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    FFurniturePreviewLightingConfig CountertopLighting;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    FFurniturePreviewLightingConfig SinkLighting;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    FFurniturePreviewLightingConfig FaucetLighting;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    FFurniturePreviewLightingConfig MirrorLighting;
 
 
 
@@ -329,4 +388,8 @@ private:
     void UpdateLightIntensityForZoom();
 
     void EnforceLightingSettings();
+
+    void ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config);
+
+    float ActiveBaseFillIntensity = 40000.f;
 };

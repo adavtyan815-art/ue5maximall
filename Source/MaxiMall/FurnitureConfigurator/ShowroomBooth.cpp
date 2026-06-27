@@ -4,6 +4,7 @@
 #include "FurnitureConfigurator/ShowroomBooth.h"
 
 #include "Components/StaticMeshComponent.h"
+#include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
 #include "Engine/DataTable.h"
 #include "Net/UnrealNetwork.h"          // DOREPLIFETIME, DOREPLIFETIME_CONDITION
 #include "Engine/StaticMesh.h"
@@ -138,6 +139,18 @@ void AShowroomBooth::BeginPlay()
                 *GetName(), *InitialProductID.ToString());
         }
     }
+
+    // Bind click events on interactive components
+    if (MainCabinet) MainCabinet->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
+    if (ClosetMesh) ClosetMesh->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
+    if (CountertopMesh) CountertopMesh->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
+    if (SinkMesh) SinkMesh->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
+    if (FaucetMesh) FaucetMesh->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
+    if (MirrorMesh) MirrorMesh->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
+    if (DoorMeshSlot0) DoorMeshSlot0->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
+    if (DoorMeshSlot1) DoorMeshSlot1->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
+    if (ClosetDoorMeshSlot0) ClosetDoorMeshSlot0->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
+    if (ClosetDoorMeshSlot1) ClosetDoorMeshSlot1->OnClicked.AddUniqueDynamic(this, &AShowroomBooth::OnBoothComponentClicked);
 }
 
 void AShowroomBooth::UpdateDoorAnimation()
@@ -770,6 +783,8 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
                 NewOption.Thumbnail = SharedModel->Thumbnail;
                 NewOption.Colors = FilterColors(SharedModel->Colors);
                 NewOption.RelativeOffset = SharedModel->RelativeOffset;
+                NewOption.MirrorMaterialOverride = SharedModel->MirrorMaterialOverride;
+                NewOption.MirrorMaterialSlotIndex = SharedModel->MirrorMaterialSlotIndex;
                 OutOptions.Models.Add(NewOption);
 
                 int32 AddedModelIndex = OutOptions.Models.Num() - 1;
@@ -1838,3 +1853,61 @@ void AShowroomBooth::InitializeDefaultStateForProduct(FShowroomBoothConfigState&
     State.MirrorSizeIndex = 0;
     State.MirrorColorIndex = 0;
 }
+
+void AShowroomBooth::OnBoothComponentClicked(UPrimitiveComponent* TouchedComponent, FKey ButtonPressed)
+{
+    if (ButtonPressed == EKeys::RightMouseButton)
+    {
+        // Discard the event if the player was dragging the camera with RMB
+        APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+        AMaxiMallPreviewController* PreviewPC = Cast<AMaxiMallPreviewController>(PC);
+        if (PreviewPC && PreviewPC->IsRightMouseDragging())
+        {
+            return;
+        }
+
+        EFurnitureComponentType CompType = EFurnitureComponentType::None;
+
+        if (TouchedComponent == MainCabinet.Get())
+        {
+            CompType = EFurnitureComponentType::Cabinet;
+        }
+        else if (TouchedComponent == ClosetMesh.Get())
+        {
+            CompType = EFurnitureComponentType::Closet;
+        }
+        else if (TouchedComponent == CountertopMesh.Get())
+        {
+            CompType = EFurnitureComponentType::Countertop;
+        }
+        else if (TouchedComponent == SinkMesh.Get())
+        {
+            CompType = EFurnitureComponentType::Sink;
+        }
+        else if (TouchedComponent == FaucetMesh.Get())
+        {
+            CompType = EFurnitureComponentType::Faucet;
+        }
+        else if (TouchedComponent == MirrorMesh.Get())
+        {
+            CompType = EFurnitureComponentType::Mirror;
+        }
+        else if (TouchedComponent == DoorMeshSlot0.Get() || TouchedComponent == DoorMeshSlot1.Get())
+        {
+            CompType = EFurnitureComponentType::Cabinet;
+        }
+        else if (TouchedComponent == ClosetDoorMeshSlot0.Get() || TouchedComponent == ClosetDoorMeshSlot1.Get())
+        {
+            CompType = EFurnitureComponentType::Closet;
+        }
+
+        if (CompType != EFurnitureComponentType::None)
+        {
+            if (PreviewPC)
+            {
+                PreviewPC->ToggleConfiguratorUI(this, CompType, true);
+            }
+        }
+    }
+}
+

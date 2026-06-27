@@ -11,6 +11,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Components/SpotLightComponent.h"
 #include "Components/PointLightComponent.h"
+#include "Components/SkyLightComponent.h"
 
 // Default render target dimensions (pixels).
 static constexpr int32 DefaultRTWidth  = 512;
@@ -62,8 +63,8 @@ AFurniturePreviewActor::AFurniturePreviewActor()
             Comp->SetCastShadow(true);
             Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
             Comp->LightingChannels.bChannel0 = false;
-            Comp->LightingChannels.bChannel1 = true;
-            Comp->LightingChannels.bChannel2 = false;
+            Comp->LightingChannels.bChannel1 = false;
+            Comp->LightingChannels.bChannel2 = true;
         }
     };
 
@@ -120,12 +121,86 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     KeyLightOuterConeAngle = 50.f;
     KeyLightAttenuationRadius = 1000.f;
     FillLightAttenuationRadius = 1000.f;
-    KeyLightShadowBias = 1.0f;
-    KeyLightShadowSlopeBias = 1.0f;
-    KeyLightContactShadowLength = 0.0f;
-    FillLightShadowBias = 1.0f;
-    FillLightShadowSlopeBias = 1.0f;
+    KeyLightShadowBias = 0.02f;
+    KeyLightShadowSlopeBias = 0.02f;
+    KeyLightContactShadowLength = 0.02f;
+    FillLightShadowBias = 0.02f;
+    FillLightShadowSlopeBias = 0.02f;
     FillLightContactShadowLength = 0.0f;
+
+    // 1. Cabinet Lighting Profile (Large baseline)
+    CabinetLighting.KeyLightIntensity = 80000.f;
+    CabinetLighting.FillLightIntensity = 30000.f;
+    CabinetLighting.KeyLightLocation = FVector(-300.f, -300.f, 300.f);
+    CabinetLighting.KeyLightInnerConeAngle = 30.f;
+    CabinetLighting.KeyLightOuterConeAngle = 50.f;
+    CabinetLighting.AttenuationRadius = 1500.f;
+    CabinetLighting.ShadowBias = 0.02f;
+    CabinetLighting.ShadowSlopeBias = 0.02f;
+    CabinetLighting.ContactShadowLength = 0.02f;
+    CabinetLighting.KeyLightSourceRadius = 20.f;
+
+    // 2. Closet Lighting Profile (Large baseline, similar to Cabinet but slightly taller/wider)
+    ClosetLighting.KeyLightIntensity = 80000.f;
+    ClosetLighting.FillLightIntensity = 30000.f;
+    ClosetLighting.KeyLightLocation = FVector(-350.f, -350.f, 400.f);
+    ClosetLighting.KeyLightInnerConeAngle = 35.f;
+    ClosetLighting.KeyLightOuterConeAngle = 55.f;
+    ClosetLighting.AttenuationRadius = 1800.f;
+    ClosetLighting.ShadowBias = 0.02f;
+    ClosetLighting.ShadowSlopeBias = 0.02f;
+    ClosetLighting.ContactShadowLength = 0.02f;
+    ClosetLighting.KeyLightSourceRadius = 25.f;
+
+    // 3. Countertop Lighting Profile (Medium)
+    CountertopLighting.KeyLightIntensity = 60000.f;
+    CountertopLighting.FillLightIntensity = 20000.f;
+    CountertopLighting.KeyLightLocation = FVector(-250.f, -250.f, 250.f);
+    CountertopLighting.KeyLightInnerConeAngle = 30.f;
+    CountertopLighting.KeyLightOuterConeAngle = 50.f;
+    CountertopLighting.AttenuationRadius = 1200.f;
+    CountertopLighting.ShadowBias = 0.02f;
+    CountertopLighting.ShadowSlopeBias = 0.02f;
+    CountertopLighting.ContactShadowLength = 0.04f;
+    CountertopLighting.KeyLightSourceRadius = 15.f;
+
+    // 4. Sink Lighting Profile (Medium-Small, Concave Shape: No Contact Shadows, soft key shadow)
+    SinkLighting.KeyLightIntensity = 50000.f;
+    SinkLighting.FillLightIntensity = 15000.f;
+    SinkLighting.KeyLightLocation = FVector(0.f, 0.f, 300.f);
+    SinkLighting.KeyLightInnerConeAngle = 25.f;
+    SinkLighting.KeyLightOuterConeAngle = 45.f;
+    SinkLighting.AttenuationRadius = 1000.f;
+    SinkLighting.ShadowBias = 0.02f;
+    SinkLighting.ShadowSlopeBias = 0.02f;
+    SinkLighting.ContactShadowLength = 0.0f; // Disable contact shadows completely to prevent concave raymarching artifacts!
+    SinkLighting.KeyLightSourceRadius = 15.f;
+
+    // 5. Faucet Lighting Profile (Small Details: Low contact shadows, very close key light)
+    FaucetLighting.KeyLightIntensity = 40000.f;
+    FaucetLighting.FillLightIntensity = 10000.f;
+    FaucetLighting.KeyLightLocation = FVector(-150.f, -150.f, 150.f);
+    FaucetLighting.KeyLightInnerConeAngle = 20.f;
+    FaucetLighting.KeyLightOuterConeAngle = 40.f;
+    FaucetLighting.AttenuationRadius = 800.f;
+    FaucetLighting.ShadowBias = 0.01f; // Tighter shadow bias for small details
+    FaucetLighting.ShadowSlopeBias = 0.01f;
+    FaucetLighting.ContactShadowLength = 0.0f; // Disable contact shadows to prevent sharp lines on curved faucet neck/aerator
+    FaucetLighting.KeyLightSourceRadius = 10.f;
+
+    // 6. Mirror Lighting Profile (Vertical medium)
+    MirrorLighting.KeyLightIntensity = 60000.f;
+    MirrorLighting.FillLightIntensity = 20000.f;
+    MirrorLighting.KeyLightLocation = FVector(-250.f, -250.f, 300.f);
+    MirrorLighting.KeyLightInnerConeAngle = 30.f;
+    MirrorLighting.KeyLightOuterConeAngle = 50.f;
+    MirrorLighting.AttenuationRadius = 1200.f;
+    MirrorLighting.ShadowBias = 0.02f;
+    MirrorLighting.ShadowSlopeBias = 0.02f;
+    MirrorLighting.ContactShadowLength = 0.03f;
+    MirrorLighting.KeyLightSourceRadius = 15.f;
+
+    ActiveBaseFillIntensity = CabinetLighting.FillLightIntensity;
 
 
 
@@ -155,8 +230,8 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     BackdropMesh->SetCastShadow(false);
     BackdropMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     BackdropMesh->LightingChannels.bChannel0 = false;
-    BackdropMesh->LightingChannels.bChannel1 = true;
-    BackdropMesh->LightingChannels.bChannel2 = false;
+    BackdropMesh->LightingChannels.bChannel1 = false;
+    BackdropMesh->LightingChannels.bChannel2 = true;
     // Scale it huge so it encapsulates the camera orbit range (SpringArm TargetArmLength up to 500)
     BackdropMesh->SetRelativeScale3D(FVector(15.f, 15.f, 15.f));
 
@@ -175,8 +250,8 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     KeyLight->SetIntensity(80000.f);
     KeyLight->SetCastShadows(true);
     KeyLight->LightingChannels.bChannel0 = false;
-    KeyLight->LightingChannels.bChannel1 = true;
-    KeyLight->LightingChannels.bChannel2 = false;
+    KeyLight->LightingChannels.bChannel1 = false;
+    KeyLight->LightingChannels.bChannel2 = true;
 
     // Camera-mounted Fill Light (Headlight)
     FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FillLight"));
@@ -184,8 +259,15 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     FillLight->SetIntensity(BaseFillIntensity); // Initialized using base intensity
     FillLight->SetCastShadows(false);
     FillLight->LightingChannels.bChannel0 = false;
-    FillLight->LightingChannels.bChannel1 = true;
-    FillLight->LightingChannels.bChannel2 = false;
+    FillLight->LightingChannels.bChannel1 = false;
+    FillLight->LightingChannels.bChannel2 = true;
+
+    // Studio Skylight for ambient reflections
+    PreviewSkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("PreviewSkyLight"));
+    PreviewSkyLight->SetupAttachment(PreviewRoot);
+    PreviewSkyLight->SourceType = ESkyLightSourceType::SLS_CapturedScene;
+    PreviewSkyLight->bRealTimeCapture = true;
+    PreviewSkyLight->Intensity = 1.0f;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -581,40 +663,52 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType Component
     UStaticMeshComponent* TargetComponent = nullptr;
     float DefaultZoomDistance = DefaultCameraDistance;
 
+    FFurniturePreviewLightingConfig SelectedConfig;
+
     switch (ComponentType)
     {
     case EFurnitureComponentType::Cabinet:
         TargetComponent = CabinetMesh.Get();
         DefaultZoomDistance = (CabinetFocusDistance == 250.f) ? DefaultCameraDistance : CabinetFocusDistance;
+        SelectedConfig = CabinetLighting;
         break;
     case EFurnitureComponentType::Closet:
         TargetComponent = ClosetMesh.Get();
         DefaultZoomDistance = (ClosetFocusDistance == 250.f) ? DefaultCameraDistance : ClosetFocusDistance;
+        SelectedConfig = ClosetLighting;
         break;
     case EFurnitureComponentType::Doors:
         TargetComponent = DoorMeshSlot0.Get();
         DefaultZoomDistance = DoorsFocusDistance;
+        SelectedConfig = CabinetLighting;
         break;
     case EFurnitureComponentType::Countertop:
         TargetComponent = CountertopMesh.Get();
         DefaultZoomDistance = CountertopFocusDistance;
+        SelectedConfig = CountertopLighting;
         break;
     case EFurnitureComponentType::Sink:
         TargetComponent = SinkMesh.Get();
         DefaultZoomDistance = SinkFocusDistance;
+        SelectedConfig = SinkLighting;
         break;
     case EFurnitureComponentType::Faucet:
         TargetComponent = FaucetMesh.Get();
         DefaultZoomDistance = FaucetFocusDistance;
+        SelectedConfig = FaucetLighting;
         break;
     case EFurnitureComponentType::Mirror:
         TargetComponent = MirrorMesh.Get();
         DefaultZoomDistance = MirrorFocusDistance;
+        SelectedConfig = MirrorLighting;
         break;
     case EFurnitureComponentType::None:
     default:
+        SelectedConfig = CabinetLighting;
         break;
     }
+
+    ApplyLightingConfig(SelectedConfig);
 
     if (SpringArm)
     {
@@ -722,13 +816,16 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
     }
 
     TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
+    int32 ActiveModelIndex = -1;
     if (Options.Models.IsValidIndex(SizeIndex))
     {
         TargetMeshPtr = Options.Models[SizeIndex].Mesh;
+        ActiveModelIndex = SizeIndex;
     }
     else if (Options.Models.Num() > 0)
     {
         TargetMeshPtr = Options.Models[0].Mesh;
+        ActiveModelIndex = 0;
     }
 
     if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
@@ -774,6 +871,20 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
                 if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
                 {
                     Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
+                }
+            }
+        }
+
+        if (Target == MirrorMesh.Get() && Options.Models.IsValidIndex(ActiveModelIndex))
+        {
+            const FFurnitureModelOption& ActiveOption = Options.Models[ActiveModelIndex];
+            if (!ActiveOption.MirrorMaterialOverride.IsNull())
+            {
+                UMaterialInterface* MatteMat = ActiveOption.MirrorMaterialOverride.LoadSynchronous();
+                int32 SlotIdx = ActiveOption.MirrorMaterialSlotIndex;
+                if (MatteMat && SlotIdx >= 0 && SlotIdx < NumMaterials)
+                {
+                    Target->SetMaterial(SlotIdx, MatteMat);
                 }
             }
         }
@@ -984,7 +1095,7 @@ void AFurniturePreviewActor::UpdateLightIntensityForZoom()
     if (FillLight && ReferenceZoomDistance > 0.f)
     {
         float ScaleFactor = FMath::Square(CurrentZoomLength / ReferenceZoomDistance);
-        FillLight->SetIntensity(BaseFillIntensity * ScaleFactor);
+        FillLight->SetIntensity(ActiveBaseFillIntensity * ScaleFactor);
     }
 }
 
@@ -1016,8 +1127,8 @@ void AFurniturePreviewActor::EnforceLightingSettings()
             Comp->SetCastShadow(bCastShadow);
             Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
             Comp->LightingChannels.bChannel0 = !bUseLightingChannels;
-            Comp->LightingChannels.bChannel1 = bUseLightingChannels;
-            Comp->LightingChannels.bChannel2 = false;
+            Comp->LightingChannels.bChannel1 = false;
+            Comp->LightingChannels.bChannel2 = bUseLightingChannels;
         }
     };
 
@@ -1037,8 +1148,8 @@ void AFurniturePreviewActor::EnforceLightingSettings()
     {
         KeyLight->SetMobility(EComponentMobility::Movable);
         KeyLight->LightingChannels.bChannel0 = !bUseLightingChannels;
-        KeyLight->LightingChannels.bChannel1 = bUseLightingChannels;
-        KeyLight->LightingChannels.bChannel2 = false;
+        KeyLight->LightingChannels.bChannel1 = false;
+        KeyLight->LightingChannels.bChannel2 = bUseLightingChannels;
         
         KeyLight->SetRelativeLocation(KeyLightRelativeLocation);
         FVector LookAtTarget = FVector(0.f, 0.f, 50.f) - KeyLightRelativeLocation;
@@ -1058,8 +1169,8 @@ void AFurniturePreviewActor::EnforceLightingSettings()
     {
         FillLight->SetMobility(EComponentMobility::Movable);
         FillLight->LightingChannels.bChannel0 = !bUseLightingChannels;
-        FillLight->LightingChannels.bChannel1 = bUseLightingChannels;
-        FillLight->LightingChannels.bChannel2 = false;
+        FillLight->LightingChannels.bChannel1 = false;
+        FillLight->LightingChannels.bChannel2 = bUseLightingChannels;
         
         FillLight->SetAttenuationRadius(FillLightAttenuationRadius);
         FillLight->SetLightColor(FillLightColor);
@@ -1070,6 +1181,39 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         FillLight->ContactShadowLength = FillLightContactShadowLength;
     }
 
+    if (PreviewSkyLight)
+    {
+        PreviewSkyLight->SetMobility(EComponentMobility::Movable);
+    }
+}
+
+void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config)
+{
+    ActiveBaseFillIntensity = Config.FillLightIntensity;
+
+    if (KeyLight)
+    {
+        KeyLight->SetIntensity(Config.KeyLightIntensity);
+        KeyLight->SetRelativeLocation(Config.KeyLightLocation);
+        FVector LookAtTarget = FVector(0.f, 0.f, 50.f) - Config.KeyLightLocation;
+        KeyLight->SetRelativeRotation(LookAtTarget.Rotation());
+        KeyLight->InnerConeAngle = Config.KeyLightInnerConeAngle;
+        KeyLight->OuterConeAngle = Config.KeyLightOuterConeAngle;
+        KeyLight->SetAttenuationRadius(Config.AttenuationRadius);
+        KeyLight->ShadowBias = Config.ShadowBias;
+        KeyLight->ShadowSlopeBias = Config.ShadowSlopeBias;
+        KeyLight->ContactShadowLength = Config.ContactShadowLength;
+        KeyLight->SourceRadius = Config.KeyLightSourceRadius;
+    }
+
+    if (FillLight)
+    {
+        FillLight->SetAttenuationRadius(Config.AttenuationRadius);
+        FillLight->ShadowBias = Config.ShadowBias;
+        FillLight->ShadowSlopeBias = Config.ShadowSlopeBias;
+        FillLight->ContactShadowLength = 0.0f; // Headlight does not need contact shadows
+        UpdateLightIntensityForZoom();
+    }
 }
 
 

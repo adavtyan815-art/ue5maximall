@@ -245,6 +245,14 @@ struct MAXIMALL_API FFurnitureModelOption
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option | Configuration")
     FFurniturePlacementOffset RelativeOffset;
+
+    /** Optional material override for the mirror glass surface inside the isolated viewmode. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option | Viewmode Override")
+    TSoftObjectPtr<UMaterialInterface> MirrorMaterialOverride;
+
+    /** Optional slot index to override. If -1, dynamically matches by material name. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option | Viewmode Override")
+    int32 MirrorMaterialSlotIndex = -1;
 };
 
 USTRUCT(BlueprintType)
@@ -323,6 +331,14 @@ struct MAXIMALL_API FFurnitureMirrorRow : public FTableRowBase
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mirror | Configuration")
     FFurniturePlacementOffset RelativeOffset;
+
+    /** Optional material override for the mirror glass surface inside the isolated viewmode. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mirror | Viewmode Override")
+    TSoftObjectPtr<UMaterialInterface> MirrorMaterialOverride;
+
+    /** Optional slot index to override. If -1, dynamically matches by material name. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mirror | Viewmode Override")
+    int32 MirrorMaterialSlotIndex = -1;
 };
 
 USTRUCT(BlueprintType)

@@ -444,3 +444,42 @@ We updated the fallback and warning detection logic to evaluate each countertop 
 ### 2. Compilation Verification
 - Rebuilt the project successfully via `UnrealBuildTool` in development mode:
   - Result: **Successful compilation** (completed in 4.32 seconds).
+
+---
+
+## Update: Lighting Profiles, Mirror Overrides, RMB Drag UI Protection & The Golden Rule
+
+We have implemented dynamic category-specific lighting profiles, per-row mirror overrides, right-mouse-button drag UI protection, and verified complete compilation stability.
+
+### The Golden Rule
+> [!IMPORTANT]
+> **THE GOLDEN RULE**: The `awsTutorial` project currently compiles and opens perfectly on the target production computer. We must **ONLY** inject our tested `MaxiMall` code into `awsTutorial` without breaking its existing dependencies, class names, or structures, so that the code runs with zero errors on both machines. We push only the `MaxiMall` state to Git.
+
+### 1. Preview Actor Cleanup & Optimization
+- **[FurniturePreviewActor.h](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/Preview/FurniturePreviewActor.h)** & **[FurniturePreviewActor.cpp](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/Preview/FurniturePreviewActor.cpp)**:
+  - Defined the `FFurniturePreviewLightingConfig` struct exposing light parameters (Intensity, Location, Cone Angles, Attenuation, Shadow Bias, Contact Shadow Length, KeyLightSourceRadius).
+  - Created 6 separate categories (`CabinetLighting`, `ClosetLighting`, `CountertopLighting`, `SinkLighting`, `FaucetLighting`, `MirrorLighting`) under `"Preview Config"` in the Details panel.
+  - Added the `PreviewSkyLight` (`USkyLightComponent`) to resolve black reflections on metallic/mirror surfaces in isolated viewmode.
+  - Configured all components, lights, and backdrops to utilize **Lighting Channel 2** for clean studio isolation.
+  - Updated the default `SinkLighting.KeyLightLocation` to `FVector(0.f, 0.f, 300.f)` to shine directly overhead, preventing inner lip crescent shadows.
+
+### 2. Mirror Material Override
+- **[FurnitureTypes.h](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/Data/FurnitureTypes.h)**:
+  - Added `MirrorMaterialOverride` and `MirrorMaterialSlotIndex` directly to `FFurnitureModelOption` and `FFurnitureMirrorRow`.
+- **[ShowroomBooth.cpp](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/ShowroomBooth.cpp)**:
+  - Updated `GetResolvedComponentOptions()` for mirror type to copy override properties.
+- **[FurniturePreviewActor.cpp](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/Preview/FurniturePreviewActor.cpp)**:
+  - Updated `ApplyComponentMeshAndMaterials()` to dynamically apply per-row mirror material overrides to the mirror mesh.
+
+### 3. RMB Drag UI Protection & Click Gating
+- **[MaxiMallPreviewController.h](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/Preview/MaxiMallPreviewController.h)** & **[MaxiMallPreviewController.cpp](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/Preview/MaxiMallPreviewController.cpp)**:
+  - Overrode `AddYawInput` and `AddPitchInput` to set `bRightMouseIsDragging = true` when camera movement is registered.
+  - Blocked opening of configurator UI in `ToggleConfiguratorUI` if `bRightMouseIsDragging` is active.
+- **[ShowroomBooth.h](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/ShowroomBooth.h)** & **[ShowroomBooth.cpp](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/ShowroomBooth.cpp)**:
+  - Bound components `OnClicked` delegate inside `BeginPlay()`.
+  - Implemented `OnBoothComponentClicked()` to restrict UI opening strictly to `RightMouseButton` click, ignoring events when `IsRightMouseDragging()` is true. This keeps left-click interactions (like door double-clicks) working cleanly without opening the configurator UI.
+
+### 4. Compilation Verification
+- Rebuilt the project successfully via `UnrealBuildTool` in development mode:
+  - Result: **Successful compilation** (completed with 0 errors/warnings).
+

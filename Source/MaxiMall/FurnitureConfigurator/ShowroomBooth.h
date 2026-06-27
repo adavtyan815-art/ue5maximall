@@ -500,4 +500,7 @@ private:
     bool bBaselineTransformsCaptured;
 
     bool CalculateCountertopFallbackActive() const;
+
+    UFUNCTION()
+    void OnBoothComponentClicked(UPrimitiveComponent* TouchedComponent, FKey ButtonPressed);
 };

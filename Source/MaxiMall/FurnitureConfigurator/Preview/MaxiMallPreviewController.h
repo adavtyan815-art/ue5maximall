@@ -55,6 +55,12 @@ public:
 
     virtual void SetupInputComponent() override;
 
+    /** Intercept camera yaw to detect RMB camera rotation drags. */
+    virtual void AddYawInput(float Val) override;
+
+    /** Intercept camera pitch to detect RMB camera rotation drags. */
+    virtual void AddPitchInput(float Val) override;
+
     // ─────────────────────────────────────────────────────────────────────
     // PREVIEW MANAGEMENT
     // ─────────────────────────────────────────────────────────────────────
@@ -319,4 +325,15 @@ private:
 
     /** Handler for left mouse button press to detect double click in C++. */
     void OnLeftMouseButtonPressed();
+
+    /** Called when Right Mouse Button is pressed — records the screen position for drag detection. */
+    void OnRightMouseButtonPressed();
+
+    /** True while the camera is being rotated with RMB held.
+     *  Set by AddYawInput/AddPitchInput; reset on RMB release. */
+    bool bRightMouseIsDragging = false;
+
+public:
+    /** Returns true if the player is currently rotating the camera with RMB held. */
+    FORCEINLINE bool IsRightMouseDragging() const { return bRightMouseIsDragging; }
 };

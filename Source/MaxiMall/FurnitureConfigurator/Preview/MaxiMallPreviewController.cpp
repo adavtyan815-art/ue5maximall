@@ -62,6 +62,8 @@ void AMaxiMallPreviewController::BeginPlay()
         InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
         SetInputMode(InputMode);
         bShowMouseCursor = true;
+        bEnableClickEvents = true;
+        bEnableMouseOverEvents = true;
     }
 }
 
@@ -72,6 +74,14 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
     if (!IsLocalController())
     {
         return;
+    }
+
+    // Reset drag flag as soon as RMB is released.
+    // The flag itself is set in AddYawInput/AddPitchInput whenever the camera
+    // actually rotates while RMB is held — that is the only reliable signal.
+    if (!IsInputKeyDown(EKeys::RightMouseButton))
+    {
+        bRightMouseIsDragging = false;
     }
 
     UPrimitiveComponent* NewHoveredComp = nullptr;
@@ -165,7 +175,8 @@ void AMaxiMallPreviewController::SetupInputComponent()
 
     if (InputComponent)
     {
-        InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMaxiMallPreviewController::OnLeftMouseButtonPressed);
+        InputComponent->BindKey(EKeys::LeftMouseButton,  IE_Pressed, this, &AMaxiMallPreviewController::OnLeftMouseButtonPressed);
+        InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AMaxiMallPreviewController::OnRightMouseButtonPressed);
     }
 }
 
@@ -179,6 +190,33 @@ void AMaxiMallPreviewController::OnLeftMouseButtonPressed()
     }
     
     LastClickTime = CurrentTime;
+}
+
+void AMaxiMallPreviewController::OnRightMouseButtonPressed()
+{
+    // Reset drag flag on every new press so a clean click starts fresh.
+    bRightMouseIsDragging = false;
+}
+
+void AMaxiMallPreviewController::AddYawInput(float Val)
+{
+    Super::AddYawInput(Val);
+    // UE calls this whenever mouse X movement rotates the camera.
+    // If RMB is held at the same time, the user is doing a camera drag, not a click.
+    if (Val != 0.f && IsInputKeyDown(EKeys::RightMouseButton))
+    {
+        bRightMouseIsDragging = true;
+    }
+}
+
+void AMaxiMallPreviewController::AddPitchInput(float Val)
+{
+    Super::AddPitchInput(Val);
+    // Same as above for vertical (pitch) rotation.
+    if (Val != 0.f && IsInputKeyDown(EKeys::RightMouseButton))
+    {
+        bRightMouseIsDragging = true;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -690,6 +728,7 @@ bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBoo
     {
         return false;
     }
+
     if (MainWidgetInstance && MainWidgetInstance->IsInViewport())
     {
         return false;
@@ -923,7 +962,18 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
 
     if (bOpen)
     {
+        // Block if the player is rotating the camera with RMB.
+        // NOTE: Do NOT add IsInputKeyDown here — the Blueprint fires this function
+        // on the Pressed event, so RMB is always down at the call site. Only the
+        // drag flag (set via raw mouse axis in PlayerTick) reliably distinguishes
+        // a camera rotation from a genuine click.
+        if (bRightMouseIsDragging)
+        {
+            return;
+        }
+
         if (!Booth) return;
+
 
         if (Component == EFurnitureComponentType::Doors)
         {
