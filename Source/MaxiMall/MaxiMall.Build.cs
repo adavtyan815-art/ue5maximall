@@ -30,6 +30,12 @@ public class MaxiMall : ModuleRules
 		{
 			"Slate",
 			"SlateCore",
+			// Required for IPixelStreamingModule / IPixelStreamingStreamer used in
+			// MaxiMallPreviewController::BroadcastCursorState (cursor data channel).
+			// FModuleManager::GetModulePtr guards against the module being absent
+			// at runtime (Editor PIE without PS plugin, standalone builds, etc.).
+			"PixelStreaming",
+			"PixelStreamingInput",
 		});
 	}
 }

@@ -20,6 +20,13 @@
 #include "Widgets/SViewport.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/GameViewportClient.h"
+// Pixel Streaming data channel — used to relay cursor state to the browser.
+// The module is always present in builds that include the PixelStreaming plugin;
+// the BroadcastCursorState helper guards against it being unavailable at runtime.
+#include "IPixelStreamingModule.h"
+// PixelStreamingInputProtocol is in the PixelStreamingInput module and provides
+// the message ID lookup used by SendPlayerMessage ("Response" message type).
+#include "PixelStreamingInputProtocol.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -167,6 +174,16 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         
         HoveredComponent = NewHoveredComp;
     }
+
+    // ── Pixel Streaming cursor data-channel broadcast ─────────────────────
+    // Only send when the hover state actually changes to avoid flooding the
+    // data channel with identical messages every tick.
+    const bool bNowHovering = (NewHoveredComp != nullptr);
+    if (bNowHovering != bWasHoveringInteractable)
+    {
+        BroadcastCursorState(bNowHovering);
+        bWasHoveringInteractable = bNowHovering;
+    }
 }
 
 void AMaxiMallPreviewController::SetupInputComponent()
@@ -184,7 +201,7 @@ void AMaxiMallPreviewController::OnLeftMouseButtonPressed()
 {
     float CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
 
-    if (CurrentTime - LastClickTime < 0.25f)
+    if (CurrentTime - LastClickTime < DoubleClickThreshold)
     {
         HandleDoubleClickInteraction();
     }
@@ -217,6 +234,57 @@ void AMaxiMallPreviewController::AddPitchInput(float Val)
     {
         bRightMouseIsDragging = true;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pixel Streaming Cursor Broadcast
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AMaxiMallPreviewController::BroadcastCursorState(bool bHovering)
+{
+    // Guard: Only runs on the local player controller (not server or remote).
+    if (!IsLocalController())
+    {
+        return;
+    }
+
+#if WITH_ENGINE
+    // Retrieve the active Pixel Streaming module. If the PixelStreaming plugin
+    // is not loaded (e.g. Editor play without PS enabled, standalone desktop
+    // build), IsAvailable() returns false and we safely do nothing.
+    if (!IPixelStreamingModule::IsAvailable())
+    {
+        return;
+    }
+    IPixelStreamingModule& PSModule = IPixelStreamingModule::Get();
+
+    // Build the JSON payload: { "type": "cursor", "cursor": "pointer" | "default" }
+    // This is received and handled by the custom listener registered in player.ts.
+    const FString CursorValue = bHovering ? TEXT("pointer") : TEXT("default");
+    const FString JsonPayload = FString::Printf(TEXT("{\"type\":\"cursor\",\"cursor\":\"%s\"}"), *CursorValue);
+
+    // Look up the "Response" message ID from the FromStreamer protocol map.
+    // This is the canonical way Epic sends arbitrary JSON back to the browser
+    // (identical approach to UPixelStreamingInput::SendPixelStreamingResponse).
+    // Guard against the protocol entry being absent (should never happen in PS builds).
+    const FPixelStreamingInputMessage* ResponseMsg = FPixelStreamingInputProtocol::FromStreamerProtocol.Find(TEXT("Response"));
+    if (!ResponseMsg)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MaxiMall] BroadcastCursorState: 'Response' message type not registered in PS protocol."));
+        return;
+    }
+    const uint8 ResponseTypeId = ResponseMsg->GetID();
+
+    // Iterate all active streamers and send the cursor message.
+    // In a single-user Pixel Streaming session there is exactly one streamer.
+    PSModule.ForEachStreamer([ResponseTypeId, &JsonPayload](TSharedPtr<IPixelStreamingStreamer> Streamer)
+    {
+        if (Streamer.IsValid())
+        {
+            Streamer->SendPlayerMessage(ResponseTypeId, JsonPayload);
+        }
+    });
+#endif
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

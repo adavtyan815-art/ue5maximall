@@ -85,16 +85,42 @@ AShowroomBooth::AShowroomBooth()
         SharedSinksCatalog = SinksCatalogObj.Object;
     }
 
-    static ConstructorHelpers::FObjectFinder<UDataTable> FaucetsCatalogObj(TEXT("/Game/DT/DT_SharedFaucets"));
+    // NOTE: The DataTable assets for faucets and mirrors are stored on disk
+    // under the names AllowedFaucetIDs / AllowedMirrorIDs (not DT_SharedFaucets /
+    // DT_SharedMirrors). ConstructorHelpers::FObjectFinder must reference the
+    // exact cooked asset package path; mismatches cause the CDO warning in
+    // Shipping builds:  "Failed to find /Game/DT/DT_SharedFaucets"
+    // Primary path uses the correct on-disk name; the secondary path is the
+    // legacy name kept as a silent fallback in case the asset was renamed.
+    static ConstructorHelpers::FObjectFinder<UDataTable> FaucetsCatalogObj(TEXT("/Game/DT/AllowedFaucetIDs"));
     if (FaucetsCatalogObj.Succeeded())
     {
         SharedFaucetsCatalog = FaucetsCatalogObj.Object;
     }
+    else
+    {
+        // Legacy name fallback — silences the CDO warning if project was
+        // rebuilt with the renamed asset before this code update was applied.
+        static ConstructorHelpers::FObjectFinder<UDataTable> FaucetsCatalogFallback(TEXT("/Game/DT/DT_SharedFaucets"));
+        if (FaucetsCatalogFallback.Succeeded())
+        {
+            SharedFaucetsCatalog = FaucetsCatalogFallback.Object;
+        }
+    }
 
-    static ConstructorHelpers::FObjectFinder<UDataTable> MirrorsCatalogObj(TEXT("/Game/DT/DT_SharedMirrors"));
+    static ConstructorHelpers::FObjectFinder<UDataTable> MirrorsCatalogObj(TEXT("/Game/DT/AllowedMirrorIDs"));
     if (MirrorsCatalogObj.Succeeded())
     {
         SharedMirrorsCatalog = MirrorsCatalogObj.Object;
+    }
+    else
+    {
+        // Legacy name fallback.
+        static ConstructorHelpers::FObjectFinder<UDataTable> MirrorsCatalogFallback(TEXT("/Game/DT/DT_SharedMirrors"));
+        if (MirrorsCatalogFallback.Succeeded())
+        {
+            SharedMirrorsCatalog = MirrorsCatalogFallback.Object;
+        }
     }
 
     // Pre-size to exactly 4 slots (Cabinet doors at 0,1; Closet doors at 2,3).

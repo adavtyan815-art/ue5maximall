@@ -254,6 +254,21 @@ public:
               meta = (DisplayName = "Orbit Sensitivity", ClampMin = "0.1", ClampMax = "10.0"))
     float OrbitSensitivity = 1.f;
 
+    /**
+     * Maximum time (in seconds) between two left-mouse clicks for them to
+     * count as a double-click.
+     *
+     * In the Unreal Editor the default 0.25 s works well. Over Pixel Streaming,
+     * input events travel through the browser → WebRTC data channel → UE plugin
+     * pipeline, adding ~50-150 ms of latency per event. 0.5 s is the "golden mean":
+     * comfortable on all connections without feeling sluggish on fast ones.
+     *
+     * Adjust from the Blueprint Class Defaults if needed — no recompile required.
+     */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "MaxiMall | Preview Config",
+              meta = (DisplayName = "Double-Click Threshold (s)", ClampMin = "0.1", ClampMax = "2.0"))
+    float DoubleClickThreshold = 0.5f;
+
     /** Static mesh asset used for the studio backdrop (e.g. an inverted sphere). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config",
               meta = (DisplayName = "Backdrop Static Mesh"))
@@ -322,6 +337,20 @@ private:
 
     /** Time when the left mouse button was last pressed, used for C++ double click detection. */
     float LastClickTime = 0.f;
+
+    /**
+     * Tracks whether we were hovering over an interactive component on the
+     * previous frame. Used to avoid sending redundant data-channel cursor
+     * messages on every tick when the hover state has not changed.
+     */
+    bool bWasHoveringInteractable = false;
+
+    /**
+     * Sends a cursor-change message to the browser via the Pixel Streaming
+     * data channel. In the Editor and non-PS builds this is a safe no-op.
+     * @param bHovering  true → 'pointer' (hand), false → 'default' (arrow).
+     */
+    void BroadcastCursorState(bool bHovering);
 
     /** Handler for left mouse button press to detect double click in C++. */
     void OnLeftMouseButtonPressed();
