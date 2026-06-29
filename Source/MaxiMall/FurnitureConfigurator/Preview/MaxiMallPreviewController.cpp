@@ -258,10 +258,10 @@ void AMaxiMallPreviewController::BroadcastCursorState(bool bHovering)
     }
     IPixelStreamingModule& PSModule = IPixelStreamingModule::Get();
 
-    // Build the JSON payload: { "type": "cursor", "cursor": "pointer" | "default" }
-    // This is received and handled by the custom listener registered in player.ts.
+    // Build the payload: "MaxiMallCursor pointer" or "MaxiMallCursor default".
+    // Epic's JS frontend matches by prefix (MaxiMallCursor) and strips it.
     const FString CursorValue = bHovering ? TEXT("pointer") : TEXT("default");
-    const FString JsonPayload = FString::Printf(TEXT("{\"type\":\"cursor\",\"cursor\":\"%s\"}"), *CursorValue);
+    const FString Payload = FString::Printf(TEXT("MaxiMallCursor %s"), *CursorValue);
 
     // Look up the "Response" message ID from the FromStreamer protocol map.
     // This is the canonical way Epic sends arbitrary JSON back to the browser
@@ -277,11 +277,11 @@ void AMaxiMallPreviewController::BroadcastCursorState(bool bHovering)
 
     // Iterate all active streamers and send the cursor message.
     // In a single-user Pixel Streaming session there is exactly one streamer.
-    PSModule.ForEachStreamer([ResponseTypeId, &JsonPayload](TSharedPtr<IPixelStreamingStreamer> Streamer)
+    PSModule.ForEachStreamer([ResponseTypeId, &Payload](TSharedPtr<IPixelStreamingStreamer> Streamer)
     {
         if (Streamer.IsValid())
         {
-            Streamer->SendPlayerMessage(ResponseTypeId, JsonPayload);
+            Streamer->SendPlayerMessage(ResponseTypeId, Payload);
         }
     });
 #endif
