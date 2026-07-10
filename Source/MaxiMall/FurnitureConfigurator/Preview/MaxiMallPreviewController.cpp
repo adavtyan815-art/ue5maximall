@@ -3,6 +3,7 @@
 
 #include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
 
+#include "GameFramework/GameUserSettings.h"
 #include "Engine/Engine.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
@@ -61,9 +62,31 @@ void AMaxiMallPreviewController::BeginPlay()
 {
     Super::BeginPlay();
 
+    UE_LOG(LogTemp, Warning, TEXT("AMaxiMallPreviewController::BeginPlay - Player Controller Initialized. IsLocalController: %s"), IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"));
+
     // Ensure we start with the consistent mouse cursor behavior (visible by default, hides when clicking/capturing)
     if (IsLocalController())
     {
+        // Force Epic quality scalability settings to prevent virtual server fallbacks
+        if (UGameUserSettings* GameUserSettings = UGameUserSettings::GetGameUserSettings())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("AMaxiMallPreviewController::BeginPlay - Overall Scalability Level before override: %d"), GameUserSettings->GetOverallScalabilityLevel());
+            
+            GameUserSettings->SetOverallScalabilityLevel(3); // 3 = Epic Quality
+            GameUserSettings->ApplySettings(false);
+            
+            UE_LOG(LogTemp, Warning, TEXT("AMaxiMallPreviewController::BeginPlay - Overall Scalability Level after override: %d"), GameUserSettings->GetOverallScalabilityLevel());
+            UE_LOG(LogTemp, Warning, TEXT("  sg.ShadowQuality: %d"), GameUserSettings->GetShadowQuality());
+            UE_LOG(LogTemp, Warning, TEXT("  sg.GlobalIlluminationQuality: %d"), GameUserSettings->GetGlobalIlluminationQuality());
+            UE_LOG(LogTemp, Warning, TEXT("  sg.ReflectionQuality: %d"), GameUserSettings->GetReflectionQuality());
+            UE_LOG(LogTemp, Warning, TEXT("  sg.TextureQuality: %d"), GameUserSettings->GetTextureQuality());
+            UE_LOG(LogTemp, Warning, TEXT("  sg.PostProcessQuality: %d"), GameUserSettings->GetPostProcessingQuality());
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("AMaxiMallPreviewController::BeginPlay - GameUserSettings is NULL!"));
+        }
+
         FInputModeGameAndUI InputMode;
         InputMode.SetHideCursorDuringCapture(true);
         InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
@@ -204,6 +227,8 @@ void AMaxiMallPreviewController::OnLeftMouseButtonPressed()
     if (CurrentTime - LastClickTime < DoubleClickThreshold)
     {
         HandleDoubleClickInteraction();
+        LastClickTime = 0.f;
+        return;
     }
     
     LastClickTime = CurrentTime;
