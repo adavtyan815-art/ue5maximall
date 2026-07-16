@@ -1,305 +1,151 @@
-// Copyright MaxiMall Project. All Rights Reserved.
-// MaxiMallPreviewController.h
+﻿//
+// Created by Siqi Wu on 1/17/25.
 //
-// AMaxiMallPreviewController — PlayerController subclass providing:
-//
-//  1. LOOSE COUPLING BRIDGE
-//     The controller knows about AShowroomBooth and AFurniturePreviewActor,
-//     but NEVER about the specific Character class used in the destination
-//     UE 5.6 project. The existing Blueprint Character simply calls
-//     "Get Player Controller → Cast → Open Preview" without any C++ coupling.
-//     The controller also exposes a BlueprintImplementableEvent so Blueprint
-//     character logic can hook in without any C++ modifications.
-//
-//  2. PREVIEW LIFECYCLE MANAGEMENT
-//     OpenFurniturePreview() spawns AFurniturePreviewActor in an off-camera
-//     staging position, pipes the active booth's product data into it, and
-//     returns the render target for the widget to display.
-//     CloseFurniturePreview() destroys the preview actor cleanly.
-//
-//  3. ORBIT INPUT FORWARDING
-//     HandlePreviewOrbitInput() is called by the widget (via Blueprint) and
-//     passes delta values directly to AFurniturePreviewActor::RotatePreview().
-//     No Server RPCs are involved. No networking overhead.
-//
-// Compatible: UE 5.3 → UE 5.6+
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "FurnitureConfigurator/Data/FurnitureTypes.h"
-#include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
 #include "MaxiMallPreviewController.generated.h"
 
 class AShowroomBooth;
+class AFurniturePreviewActor;
+class UUserWidget;
+class UPrimitiveComponent;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AMaxiMallPreviewController
-// ─────────────────────────────────────────────────────────────────────────────
+class UPixelStreamingInput;
 
-UCLASS(ClassGroup = (MaxiMall),
-       HideCategories = (Collision, Physics, Rendering, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData),
-       meta = (DisplayName = "MaxiMall Preview Player Controller"))
-class MAXIMALL_API AMaxiMallPreviewController : public APlayerController
-{
-    GENERATED_BODY()
+UCLASS(Blueprintable,
+       HideCategories = (Collision, Physics, Rendering, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData))
+class MAXIMALL_API AMaxiMallPreviewController : public APlayerController {
+	GENERATED_BODY()
 
 public:
+	AMaxiMallPreviewController();
 
-    AMaxiMallPreviewController();
+	virtual void BeginPlay() override;
+	virtual void PlayerTick(float DeltaTime) override;
+	virtual void SetupInputComponent() override;
 
-    virtual void BeginPlay() override;
+	/** Intercept camera yaw to detect RMB camera rotation drags. */
+	virtual void AddYawInput(float Val) override;
 
-    virtual void PlayerTick(float DeltaTime) override;
+	/** Intercept camera pitch to detect RMB camera rotation drags. */
+	virtual void AddPitchInput(float Val) override;
 
-    virtual void SetupInputComponent() override;
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="MaxiMall")
+	FString GetRequestURL() const;
 
-    /** Intercept camera yaw to detect RMB camera rotation drags. */
-    virtual void AddYawInput(float Val) override;
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="MaxiMall")
+	TArray<FString> GetRequestOptions() const;
 
-    /** Intercept camera pitch to detect RMB camera rotation drags. */
-    virtual void AddPitchInput(float Val) override;
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="MaxiMall")
+	bool HasRequestOption(const FString& key) const;
 
-    // ─────────────────────────────────────────────────────────────────────
-    // PREVIEW MANAGEMENT
-    // ─────────────────────────────────────────────────────────────────────
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="MaxiMall")
+	FString GetRequestOption(const FString& key) const;
 
-    /**
-     * Opens the isolated furniture preview for the specified booth.
-     *
-     * Workflow:
-     *  1. Reads the active product row from the target booth.
-     *  2. Spawns AFurniturePreviewActor at the designated staging location.
-     *  3. Calls LoadProductPreview() on the preview actor.
-     *  4. Returns the RenderTarget for the widget to bind to a UImage.
-     *
-     * Call this from the Blueprint Character's interaction logic when the
-     * player activates the "Inspect" UI. No Character type knowledge needed.
-     *
-     * @param TargetBooth  The showroom booth currently being inspected.
-     * @return The RenderTarget to bind to the preview widget's UImage, or null on failure.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview",
-              meta = (DisplayName = "Open Furniture Preview"))
+	UFUNCTION(BlueprintCallable, Server, Reliable, Category="MaxiMall")
+	void Kick();
+
+    // в”Ђв”Ђ CONFIGURATOR PREVIEW MANAGEMENT в”Ђв”Ђ
+
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview", meta = (DisplayName = "Open Furniture Preview"))
     void OpenFurniturePreview(AShowroomBooth* TargetBooth, EFurnitureComponentType FocusComponent = EFurnitureComponentType::None);
 
-    /**
-     * Closes and cleans up the isolated preview.
-     * Destroys the preview actor. Safe to call even if no preview is active.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview",
-              meta = (DisplayName = "Close Furniture Preview"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview", meta = (DisplayName = "Close Furniture Preview"))
     void CloseFurniturePreview();
 
-    /**
-     * Forwards orbit drag input to the active preview actor.
-     * Intended to be called from the widget's mouse-drag event every frame.
-     *
-     * If no preview is active, this is a safe no-op.
-     *
-     * @param DeltaYaw    Horizontal drag in degrees (scaled by sensitivity).
-     * @param DeltaPitch  Vertical drag in degrees (clamped inside PreviewActor).
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview",
-              meta = (DisplayName = "Handle Preview Orbit Input"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview", meta = (DisplayName = "Handle Preview Orbit Input"))
     void HandlePreviewOrbitInput(float DeltaYaw, float DeltaPitch);
 
-    /**
-     * Resets the preview rotation to the default angle.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview",
-              meta = (DisplayName = "Reset Preview Rotation"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview", meta = (DisplayName = "Reset Preview Rotation"))
     void ResetPreviewRotation();
 
-    /**
-     * Returns true if a preview is currently active.
-     */
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Preview",
-              meta = (DisplayName = "Is Preview Active"))
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Preview", meta = (DisplayName = "Is Preview Active"))
     bool IsPreviewActive() const;
 
-    /**
-     * Forwards zoom input to the active preview actor.
-     *
-     * @param DeltaZoom  Distance to zoom (positive zooms out, negative zooms in).
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview",
-              meta = (DisplayName = "Handle Preview Zoom Input"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview", meta = (DisplayName = "Handle Preview Zoom Input"))
     void HandlePreviewZoomInput(float DeltaZoom);
 
-    /**
-     * Traces from the mouse position under the cursor, finding if a showroom booth was hit
-     * and which subcomponent was hit.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction",
-              meta = (DisplayName = "Trace Furniture Component"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Trace Furniture Component"))
     bool TraceFurnitureComponent(AShowroomBooth*& OutBooth, EFurnitureComponentType& OutComponentType, UPrimitiveComponent*& OutHitComponent);
 
-    /**
-     * Handles double-click mouse interactions for doors/drawers.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction",
-              meta = (DisplayName = "Handle Double-Click Interaction"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Handle Double-Click Interaction"))
     void HandleDoubleClickInteraction();
 
-    /**
-     * Sets the local preview focus on a specific subcomponent.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview",
-              meta = (DisplayName = "Focus Preview On Component"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview", meta = (DisplayName = "Focus Preview On Component"))
     void FocusPreviewOnComponent(EFurnitureComponentType ComponentType);
 
-    /**
-     * Resolves the active metadata for the specified component type based on the active booth configuration.
-     * If the combination is not explicitly defined in the catalog matrix, falls back to default values.
-     */
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Preview",
-              meta = (DisplayName = "Get Active Component Metadata"))
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Preview", meta = (DisplayName = "Get Active Component Metadata"))
     bool GetActiveComponentMetadata(EFurnitureComponentType ComponentType, FText& OutProductName, FString& OutSKU, FString& OutURL) const;
 
-    /** The showroom booth currently being inspected/previewed. Locked in via TraceFurnitureComponent. */
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Preview")
     TObjectPtr<AShowroomBooth> CurrentTargetBooth;
 
-    /** The showroom component type currently being inspected/configured. */
-    UPROPERTY(BlueprintReadWrite, Category = "MaxiMall | Preview")
+    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Preview")
     EFurnitureComponentType CurrentTargetComponent;
 
+    // в”Ђв”Ђ BOOTH INTERACTION API в”Ђв”Ђ
 
-    // ─────────────────────────────────────────────────────────────────────
-    // BOOTH INTERACTION API
-    // These are convenience wrappers callable from any Blueprint without
-    // needing a direct reference to AShowroomBooth's C++ class.
-    // ─────────────────────────────────────────────────────────────────────
-
-    /**
-     * Requests a product change on the given booth.
-     * Internally calls AShowroomBooth::RequestProductChange(), which handles
-     * the server RPC if running on a client.
-     *
-     * This wrapper exists so the Blueprint Character can call it on the
-     * controller without needing an explicit AShowroomBooth Blueprint cast.
-     *
-     * @param TargetBooth  The booth to modify.
-     * @param NewProductID RowName of the desired product in the DataTable.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth",
-              meta = (DisplayName = "Request Booth Product Change"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth", meta = (DisplayName = "Request Booth Product Change"))
     void RequestBoothProductChange(AShowroomBooth* TargetBooth, FName NewProductID);
 
-    /**
-     * Requests a door toggle on the given booth.
-     *
-     * @param TargetBooth  The booth containing the door.
-     * @param SlotIndex    0 = left/single, 1 = right.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth",
-              meta = (DisplayName = "Request Booth Door Toggle"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth", meta = (DisplayName = "Request Booth Door Toggle"))
     void RequestBoothDoorToggle(AShowroomBooth* TargetBooth, int32 SlotIndex);
 
-    /**
-     * Requests a size/color component selection on the given booth.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth",
-              meta = (DisplayName = "Request Booth Component Selection"))
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth", meta = (DisplayName = "Request Booth Component Selection"))
     void RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
 
-    // ─────────────────────────────────────────────────────────────────────
-    // BLUEPRINT EVENTS (Loose Coupling Hooks)
-    // These can be overridden in the Blueprint child of this controller
-    // (or the Blueprint Character via Event Dispatcher) without any C++ change.
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђ BLUEPRINT EVENTS в”Ђв”Ђ
 
-    /**
-     * Called when the preview is successfully opened.
-     * Override in Blueprint to animate the widget in, set input mode, etc.
-     */
-    UFUNCTION(BlueprintImplementableEvent, Category = "MaxiMall | Preview Events",
-              meta = (DisplayName = "On Preview Opened"))
+    UFUNCTION(BlueprintImplementableEvent, Category = "MaxiMall | Preview Events", meta = (DisplayName = "On Preview Opened"))
     void OnPreviewOpened();
 
-    /**
-     * Called when the preview is closed.
-     * Override in Blueprint to animate the widget out, restore input mode, etc.
-     */
-    UFUNCTION(BlueprintImplementableEvent, Category = "MaxiMall | Preview Events",
-              meta = (DisplayName = "On Preview Closed"))
+    UFUNCTION(BlueprintImplementableEvent, Category = "MaxiMall | Preview Events", meta = (DisplayName = "On Preview Closed"))
     void OnPreviewClosed();
 
-    // ─────────────────────────────────────────────────────────────────────
-    // CONFIG
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђ CONFIG в”Ђв”Ђ
 
-    /** The Blueprint subclass of AFurniturePreviewActor to spawn for the preview. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config",
-              meta = (DisplayName = "Preview Actor Class"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Actor Class"))
     TSubclassOf<AFurniturePreviewActor> PreviewActorClass;
 
-    /**
-     * World-space location where the preview actor is spawned.
-     * Place this far from the main level so it is outside camera view
-     * but still within the streaming distance for the capture component.
-     * Default: 10000 units up from the world origin.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config",
-              meta = (DisplayName = "Preview Staging Location"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Staging Location"))
     FVector PreviewStagingLocation = FVector(0.f, 0.f, 10000.f);
 
-    /**
-     * Mouse/touch drag sensitivity multiplier for orbit input.
-     * Increase to rotate faster, decrease for finer control.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config",
-              meta = (DisplayName = "Orbit Sensitivity", ClampMin = "0.1", ClampMax = "10.0"))
+     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Orbit Sensitivity", ClampMin = "0.1", ClampMax = "10.0"))
     float OrbitSensitivity = 1.f;
 
-    /**
-     * Maximum time (in seconds) between two left-mouse clicks for them to
-     * count as a double-click.
-     *
-     * In the Unreal Editor the default 0.25 s works well. Over Pixel Streaming,
-     * input events travel through the browser → WebRTC data channel → UE plugin
-     * pipeline, adding ~50-150 ms of latency per event. 0.5 s is the "golden mean":
-     * comfortable on all connections without feeling sluggish on fast ones.
-     *
-     * Adjust from the Blueprint Class Defaults if needed — no recompile required.
-     */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "MaxiMall | Preview Config",
-              meta = (DisplayName = "Double-Click Threshold (s)", ClampMin = "0.1", ClampMax = "2.0"))
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Double-Click Threshold (s)", ClampMin = "0.1", ClampMax = "2.0"))
     float DoubleClickThreshold = 0.5f;
 
-    /** Static mesh asset used for the studio backdrop (e.g. an inverted sphere). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config",
-              meta = (DisplayName = "Backdrop Static Mesh"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Backdrop Static Mesh"))
     TSoftObjectPtr<UStaticMesh> BackdropMeshAsset;
 
-    /** Material asset used for the studio backdrop (e.g. unlit two-sided white). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config",
-              meta = (DisplayName = "Backdrop Material"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Backdrop Material"))
     TSoftObjectPtr<UMaterialInterface> BackdropMaterialAsset;
 
-    // ── CONFIGURATOR UI CONFIGURATION ────────────────────────────────────────
-
-    /** Widget Blueprint class for the main configurator UI. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
     TSubclassOf<UUserWidget> MainWidgetClass;
 
-    /** Widget Blueprint class for the isolated viewmode overlay. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
     TSubclassOf<UUserWidget> ViewmodeOverlayClass;
 
-    /** Live instance of the main configurator widget. */
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> MainWidgetInstance;
 
-    /** Live instance of the isolated viewmode overlay widget. */
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> ViewmodeOverlayInstance;
 
-    /** Opens or closes the configurator UI in the main world. */
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
+
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | PixelStreaming", meta = (DisplayName = "Send Open URL to Browser"))
+    void SendOpenURLToBrowser(const FString& URL);
+
+    UFUNCTION(Server, Reliable, WithValidation)
+    void Server_LoadBoothState(AShowroomBooth* TargetBooth, FShowroomBoothConfigState State);
 
 protected:
     UFUNCTION(Server, Reliable, WithValidation)
@@ -312,57 +158,46 @@ protected:
     void Server_RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
 
 private:
-
-    /**
-     * The currently active preview actor. Null when no preview is open.
-     * Explicitly not replicated — local to this machine's controller only.
-     */
     UPROPERTY()
     TObjectPtr<AFurniturePreviewActor> ActivePreviewActor;
 
-    /** Caches the player's control rotation before entering preview mode to restore it on exit. */
     FRotator SavedControlRotation;
 
-
-    /** Delegate callback called when the target showroom booth's configuration changes. */
     UFUNCTION()
     void OnTargetBoothProductChanged(AShowroomBooth* Booth, FName NewProductID);
 
-    /** Weak pointer to the currently hovered interactable component for highlight feedback. */
     UPROPERTY()
     TWeakObjectPtr<UPrimitiveComponent> HoveredComponent;
 
-    /** Flag to prevent race-condition re-triggering of interactions in the same frame as closing the UI. */
     bool bIsClosingUI = false;
 
-    /** Time when the left mouse button was last pressed, used for C++ double click detection. */
     float LastClickTime = 0.f;
 
-    /**
-     * Tracks whether we were hovering over an interactive component on the
-     * previous frame. Used to avoid sending redundant data-channel cursor
-     * messages on every tick when the hover state has not changed.
-     */
     bool bWasHoveringInteractable = false;
 
-    /**
-     * Sends a cursor-change message to the browser via the Pixel Streaming
-     * data channel. In the Editor and non-PS builds this is a safe no-op.
-     * @param bHovering  true → 'pointer' (hand), false → 'default' (arrow).
-     */
     void BroadcastCursorState(bool bHovering);
 
-    /** Handler for left mouse button press to detect double click in C++. */
     void OnLeftMouseButtonPressed();
-
-    /** Called when Right Mouse Button is pressed — records the screen position for drag detection. */
-    void OnRightMouseButtonPressed();
 
     /** True while the camera is being rotated with RMB held.
      *  Set by AddYawInput/AddPitchInput; reset on RMB release. */
     bool bRightMouseIsDragging = false;
 
+    UPROPERTY()
+    TObjectPtr<UPixelStreamingInput> PixelStreamingInput;
+
+    UPROPERTY()
+    TObjectPtr<UPixelStreamingInput> ActivePixelStreamingInput;
+
+    FString LastKnownClipboardContent;
+    float ClipboardCheckInterval = 0.2f;
+    float ClipboardCheckTimer = 0.0f;
+
+    UFUNCTION()
+    void OnPixelStreamingInput(const FString& Descriptor);
+
 public:
     /** Returns true if the player is currently rotating the camera with RMB held. */
     FORCEINLINE bool IsRightMouseDragging() const { return bRightMouseIsDragging; }
 };
+

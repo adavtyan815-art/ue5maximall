@@ -24,12 +24,17 @@ public class MaxiMall : ModuleRules
 			"InputCore",
 			"NetCore",       // Replication helpers
 			"UMG",           // UUserWidget for the isolated preview viewport
+			"Http",
+			"Json",
+			"JsonUtilities",
+			"ApplicationCore",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"Slate",
 			"SlateCore",
+			"ImageWrapper",
 			// Required for IPixelStreamingModule / IPixelStreamingStreamer used in
 			// MaxiMallPreviewController::BroadcastCursorState (cursor data channel).
 			// FModuleManager::GetModulePtr guards against the module being absent

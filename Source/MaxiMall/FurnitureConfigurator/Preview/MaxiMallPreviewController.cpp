@@ -1,8 +1,6 @@
-// Copyright MaxiMall Project. All Rights Reserved.
-// MaxiMallPreviewController.cpp
+﻿#include "MaxiMallPreviewController.h"
 
-#include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
-
+#include <Net/Core/Connection/NetCloseResult.h>
 #include "GameFramework/GameUserSettings.h"
 #include "Engine/Engine.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
@@ -21,30 +19,27 @@
 #include "Widgets/SViewport.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/GameViewportClient.h"
-// Pixel Streaming data channel — used to relay cursor state to the browser.
-// The module is always present in builds that include the PixelStreaming plugin;
-// the BroadcastCursorState helper guards against it being unavailable at runtime.
 #include "IPixelStreamingModule.h"
-// PixelStreamingInputProtocol is in the PixelStreamingInput module and provides
-// the message ID lookup used by SendPlayerMessage ("Response" message type).
 #include "PixelStreamingInputProtocol.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constructor
-// ─────────────────────────────────────────────────────────────────────────────
+#include "PixelStreamingInputComponent.h"
+#include "HAL/PlatformApplicationMisc.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 AMaxiMallPreviewController::AMaxiMallPreviewController()
 {
-    // Player controllers replicate by default — that's fine, only the
-    // ActivePreviewActor property is explicitly excluded from replication.
+    // Initialize properties
     ActivePreviewActor = nullptr;
     CurrentTargetBooth = nullptr;
     CurrentTargetComponent = EFurnitureComponentType::None;
     HoveredComponent = nullptr;
     bIsClosingUI = false;
     LastClickTime = 0.f;
+    DoubleClickThreshold = 0.5f;
+    bRightMouseIsDragging = false;
     
-    // Default to the C++ base class so it is not empty in the Editor by default
+    // Default preview actor class
     PreviewActorClass = AFurniturePreviewActor::StaticClass();
 
     MainWidgetClass = nullptr;
@@ -52,10 +47,12 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
     MainWidgetInstance = nullptr;
     ViewmodeOverlayInstance = nullptr;
 
-    // Set default fallback asset paths (using the engine's built-in shape sphere)
+    // Set default fallback asset paths
     BackdropMeshAsset = FSoftObjectPath(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    // Default material fallback path (engine default material)
     BackdropMaterialAsset = FSoftObjectPath(TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+
+    // Create the Pixel Streaming Input component
+    PixelStreamingInput = CreateDefaultSubobject<UPixelStreamingInput>(TEXT("PixelStreamingInputComponent"));
 }
 
 void AMaxiMallPreviewController::BeginPlay()
@@ -64,23 +61,23 @@ void AMaxiMallPreviewController::BeginPlay()
 
     UE_LOG(LogTemp, Warning, TEXT("AMaxiMallPreviewController::BeginPlay - Player Controller Initialized. IsLocalController: %s"), IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"));
 
-    // Ensure we start with the consistent mouse cursor behavior (visible by default, hides when clicking/capturing)
     if (IsLocalController())
     {
+        if (PixelStreamingInput)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[Clipboard] Binding dynamic OnPixelStreamingInput callback on local client."));
+            PixelStreamingInput->OnInputEvent.AddDynamic(this, &AMaxiMallPreviewController::OnPixelStreamingInput);
+        }
+
         // Force Epic quality scalability settings to prevent virtual server fallbacks
         if (UGameUserSettings* GameUserSettings = UGameUserSettings::GetGameUserSettings())
         {
-            UE_LOG(LogTemp, Warning, TEXT("AMaxiMallPreviewController::BeginPlay - Overall Scalability Level before override: %d"), GameUserSettings->GetOverallScalabilityLevel());
-            
-            GameUserSettings->SetOverallScalabilityLevel(3); // 3 = Epic Quality
-            GameUserSettings->ApplySettings(false);
-            
-            UE_LOG(LogTemp, Warning, TEXT("AMaxiMallPreviewController::BeginPlay - Overall Scalability Level after override: %d"), GameUserSettings->GetOverallScalabilityLevel());
-            UE_LOG(LogTemp, Warning, TEXT("  sg.ShadowQuality: %d"), GameUserSettings->GetShadowQuality());
-            UE_LOG(LogTemp, Warning, TEXT("  sg.GlobalIlluminationQuality: %d"), GameUserSettings->GetGlobalIlluminationQuality());
-            UE_LOG(LogTemp, Warning, TEXT("  sg.ReflectionQuality: %d"), GameUserSettings->GetReflectionQuality());
-            UE_LOG(LogTemp, Warning, TEXT("  sg.TextureQuality: %d"), GameUserSettings->GetTextureQuality());
-            UE_LOG(LogTemp, Warning, TEXT("  sg.PostProcessQuality: %d"), GameUserSettings->GetPostProcessingQuality());
+            if (GameUserSettings->GetOverallScalabilityLevel() != 3)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("AMaxiMallPreviewController::BeginPlay - Overriding overall scalability level to Epic (3)."));
+                GameUserSettings->SetOverallScalabilityLevel(3); // 3 = Epic Quality
+                GameUserSettings->ApplySettings(false);
+            }
         }
         else
         {
@@ -106,9 +103,44 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         return;
     }
 
-    // Reset drag flag as soon as RMB is released.
-    // The flag itself is set in AddYawInput/AddPitchInput whenever the camera
-    // actually rotates while RMB is held — that is the only reliable signal.
+    // Dynamically check for active Pixel Streaming Input components that are not our default subobject
+    if (ActivePixelStreamingInput == nullptr)
+    {
+        TArray<UPixelStreamingInput*> InputComponents;
+        GetComponents<UPixelStreamingInput>(InputComponents);
+        for (UPixelStreamingInput* PSInput : InputComponents)
+        {
+            if (PSInput && PSInput != PixelStreamingInput)
+            {
+                ActivePixelStreamingInput = PSInput;
+                ActivePixelStreamingInput->OnInputEvent.AddDynamic(this, &AMaxiMallPreviewController::OnPixelStreamingInput);
+                break;
+            }
+        }
+    }
+
+    // Throttled clipboard monitoring: checks 5 times a second
+    ClipboardCheckTimer += DeltaTime;
+    if (ClipboardCheckTimer >= ClipboardCheckInterval)
+    {
+        ClipboardCheckTimer = 0.0f;
+
+        FString CurrentClipboard;
+        FPlatformApplicationMisc::ClipboardPaste(CurrentClipboard);
+
+        if (CurrentClipboard != LastKnownClipboardContent)
+        {
+            LastKnownClipboardContent = CurrentClipboard;
+            
+            UPixelStreamingInput* TargetInput = (ActivePixelStreamingInput != nullptr) ? ActivePixelStreamingInput.Get() : PixelStreamingInput.Get();
+            if (TargetInput)
+            {
+                FString Payload = FString::Printf(TEXT("MaxiMallClipboard %s"), *CurrentClipboard);
+                TargetInput->SendPixelStreamingResponse(Payload);
+            }
+        }
+    }
+
     if (!IsInputKeyDown(EKeys::RightMouseButton))
     {
         bRightMouseIsDragging = false;
@@ -117,7 +149,6 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
     UPrimitiveComponent* NewHoveredComp = nullptr;
     AShowroomBooth* HitBooth = nullptr;
     
-    // We only highlight if we are NOT in viewmode (viewmode staging is isolated)
     if (!ActivePreviewActor)
     {
         FHitResult HitResult;
@@ -129,13 +160,12 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         }
         else
         {
-            // Trace from camera look direction
             FVector CameraLoc;
             FRotator CameraRot;
             GetPlayerViewPoint(CameraLoc, CameraRot);
             
             FVector Start = CameraLoc;
-            FVector End = Start + (CameraRot.Vector() * 1000.f); // 10 meters range
+            FVector End = Start + (CameraRot.Vector() * 1000.f);
             
             FCollisionQueryParams Params;
             Params.AddIgnoredActor(GetPawn());
@@ -168,7 +198,6 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         }
     }
 
-    // Update highlights and cursor
     UPrimitiveComponent* CurrentHovered = HoveredComponent.Get();
     if (CurrentHovered != NewHoveredComp)
     {
@@ -180,7 +209,7 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         if (NewHoveredComp)
         {
             NewHoveredComp->SetRenderCustomDepth(true);
-            NewHoveredComp->SetCustomDepthStencilValue(1); // Default highlight index
+            NewHoveredComp->SetCustomDepthStencilValue(1);
             
             if (bShowMouseCursor)
             {
@@ -198,7 +227,7 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         HoveredComponent = NewHoveredComp;
     }
 
-    // ── Pixel Streaming cursor data-channel broadcast ─────────────────────
+    // в”Ђв”Ђ Pixel Streaming cursor data-channel broadcast в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // Only send when the hover state actually changes to avoid flooding the
     // data channel with identical messages every tick.
     const bool bNowHovering = (NewHoveredComp != nullptr);
@@ -215,36 +244,14 @@ void AMaxiMallPreviewController::SetupInputComponent()
 
     if (InputComponent)
     {
-        InputComponent->BindKey(EKeys::LeftMouseButton,  IE_Pressed, this, &AMaxiMallPreviewController::OnLeftMouseButtonPressed);
-        InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AMaxiMallPreviewController::OnRightMouseButtonPressed);
+        InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMaxiMallPreviewController::OnLeftMouseButtonPressed);
     }
-}
-
-void AMaxiMallPreviewController::OnLeftMouseButtonPressed()
-{
-    float CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
-
-    if (CurrentTime - LastClickTime < DoubleClickThreshold)
-    {
-        HandleDoubleClickInteraction();
-        LastClickTime = 0.f;
-        return;
-    }
-    
-    LastClickTime = CurrentTime;
-}
-
-void AMaxiMallPreviewController::OnRightMouseButtonPressed()
-{
-    // Reset drag flag on every new press so a clean click starts fresh.
-    bRightMouseIsDragging = false;
 }
 
 void AMaxiMallPreviewController::AddYawInput(float Val)
 {
     Super::AddYawInput(Val);
-    // UE calls this whenever mouse X movement rotates the camera.
-    // If RMB is held at the same time, the user is doing a camera drag, not a click.
+
     if (Val != 0.f && IsInputKeyDown(EKeys::RightMouseButton))
     {
         bRightMouseIsDragging = true;
@@ -254,16 +261,16 @@ void AMaxiMallPreviewController::AddYawInput(float Val)
 void AMaxiMallPreviewController::AddPitchInput(float Val)
 {
     Super::AddPitchInput(Val);
-    // Same as above for vertical (pitch) rotation.
+
     if (Val != 0.f && IsInputKeyDown(EKeys::RightMouseButton))
     {
         bRightMouseIsDragging = true;
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Pixel Streaming Cursor Broadcast
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 void AMaxiMallPreviewController::BroadcastCursorState(bool bHovering)
 {
@@ -312,9 +319,58 @@ void AMaxiMallPreviewController::BroadcastCursorState(bool bHovering)
 #endif
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Preview Management
-// ─────────────────────────────────────────────────────────────────────────────
+void AMaxiMallPreviewController::OnLeftMouseButtonPressed()
+{
+    float CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
+
+    if (CurrentTime - LastClickTime < DoubleClickThreshold)
+    {
+        HandleDoubleClickInteraction();
+        LastClickTime = 0.f;
+        return;
+    }
+    
+    LastClickTime = CurrentTime;
+}
+
+FString AMaxiMallPreviewController::GetRequestURL() const {
+	UNetConnection* netConnection = GetNetConnection();
+	if (netConnection == NULL) return FString();
+	return netConnection->RequestURL;
+}
+
+TArray<FString> AMaxiMallPreviewController::GetRequestOptions() const {
+	UNetConnection* netConnection = GetNetConnection();
+	if (netConnection == NULL) return TArray<FString>();
+	FURL InURL( NULL, *netConnection->RequestURL, TRAVEL_Absolute );
+	return InURL.Op;
+}
+
+bool AMaxiMallPreviewController::HasRequestOption(const FString& key) const {
+	UNetConnection* netConnection = GetNetConnection();
+	if (netConnection == NULL) return false;
+	FURL InURL( NULL, *netConnection->RequestURL, TRAVEL_Absolute );
+	return InURL.HasOption(*key);
+}
+
+FString AMaxiMallPreviewController::GetRequestOption(const FString& key) const {
+	UNetConnection* netConnection = GetNetConnection();
+	if (netConnection == NULL) return FString("");
+	FURL InURL( NULL, *netConnection->RequestURL, TRAVEL_Absolute );
+	const TCHAR* o = InURL.GetOption(*key, NULL);
+	if (o == NULL) return FString("");
+	if (o[0] == '=') return FString(o + 1);
+	return FString(o);
+}
+
+void AMaxiMallPreviewController::Kick_Implementation() {
+	UNetConnection* netConnection = GetNetConnection();
+	if (netConnection == NULL) return;
+
+	netConnection->Close(UE::Net::FNetCloseResult());
+}
+
+// в”Ђв”Ђ CONFIGURATOR PREVIEW MANAGEMENT в”Ђв”Ђ
 
 void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBooth, EFurnitureComponentType FocusComponent)
 {
@@ -336,34 +392,28 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
 
     CurrentTargetComponent = FocusComponent;
 
-    // Safety check: Ensure we have a possessed pawn before allowing preview mode
     if (!GetPawn())
     {
         UE_LOG(LogTemp, Warning, TEXT("[PreviewController] OpenFurniturePreview called before possessing a pawn. Ignoring."));
         return;
     }
 
-    // Disable character look/move inputs to prevent character movement/rotation during preview
     ResetIgnoreInputFlags();
     SetIgnoreLookInput(true);
     SetIgnoreMoveInput(true);
 
-    // Hide the main configurator UI widget when entering viewmode
     if (MainWidgetInstance)
     {
         MainWidgetInstance->RemoveFromParent();
     }
 
-    // Capture the current control rotation before entering preview mode (if not already in preview)
     if (!ActivePreviewActor)
     {
         SavedControlRotation = GetControlRotation();
     }
 
-    // ── 1. Close any existing preview first ───────────────────────────────
     CloseFurniturePreview();
 
-    // ── 2. Read the active product data from the booth ────────────────────
     FFurnitureProductRow ProductSnapshot;
     if (!TargetBooth->GetActiveProductData(ProductSnapshot))
     {
@@ -373,7 +423,6 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         return;
     }
 
-    // ── 3. Spawn the preview actor (client-local, not replicated) ─────────
     UWorld* World = GetWorld();
     if (!World)
     {
@@ -381,18 +430,15 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     }
 
     FActorSpawnParameters SpawnParams;
-    SpawnParams.Owner              = this;
-    SpawnParams.SpawnCollisionHandlingOverride =
-        ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    SpawnParams.Owner = this;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-    // SpawnActor will call the constructor which sets bReplicates = false.
     UClass* SpawnClass = PreviewActorClass;
     if (!SpawnClass)
     {
         SpawnClass = AFurniturePreviewActor::StaticClass();
     }
 
-    // Print runtime spawn class details for debugging/exposure validation
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
     FRotator SpawnRotation = FRotator::ZeroRotator;
@@ -413,7 +459,6 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         return;
     }
 
-    // Isolate view by hiding ALL other actors in the level locally for this player only
     HiddenActors.Empty();
     for (TActorIterator<AActor> It(World); It; ++It)
     {
@@ -424,10 +469,8 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         }
     }
 
-    // ── 4. Load the product snapshot into the preview actor ───────────────
     ActivePreviewActor->LoadProductPreview(ProductSnapshot, TargetBooth->ActiveState, TargetBooth);
 
-    // Isolate target component in the preview actor by hiding others
     if (CurrentTargetComponent != EFurnitureComponentType::None)
     {
         if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
@@ -441,7 +484,6 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(false);
         if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(false);
 
-        // Show only the selected component mesh
         switch (CurrentTargetComponent)
         {
         case EFurnitureComponentType::Cabinet:
@@ -508,30 +550,24 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         }
     }
 
-    // Focus camera orbit on the isolated component
     if (CurrentTargetComponent != EFurnitureComponentType::None)
     {
         ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);
     }
 
-    // Calculate and apply starting preview camera angles to match player's view relative to the booth
     float InitialYaw = FRotator::NormalizeAxis(SavedControlRotation.Yaw - SpawnRotation.Yaw);
     float InitialPitch = FRotator::NormalizeAxis(SavedControlRotation.Pitch);
     ActivePreviewActor->SetInitialRotation(InitialYaw, InitialPitch);
 
-    // Bind to the booth's product change delegate to keep the preview actor in sync dynamically
     CurrentTargetBooth = TargetBooth;
     CurrentTargetBooth->OnProductChanged.AddDynamic(this, &AMaxiMallPreviewController::OnTargetBoothProductChanged);
 
-    // Load and assign the backdrop static mesh and material dynamically
     UStaticMesh* LoadedBackdropMesh = BackdropMeshAsset.LoadSynchronous();
     UMaterialInterface* LoadedBackdropMat = BackdropMaterialAsset.LoadSynchronous();
     ActivePreviewActor->SetupBackdrop(LoadedBackdropMesh, LoadedBackdropMat);
 
-    // ── 5. Switch viewport view target to the preview actor ────────────────
     SetViewTargetWithBlend(ActivePreviewActor, 0.0f);
 
-    // Show the viewmode overlay UI widget
     if (!ViewmodeOverlayInstance && ViewmodeOverlayClass)
     {
         ViewmodeOverlayInstance = CreateWidget<UUserWidget>(this, ViewmodeOverlayClass);
@@ -556,9 +592,9 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         bShowMouseCursor = true;
     }
 
-    // ── 6. Fire the Blueprint hook so the widget can animate in ───────────
     OnPreviewOpened();
 }
+
 void AMaxiMallPreviewController::CloseFurniturePreview()
 {
     if (!IsLocalController())
@@ -566,7 +602,6 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
         return;
     }
 
-    // Restore visibility of all showroom booths in the level for the local player locally
     HiddenActors.Empty();
 
     AShowroomBooth* PreviousBooth = CurrentTargetBooth;
@@ -580,21 +615,16 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
         return;
     }
 
-    // Disable exposure/post-processing overrides on the preview camera before destroying it
-    // to prevent exposure settings from leaking/persisting on the player's camera manager
     if (ActivePreviewActor->Camera)
     {
         ActivePreviewActor->Camera->PostProcessBlendWeight = 0.f;
         ActivePreviewActor->Camera->PostProcessSettings = FPostProcessSettings();
     }
 
-    // Restore viewport view target to player pawn instantly
     SetViewTargetWithBlend(GetPawn(), 0.0f);
 
-    // Restore the control rotation to prevent rotation drift on exit
     SetControlRotation(SavedControlRotation);
 
-    // Remove viewmode overlay and restore main configurator UI widget on exit
     if (ViewmodeOverlayInstance)
     {
         ViewmodeOverlayInstance->RemoveFromParent();
@@ -602,13 +632,11 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
 
     if (PreviousBooth && MainWidgetInstance)
     {
-        // Maintain ignore look/move inputs when returning to the main configurator UI
         ResetIgnoreInputFlags();
         SetIgnoreLookInput(true);
         SetIgnoreMoveInput(true);
 
         CurrentTargetBooth = PreviousBooth;
-        // Re-bind the delegate since we removed it above
         CurrentTargetBooth->OnProductChanged.AddUniqueDynamic(this, &AMaxiMallPreviewController::OnTargetBoothProductChanged);
 
         UConfiguratorMainWidget* MainWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance);
@@ -635,13 +663,11 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
 
         bIsClosingUI = true;
 
-        // Defer input mode and focus restoration to the next tick to prevent Slate capture stealing focus
         TWeakObjectPtr<AMaxiMallPreviewController> WeakThis(this);
         GetWorld()->GetTimerManager().SetTimerForNextTick([WeakThis]()
         {
             if (AMaxiMallPreviewController* StrongThis = WeakThis.Get())
             {
-                // Restore character look/move inputs
                 StrongThis->ResetIgnoreInputFlags();
                 StrongThis->SetIgnoreLookInput(false);
                 StrongThis->SetIgnoreMoveInput(false);
@@ -666,11 +692,9 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
         });
     }
 
-    // Destroy the local actor. This is a local operation — no RPC needed.
     ActivePreviewActor->Destroy();
     ActivePreviewActor = nullptr;
 
-    // Fire the Blueprint hook so the widget can animate out.
     OnPreviewClosed();
 }
 
@@ -681,9 +705,8 @@ void AMaxiMallPreviewController::HandlePreviewOrbitInput(float DeltaYaw, float D
         return;
     }
 
-    // Apply sensitivity scaling and forward to the preview actor.
     ActivePreviewActor->RotatePreview(
-        DeltaYaw   * OrbitSensitivity,
+        DeltaYaw * OrbitSensitivity,
         DeltaPitch * OrbitSensitivity);
 }
 
@@ -707,10 +730,6 @@ bool AMaxiMallPreviewController::IsPreviewActive() const
 {
     return ActivePreviewActor != nullptr;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Booth Interaction Wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 void AMaxiMallPreviewController::RequestBoothProductChange(AShowroomBooth* TargetBooth, FName NewProductID)
 {
@@ -763,10 +782,6 @@ void AMaxiMallPreviewController::RequestBoothComponentSelection(AShowroomBooth* 
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Server RPC Implementations for Booth Interactions
-// ─────────────────────────────────────────────────────────────────────────────
-
 void AMaxiMallPreviewController::Server_RequestBoothDoorToggle_Implementation(AShowroomBooth* TargetBooth, int32 SlotIndex)
 {
     if (TargetBooth)
@@ -806,13 +821,29 @@ bool AMaxiMallPreviewController::Server_RequestBoothComponentSelection_Validate(
     return true;
 }
 
+void AMaxiMallPreviewController::Server_LoadBoothState_Implementation(AShowroomBooth* TargetBooth, FShowroomBoothConfigState State)
+{
+    if (TargetBooth)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][Server] Loading booth state for '%s' (Product: '%s')"), 
+            *TargetBooth->GetName(), *State.ProductID.ToString());
+
+        TargetBooth->ActiveState = State;
+        TargetBooth->RebuildBoothVisuals();
+    }
+}
+
+bool AMaxiMallPreviewController::Server_LoadBoothState_Validate(AShowroomBooth* TargetBooth, FShowroomBoothConfigState State)
+{
+    return true;
+}
+
 bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBooth, EFurnitureComponentType& OutComponentType, UPrimitiveComponent*& OutHitComponent)
 {
     OutBooth = nullptr;
     OutComponentType = EFurnitureComponentType::None;
     OutHitComponent = nullptr;
 
-    // Block interaction if UI is currently closing, if a preview is active, or if the configurator UI is already open on the viewport
     if (bIsClosingUI)
     {
         return false;
@@ -821,14 +852,12 @@ bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBoo
     {
         return false;
     }
-
     if (MainWidgetInstance && MainWidgetInstance->IsInViewport())
     {
         return false;
     }
 
     FHitResult HitResult;
-    // Trace under the mouse cursor using visibility channel
     const bool bHit = GetHitResultUnderCursor(ECC_Visibility, false, HitResult);
 
     if (bHit)
@@ -842,7 +871,6 @@ bool AMaxiMallPreviewController::TraceFurnitureComponent(AShowroomBooth*& OutBoo
             OutBooth = HitBooth;
             OutHitComponent = HitComp;
 
-            // Lock in the targeted showroom booth
             CurrentTargetBooth = HitBooth;
 
             if (OutHitComponent == HitBooth->MainCabinet.Get())
@@ -946,7 +974,6 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
         {
             ActivePreviewActor->LoadProductPreview(ProductSnapshot, Booth->ActiveState, Booth);
 
-            // Isolate target component in the preview actor by hiding others
             if (CurrentTargetComponent != EFurnitureComponentType::None)
             {
                 if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
@@ -960,7 +987,6 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                 if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(false);
                 if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(false);
 
-                // Show only the selected component mesh
                 switch (CurrentTargetComponent)
                 {
                 case EFurnitureComponentType::Cabinet:
@@ -1027,7 +1053,6 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
                 }
             }
 
-            // Maintain camera focus on the isolated component
             if (CurrentTargetComponent != EFurnitureComponentType::None)
             {
                 ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);
@@ -1035,7 +1060,6 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
         }
     }
 
-    // Refresh main UI combo selections if open
     if (MainWidgetInstance && MainWidgetInstance->IsInViewport() && Booth == CurrentTargetBooth)
     {
         UConfiguratorMainWidget* MainWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance);
@@ -1055,11 +1079,6 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
 
     if (bOpen)
     {
-        // Block if the player is rotating the camera with RMB.
-        // NOTE: Do NOT add IsInputKeyDown here — the Blueprint fires this function
-        // on the Pressed event, so RMB is always down at the call site. Only the
-        // drag flag (set via raw mouse axis in PlayerTick) reliably distinguishes
-        // a camera rotation from a genuine click.
         if (bRightMouseIsDragging)
         {
             return;
@@ -1067,23 +1086,20 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
 
         if (!Booth) return;
 
-
         if (Component == EFurnitureComponentType::Doors)
         {
             Component = EFurnitureComponentType::Cabinet;
         }
 
-        // Disable character look/move inputs to prevent character movement/rotation during configuration
         ResetIgnoreInputFlags();
         SetIgnoreLookInput(true);
         SetIgnoreMoveInput(true);
 
         if (!MainWidgetClass)
         {
-            UE_LOG(LogTemp, Error, TEXT("[PreviewController] ToggleConfiguratorUI failed: MainWidgetClass is null! Please configure MainWidgetClass in your Player Controller defaults."));
+            UE_LOG(LogTemp, Error, TEXT("[PreviewController] ToggleConfiguratorUI failed: MainWidgetClass is null!"));
         }
 
-        // If another configuration widget is open on a different booth, close it first
         if (MainWidgetInstance && CurrentTargetBooth && CurrentTargetBooth != Booth)
         {
             ToggleConfiguratorUI(CurrentTargetBooth, CurrentTargetComponent, false);
@@ -1092,7 +1108,6 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         CurrentTargetBooth = Booth;
         CurrentTargetComponent = Component;
 
-        // Listen for booth configuration updates dynamically while UI is open
         CurrentTargetBooth->OnProductChanged.AddUniqueDynamic(this, &AMaxiMallPreviewController::OnTargetBoothProductChanged);
 
         if (!MainWidgetInstance && MainWidgetClass)
@@ -1122,7 +1137,7 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
         }
         else
         {
-            UE_LOG(LogTemp, Error, TEXT("[PreviewController] ToggleConfiguratorUI failed: MainWidgetInstance could not be created/found."));
+            UE_LOG(LogTemp, Error, TEXT("[PreviewController] ToggleConfiguratorUI failed to create main widget instance."));
         }
     }
     else
@@ -1136,14 +1151,11 @@ void AMaxiMallPreviewController::ToggleConfiguratorUI(AShowroomBooth* Booth, EFu
 
         bIsClosingUI = true;
 
-        // Defer input mode change, widget removal, and viewport focus restoration to next tick
-        // to prevent Slate mouse capture lockup when clicked from a button.
         TWeakObjectPtr<AMaxiMallPreviewController> WeakThis(this);
         GetWorld()->GetTimerManager().SetTimerForNextTick([WeakThis]()
         {
             if (AMaxiMallPreviewController* StrongThis = WeakThis.Get())
             {
-                // Restore character look/move inputs
                 StrongThis->ResetIgnoreInputFlags();
                 StrongThis->SetIgnoreLookInput(false);
                 StrongThis->SetIgnoreMoveInput(false);
@@ -1195,9 +1207,6 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
     {
         return false;
     }
-
-    // Since Cabinet (and Doors, which mapped to Cabinet) uses FFurnitureCabinetOptions,
-    // and other components use FFurnitureComponentOptions, we need to handle them separately.
 
     if (ComponentType == EFurnitureComponentType::Cabinet || ComponentType == EFurnitureComponentType::Doors)
     {
@@ -1296,7 +1305,6 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
         return false;
     }
 
-    // Search for combination match in the component metadata matrix
     for (const FFurnitureMetadataEntry& Entry : TargetOptions->CombinationsMetadata)
     {
         if (Entry.SizeIndex == TargetSizeIndex && Entry.ColorIndex == TargetColorIndex)
@@ -1308,7 +1316,6 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
         }
     }
 
-    // Fallback: If no combination is found, try to use the first combination
     if (TargetOptions->CombinationsMetadata.Num() > 0)
     {
         const FFurnitureMetadata& Fallback = TargetOptions->CombinationsMetadata[0].Metadata;
@@ -1319,4 +1326,51 @@ bool AMaxiMallPreviewController::GetActiveComponentMetadata(EFurnitureComponentT
     }
 
     return false;
+}
+
+void AMaxiMallPreviewController::OnPixelStreamingInput(const FString& Descriptor)
+{
+    TSharedPtr<FJsonObject> JsonObject;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Descriptor);
+
+    if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
+    {
+        if (JsonObject->HasField(TEXT("Cmd")) && JsonObject->GetStringField(TEXT("Cmd")) == TEXT("ClipboardPaste"))
+        {
+            FString PasteText = JsonObject->GetStringField(TEXT("Text"));
+            
+            // Remove null terminators
+            PasteText.ReplaceInline(TEXT("\0"), TEXT(""));
+
+            // 1. Set the OS-level clipboard (fallback)
+            FPlatformApplicationMisc::ClipboardCopy(*PasteText);
+            LastKnownClipboardContent = PasteText;
+
+            // 2. Direct injection via Slate Character Events (bypasses headless OS clipboard limits)
+            if (FSlateApplication::IsInitialized())
+            {
+                FSlateApplication& SlateApp = FSlateApplication::Get();
+                for (int32 i = 0; i < PasteText.Len(); ++i)
+                {
+                    FCharacterEvent CharEvent(PasteText[i], FModifierKeysState(), 0, false);
+                    SlateApp.ProcessKeyCharEvent(CharEvent);
+                }
+            }
+        }
+    }
+}
+
+void AMaxiMallPreviewController::SendOpenURLToBrowser(const FString& URL)
+{
+    UPixelStreamingInput* TargetInput = (ActivePixelStreamingInput != nullptr) ? ActivePixelStreamingInput.Get() : PixelStreamingInput.Get();
+    if (TargetInput)
+    {
+        FString Message = FString::Printf(TEXT("open_url: %s"), *URL);
+        UE_LOG(LogTemp, Warning, TEXT("[PixelStreaming] Sending open_url command to browser data channel: %s"), *Message);
+        TargetInput->SendPixelStreamingResponse(Message);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("[PixelStreaming] Cannot open URL. PixelStreamingInput component is null!"));
+    }
 }
