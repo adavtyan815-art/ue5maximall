@@ -225,7 +225,7 @@ To support copy-paste on the credentials login screen without loading heavy 3D s
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
-#include "PixelStreamingInput.h"
+#include "PixelStreamingInputComponent.h"
 #include "MaxiMallLoginPlayerController.generated.h"
 
 UCLASS()
