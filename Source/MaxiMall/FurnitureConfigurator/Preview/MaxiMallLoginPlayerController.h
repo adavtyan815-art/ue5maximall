@@ -1,10 +1,10 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
-#include "PixelStreamingInput.h"
+#include "PixelStreamingInputComponent.h"
 #include "MaxiMallLoginPlayerController.generated.h"
 
 /**
