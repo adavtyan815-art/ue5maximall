@@ -35,11 +35,37 @@ struct FFurniturePreviewLightingConfig
 {
     GENERATED_BODY()
 
+    /** Focus distance of the camera for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float FocusDistance = 250.f;
+
+    /** Field of view of the camera for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float CameraFOV = 65.f;
+
+    /** Default pitch angle of camera for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float Pitch = -15.f;
+
+    /** Default yaw angle of camera for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float Yaw = 0.f;
+
+    /** Key light intensity for this component section. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
     float KeyLightIntensity = 80000.f;
 
+    /** Fill light intensity for this component section. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
     float FillLightIntensity = 10000.f;
+
+    /** Rim light intensity for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    float RimLightIntensity = 30000.f;
+
+    /** Sun light (Directional Light) scale for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+    float DirectionalLightScale = 1.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
     FVector KeyLightLocation = FVector(-300.f, -300.f, 300.f);
@@ -256,22 +282,22 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "10.0", DisplayName = "Master Light Intensity Scale"))
     float MasterLightIntensityScale = 1.0f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
     FFurniturePreviewLightingConfig CabinetLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
     FFurniturePreviewLightingConfig ClosetLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
     FFurniturePreviewLightingConfig CountertopLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
     FFurniturePreviewLightingConfig SinkLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
     FFurniturePreviewLightingConfig FaucetLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
     FFurniturePreviewLightingConfig MirrorLighting;
 
     // ─────────────────────────────────────────────────────────────────────

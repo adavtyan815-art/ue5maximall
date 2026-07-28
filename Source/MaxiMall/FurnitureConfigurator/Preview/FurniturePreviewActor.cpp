@@ -653,45 +653,36 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType ComponentType)
 {
     UStaticMeshComponent* TargetComponent = nullptr;
-    float DefaultZoomDistance = DefaultCameraDistance;
-
-    FFurniturePreviewLightingConfig SelectedConfig;
+    FFurniturePreviewLightingConfig SelectedConfig = CabinetLighting;
 
     switch (ComponentType)
     {
     case EFurnitureComponentType::Cabinet:
         TargetComponent = CabinetMesh.Get();
-        DefaultZoomDistance = (CabinetFocusDistance == 250.f) ? DefaultCameraDistance : CabinetFocusDistance;
         SelectedConfig = CabinetLighting;
         break;
     case EFurnitureComponentType::Closet:
         TargetComponent = ClosetMesh.Get();
-        DefaultZoomDistance = (ClosetFocusDistance == 250.f) ? DefaultCameraDistance : ClosetFocusDistance;
         SelectedConfig = ClosetLighting;
         break;
     case EFurnitureComponentType::Doors:
         TargetComponent = DoorMeshSlot0.Get();
-        DefaultZoomDistance = DoorsFocusDistance;
         SelectedConfig = CabinetLighting;
         break;
     case EFurnitureComponentType::Countertop:
         TargetComponent = CountertopMesh.Get();
-        DefaultZoomDistance = CountertopFocusDistance;
         SelectedConfig = CountertopLighting;
         break;
     case EFurnitureComponentType::Sink:
         TargetComponent = SinkMesh.Get();
-        DefaultZoomDistance = SinkFocusDistance;
         SelectedConfig = SinkLighting;
         break;
     case EFurnitureComponentType::Faucet:
         TargetComponent = FaucetMesh.Get();
-        DefaultZoomDistance = FaucetFocusDistance;
         SelectedConfig = FaucetLighting;
         break;
     case EFurnitureComponentType::Mirror:
         TargetComponent = MirrorMesh.Get();
-        DefaultZoomDistance = MirrorFocusDistance;
         SelectedConfig = MirrorLighting;
         break;
     case EFurnitureComponentType::None:
@@ -718,18 +709,18 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType Component
 
     if (IsValid(SpringArm))
     {
-        SpringArm->SetRelativeRotation(FRotator(-15.f, 0.f, 0.f));
+        SpringArm->SetRelativeRotation(FRotator(SelectedConfig.Pitch, SelectedConfig.Yaw, 0.f));
         if (IsValid(TargetComponent) && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
         {
             SpringArm->SetRelativeLocation(LocalFocusLoc);
-            SpringArm->TargetArmLength = DefaultZoomDistance;
-            CurrentZoomLength = DefaultZoomDistance;
+            SpringArm->TargetArmLength = SelectedConfig.FocusDistance;
+            CurrentZoomLength = SelectedConfig.FocusDistance;
         }
         else
         {
             SpringArm->SetRelativeLocation(FVector::ZeroVector);
-            SpringArm->TargetArmLength = DefaultCameraDistance;
-            CurrentZoomLength = DefaultCameraDistance;
+            SpringArm->TargetArmLength = SelectedConfig.FocusDistance;
+            CurrentZoomLength = SelectedConfig.FocusDistance;
         }
         UpdateLightIntensityForZoom();
     }
@@ -1202,27 +1193,41 @@ void AFurniturePreviewActor::EnforceLightingSettings()
 
 void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config)
 {
-    if (!IsValid(KeyLight) || !IsValid(FillLight))
+    if (IsValid(KeyLight))
     {
-        return;
+        KeyLight->SetIntensity(Config.KeyLightIntensity * MasterLightIntensityScale);
+        KeyLight->SetRelativeLocation(Config.KeyLightLocation);
+        KeyLight->InnerConeAngle = Config.KeyLightInnerConeAngle;
+        KeyLight->OuterConeAngle = Config.KeyLightOuterConeAngle;
+        KeyLight->SetAttenuationRadius(Config.AttenuationRadius);
+        KeyLight->ShadowBias = Config.ShadowBias;
+        KeyLight->ShadowSlopeBias = Config.ShadowSlopeBias;
+        KeyLight->ContactShadowLength = Config.ContactShadowLength;
+
+        FVector LookAtTarget = FVector(0.f, 0.f, 50.f) - KeyLight->GetRelativeLocation();
+        KeyLight->SetRelativeRotation(LookAtTarget.Rotation());
     }
 
-    KeyLight->SetIntensity(Config.KeyLightIntensity);
-    FillLight->SetIntensity(Config.FillLightIntensity);
-    KeyLight->SetRelativeLocation(Config.KeyLightLocation);
-    KeyLight->InnerConeAngle = Config.KeyLightInnerConeAngle;
-    KeyLight->OuterConeAngle = Config.KeyLightOuterConeAngle;
-    KeyLight->SetAttenuationRadius(Config.AttenuationRadius);
-    FillLight->SetAttenuationRadius(Config.AttenuationRadius);
-    KeyLight->ShadowBias = Config.ShadowBias;
-    KeyLight->ShadowSlopeBias = Config.ShadowSlopeBias;
-    KeyLight->ContactShadowLength = Config.ContactShadowLength;
+    if (IsValid(FillLight))
+    {
+        FillLight->SetAttenuationRadius(Config.AttenuationRadius);
+        ActiveBaseFillIntensity = Config.FillLightIntensity;
+        UpdateLightIntensityForZoom();
+    }
 
-    FVector LookAtTarget = FVector(0.f, 0.f, 50.f) - KeyLight->GetRelativeLocation();
-    KeyLight->SetRelativeRotation(LookAtTarget.Rotation());
+    if (IsValid(RimLight))
+    {
+        RimLight->SetIntensity(Config.RimLightIntensity * MasterLightIntensityScale);
+        RimLight->SetAttenuationRadius(Config.AttenuationRadius);
+    }
 
-    ActiveBaseFillIntensity = Config.FillLightIntensity;
-    UpdateLightIntensityForZoom();
+    if (IsValid(Camera))
+    {
+        Camera->FieldOfView = Config.CameraFOV;
+    }
+
+    PreviewDirectionalLightIntensityScale = Config.DirectionalLightScale;
+    ApplyDirectionalLightScale();
 }
 
 void AFurniturePreviewActor::ApplyDirectionalLightScale()
