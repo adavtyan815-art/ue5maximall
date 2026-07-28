@@ -1,4 +1,4 @@
-﻿#include "MaxiMallPreviewController.h"
+#include "MaxiMallPreviewController.h"
 
 #include <Net/Core/Connection/NetCloseResult.h>
 #include "GameFramework/GameUserSettings.h"
