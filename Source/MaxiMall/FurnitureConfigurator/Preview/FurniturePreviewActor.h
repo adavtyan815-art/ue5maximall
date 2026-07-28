@@ -9,12 +9,11 @@
 // with bReplicates = false hard-coded in the constructor.
 //
 // Architecture:
-//   - Exposes the same six visual mesh components as AShowroomBooth, but they
-//     are driven directly from a local snapshot of FFurnitureProductRow data.
-//   - The player controller passes the active product data to LoadProductPreview().
+//   - Exposes the same visual mesh components as AShowroomBooth, driven directly
+//     from a local snapshot of FFurnitureProductRow data.
 //   - No Server RPCs exist. All functions are local-only.
 //   - Orbit/inspect rotation is driven by the player controller — the actor
-//     simply exposes RotatePreview(DeltaYaw, DeltaPitch).
+//     exposes RotatePreview(DeltaYaw, DeltaPitch).
 //
 // Compatible: UE 5.3 → UE 5.6+
 
@@ -30,7 +29,6 @@ class USpringArmComponent;
 class UCameraComponent;
 class USpotLightComponent;
 class UPointLightComponent;
-class USkyLightComponent;
 
 USTRUCT(BlueprintType)
 struct FFurniturePreviewLightingConfig
@@ -81,15 +79,20 @@ public:
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void PostInitializeComponents() override;
     virtual void OnConstruction(const FTransform& Transform) override;
 
     // ─────────────────────────────────────────────────────────────────────
-    // VISUAL COMPONENTS (mirrors AShowroomBooth layout)
+    // VISUAL COMPONENTS
     // ─────────────────────────────────────────────────────────────────────
 
     UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<USceneComponent> PreviewRoot;
+
+    /** Dynamic pivot root component for rotating furniture meshes. */
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    TObjectPtr<USceneComponent> MeshRoot;
 
     UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> CabinetMesh;
@@ -133,17 +136,13 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UStaticMeshComponent> BackdropMesh;
 
-    /** Key light for the studio setup. */
+    /** Optional Key Light spotlight (attached to SpringArm for consistent view-angle lighting). */
     UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<USpotLightComponent> KeyLight;
 
-    /** Camera-mounted fill light (headlight). */
+    /** Optional Camera-mounted Fill Light pointlight. */
     UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UPointLightComponent> FillLight;
-
-    /** Skylight component to provide ambient reflections for mirror/metallic surfaces. */
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
-    TObjectPtr<USkyLightComponent> PreviewSkyLight;
 
     /** Minimum pitch angle limit for camera orbit (in degrees). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
@@ -197,73 +196,49 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float MirrorFocusDistance = 150.f;
 
-    /** Base intensity for the camera headlight (FillLight) in Lumens. */
-    UPROPERTY()
-    float BaseFillIntensity = 40000.f;
-
-    /** Reference zoom distance corresponding to the BaseFillIntensity. */
-    UPROPERTY()
-    float ReferenceZoomDistance = 250.f;
-
-    /** Base intensity for the spotlight (KeyLight) in Lumens. */
-    UPROPERTY()
-    float BaseKeyIntensity = 80000.f;
-
-    /** Color of the key light. */
+    /** Color of the key light (pure neutral white by default). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FLinearColor KeyLightColor = FLinearColor::White;
 
-    /** Color of the fill light. */
+    /** Color of the fill light (pure neutral white by default). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FLinearColor FillLightColor = FLinearColor::White;
 
-    /** Position of the spotlight relative to the preview studio center. C++ will auto-rotate the light to look at target. */
-    UPROPERTY()
-    FVector KeyLightRelativeLocation = FVector(-300.f, -300.f, 300.f);
-
-    /** Inner spotlight cone angle in degrees. */
-    UPROPERTY()
-    float KeyLightInnerConeAngle = 30.f;
-
-    /** Outer spotlight cone angle in degrees. */
-    UPROPERTY()
-    float KeyLightOuterConeAngle = 50.f;
-
-    /** Max reach distance of the spotlight. */
-    UPROPERTY()
-    float KeyLightAttenuationRadius = 1000.f;
-
-    /** Max reach distance of the headlight. */
-    UPROPERTY()
-    float FillLightAttenuationRadius = 1000.f;
-
-    /** Shadow bias for the key light spotlight to resolve shadow acne. */
-    UPROPERTY()
-    float KeyLightShadowBias = 1.0f;
-
-    /** Shadow slope bias for the key light spotlight. */
-    UPROPERTY()
-    float KeyLightShadowSlopeBias = 1.0f;
-
-    /** Contact shadow length for the key light spotlight (0.0 = disabled). */
-    UPROPERTY()
-    float KeyLightContactShadowLength = 0.0f;
-
-    /** Shadow bias for the fill light PointLight to resolve shadow acne. */
-    UPROPERTY()
-    float FillLightShadowBias = 1.0f;
-
-    /** Shadow slope bias for the fill light PointLight. */
-    UPROPERTY()
-    float FillLightShadowSlopeBias = 1.0f;
-
-    /** Contact shadow length for the fill light PointLight (0.0 = disabled). */
-    UPROPERTY()
-    float FillLightContactShadowLength = 0.0f;
-
-    /** Toggle to isolate preview lighting using lighting channel 1. If false, uses default channel 0. */
+    /** Enable/disable shadow casting for Cabinet mesh. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    bool bUseLightingChannels = true;
+    bool bCabinetCastShadow = true;
+
+    /** Enable/disable shadow casting for Closet mesh. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    bool bClosetCastShadow = true;
+
+    /** Enable/disable shadow casting for Countertop mesh. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    bool bCountertopCastShadow = true;
+
+    /** Enable/disable shadow casting for Sink mesh. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    bool bSinkCastShadow = false;
+
+    /** Enable/disable shadow casting for Faucet mesh. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    bool bFaucetCastShadow = true;
+
+    /** Enable/disable shadow casting for Mirror mesh. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    bool bMirrorCastShadow = true;
+
+    /** Toggle Key Light on/off independently. When true, simply adds Key Light to main scene lighting. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (DisplayName = "Enable Key Light"))
+    bool bEnableKeyLight = false;
+
+    /** Toggle Fill Light on/off independently. When true, simply adds Fill Light to main scene lighting. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (DisplayName = "Enable Fill Light"))
+    bool bEnableFillLight = false;
+
+    /** Intensity multiplier applied to the world Directional Light while the preview is active. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+    float PreviewDirectionalLightIntensityScale = 1.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FFurniturePreviewLightingConfig CabinetLighting;
@@ -283,29 +258,16 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FFurniturePreviewLightingConfig MirrorLighting;
 
-
-
-
-
-
-
     // ─────────────────────────────────────────────────────────────────────
     // PUBLIC API
     // ─────────────────────────────────────────────────────────────────────
 
-    /**
-     * Applies a product snapshot locally. Rebuilds all six mesh components.
-     * Called by the player controller after it reads the active booth product.
-     *
-     * @param ProductData  A value copy of FFurnitureProductRow (no server reference).
-     */
+    /** Applies a product snapshot locally. Rebuilds all mesh components. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Load Product Preview"))
     void LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState, class AShowroomBooth* SourceBooth);
 
-    /**
-     * Inspect and focus the camera orbit around a specific model component.
-     */
+    /** Inspect and focus the camera orbit around a specific model component. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Set Focus Component"))
     void SetFocusComponent(EFurnitureComponentType ComponentType);
@@ -314,21 +276,12 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Preview | Control")
     void SetupBackdrop(UStaticMesh* InMesh, UMaterialInterface* InMaterial);
 
-    /**
-     * Rotates the preview around its local up-axis (Yaw) and local right-axis (Pitch).
-     * Intended to be called every frame from the player controller while the
-     * user drags within the preview widget. Does NOT send any RPC.
-     *
-     * @param DeltaYaw    Horizontal drag delta in degrees.
-     * @param DeltaPitch  Vertical drag delta in degrees (clamped internally).
-     */
+    /** Rotates the preview camera around its target. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Rotate Preview"))
     void RotatePreview(float DeltaYaw, float DeltaPitch);
 
-    /**
-     * Resets the preview rotation to the default facing angle.
-     */
+    /** Resets the preview rotation to the default facing angle. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Reset Preview Rotation"))
     void ResetRotation();
@@ -338,35 +291,30 @@ public:
               meta = (DisplayName = "Set Initial Rotation"))
     void SetInitialRotation(float InYaw, float InPitch);
 
-    /**
-     * Zooms the camera by adjusting the SpringArm TargetArmLength.
-     *
-     * @param DeltaZoom  Distance to zoom (positive zooms out, negative zooms in).
-     */
+    /** Zooms the camera by adjusting the SpringArm TargetArmLength. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Zoom Preview"))
     void ZoomPreview(float DeltaZoom);
 
+    /** Dynamically toggles Key Light. */
+    UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Key Light Enabled"))
+    void SetKeyLightEnabled(bool bEnable);
+
+    /** Dynamically toggles Fill Light. */
+    UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Fill Light Enabled"))
+    void SetFillLightEnabled(bool bEnable);
+
 private:
 
-    /** Current accumulated spring arm length. */
     float CurrentZoomLength = 250.f;
-
-
-
-    /** Current accumulated yaw (horizontal) rotation in degrees. */
     float CurrentYaw   = 0.f;
-
-    /** Current accumulated pitch (vertical) rotation in degrees. */
     float CurrentPitch = 0.f;
-
-    /** Default Yaw (horizontal) camera angle in degrees. */
     float DefaultYaw = 0.f;
-
-    /** Default Pitch (vertical) camera angle in degrees. */
     float DefaultPitch = -15.f;
 
-    /** Helper — applies dynamic size and color selections to a target mesh component. */
+    float ActiveBaseFillIntensity = 10000.f;
+    float ReferenceZoomDistance = 250.f;
+
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                         const FFurnitureComponentOptions& Options,
                                         int32 SizeIndex,
@@ -377,19 +325,23 @@ private:
                                         int32 SizeIndex,
                                         int32 ColorIndex);
 
-    /** Helper — applies dynamic size and color selections to a target door component using the dedicated door options struct. */
     void ApplyDoorMeshAndMaterials(UStaticMeshComponent* Target,
                                    const FFurnitureDoorGroup& DoorGroup,
                                    int32 SizeIndex,
                                    int32 ColorIndex,
                                    int32 SlotIndex);
 
-    /** Dynamically adjusts the camera-mounted FillLight intensity to compensate for distance attenuation. */
     void UpdateLightIntensityForZoom();
-
     void EnforceLightingSettings();
-
     void ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config);
+    void ApplyDirectionalLightScale();
+    void RestoreDirectionalLight();
 
-    float ActiveBaseFillIntensity = 40000.f;
+    float SavedDirectionalLightIntensity = -1.f;
+
+    UPROPERTY()
+    TWeakObjectPtr<class ADirectionalLight> CachedDirectionalLight;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
 };

@@ -517,6 +517,16 @@ void AShowroomBooth::RequestProductChange(FName NewProductID)
     }
 }
 
+void AShowroomBooth::RebuildBoothVisuals()
+{
+    const FFurnitureProductRow* ProductRow = FindProductRow(ActiveState.ProductID);
+    if (ProductRow)
+    {
+        ApplyProductData(*ProductRow);
+    }
+}
+
+
 void AShowroomBooth::RequestDoorToggle(int32 SlotIndex)
 {
     // Clamp slot index to valid range.

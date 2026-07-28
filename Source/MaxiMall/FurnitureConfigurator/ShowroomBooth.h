@@ -226,6 +226,10 @@ public:
               meta = (DisplayName = "Request Product Change"))
     void RequestProductChange(FName NewProductID);
 
+    /** Re-evaluates and rebuilds all booth visuals based on current ActiveState. */
+    UFUNCTION(BlueprintCallable, Category = "Booth | Interaction")
+    void RebuildBoothVisuals();
+
     /**
      * Request a size or color selection change on a specific subcomponent.
      */
