@@ -144,6 +144,10 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
     TObjectPtr<UPointLightComponent> FillLight;
 
+    /** Optional Rim / Back Light spotlight (placed behind model to separate from backdrop). */
+    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    TObjectPtr<USpotLightComponent> RimLight;
+
     /** Minimum pitch angle limit for camera orbit (in degrees). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float PitchMin = -80.f;
@@ -156,9 +160,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float DefaultCameraDistance = 250.f;
 
-    /** Field of view of the camera in degrees. */
+    /** Field of view of the camera in degrees (65° studio catalog standard). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float CameraFOV = 90.f;
+    float CameraFOV = 65.f;
 
     /** Minimum distance the camera can zoom in. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
@@ -204,6 +208,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FLinearColor FillLightColor = FLinearColor::White;
 
+    /** Color of the rim light (pure neutral white by default). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    FLinearColor RimLightColor = FLinearColor::White;
+
     /** Enable/disable shadow casting for Cabinet mesh. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     bool bCabinetCastShadow = true;
@@ -235,6 +243,10 @@ public:
     /** Toggle Fill Light on/off independently. When true, simply adds Fill Light to main scene lighting. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (DisplayName = "Enable Fill Light"))
     bool bEnableFillLight = false;
+
+    /** Toggle Rim Light on/off independently. When true, simply adds Rim Light to main scene lighting. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (DisplayName = "Enable Rim Light"))
+    bool bEnableRimLight = false;
 
     /** Intensity multiplier applied to the world Directional Light while the preview is active. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "10.0"))
@@ -303,6 +315,10 @@ public:
     /** Dynamically toggles Fill Light. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Fill Light Enabled"))
     void SetFillLightEnabled(bool bEnable);
+
+    /** Dynamically toggles Rim Light. */
+    UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Rim Light Enabled"))
+    void SetRimLightEnabled(bool bEnable);
 
 private:
 

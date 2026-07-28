@@ -57,7 +57,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
 
     auto ConfigurePreviewMesh = [](UStaticMeshComponent* Comp)
     {
-        if (Comp)
+        if (IsValid(Comp))
         {
             Comp->SetMobility(EComponentMobility::Movable);
             Comp->SetCastShadow(true);
@@ -92,7 +92,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     PitchMin = -80.f;
     PitchMax = 80.f;
     DefaultCameraDistance = 250.f;
-    CameraFOV = 90.f;
+    CameraFOV = 65.f;
     ZoomMin = 100.f;
     ZoomMax = 500.f;
     CabinetFocusDistance = 250.f;
@@ -112,9 +112,11 @@ AFurniturePreviewActor::AFurniturePreviewActor()
 
     KeyLightColor = FLinearColor::White;
     FillLightColor = FLinearColor::White;
+    RimLightColor = FLinearColor::White;
 
     bEnableKeyLight = false;
     bEnableFillLight = false;
+    bEnableRimLight = false;
     PreviewDirectionalLightIntensityScale = 1.0f;
 
     // Profiles
@@ -198,6 +200,23 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     FillLight->SetIntensity(ActiveBaseFillIntensity);
     FillLight->SetCastShadows(false);
     FillLight->LightingChannels.bChannel0 = true;
+
+    // ── Rim Light (Placed behind model to separate from backdrop) ───────────
+    RimLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("RimLight"));
+    RimLight->SetupAttachment(PreviewRoot);
+    RimLight->SetVisibility(bEnableRimLight);
+    RimLight->SetLightColor(RimLightColor);
+    RimLight->bUseTemperature = false;
+
+    RimLight->SetRelativeLocation(FVector(200.f, 200.f, 250.f));
+    FVector RimLookAtTarget = FVector(0.f, 0.f, 50.f) - RimLight->GetRelativeLocation();
+    RimLight->SetRelativeRotation(RimLookAtTarget.Rotation());
+
+    RimLight->InnerConeAngle = 30.f;
+    RimLight->OuterConeAngle = 60.f;
+    RimLight->SetIntensity(30000.f);
+    RimLight->SetCastShadows(false);
+    RimLight->LightingChannels.bChannel0 = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -209,11 +228,11 @@ void AFurniturePreviewActor::BeginPlay()
     Super::BeginPlay();
 
     CurrentZoomLength = DefaultCameraDistance;
-    if (SpringArm)
+    if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
-    if (Camera)
+    if (IsValid(Camera))
     {
         Camera->FieldOfView = CameraFOV;
     }
@@ -234,26 +253,26 @@ void AFurniturePreviewActor::PostInitializeComponents()
     Super::PostInitializeComponents();
 
     CurrentZoomLength = DefaultCameraDistance;
-    if (SpringArm)
+    if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
-    if (Camera)
+    if (IsValid(Camera))
     {
         Camera->FieldOfView = CameraFOV;
     }
 
     EnforceLightingSettings();
 
-    if (CountertopMesh && CabinetMesh)
+    if (IsValid(CountertopMesh) && IsValid(CabinetMesh))
     {
         CountertopMesh->AttachToComponent(CabinetMesh, FAttachmentTransformRules::KeepWorldTransform);
     }
-    if (SinkMesh && CabinetMesh)
+    if (IsValid(SinkMesh) && IsValid(CabinetMesh))
     {
         SinkMesh->AttachToComponent(CabinetMesh, FAttachmentTransformRules::KeepWorldTransform);
     }
-    if (FaucetMesh && CabinetMesh)
+    if (IsValid(FaucetMesh) && IsValid(CabinetMesh))
     {
         FaucetMesh->AttachToComponent(CabinetMesh, FAttachmentTransformRules::KeepWorldTransform);
     }
@@ -264,11 +283,11 @@ void AFurniturePreviewActor::OnConstruction(const FTransform& Transform)
     Super::OnConstruction(Transform);
     
     CurrentZoomLength = DefaultCameraDistance;
-    if (SpringArm)
+    if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
-    if (Camera)
+    if (IsValid(Camera))
     {
         Camera->FieldOfView = CameraFOV;
     }
@@ -282,40 +301,40 @@ void AFurniturePreviewActor::OnConstruction(const FTransform& Transform)
 
 void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState, AShowroomBooth* SourceBooth)
 {
-    if (SourceBooth)
+    if (IsValid(SourceBooth))
     {
-        if (CabinetMesh && SourceBooth->MainCabinet)
+        if (IsValid(CabinetMesh) && IsValid(SourceBooth->MainCabinet))
         {
             CabinetMesh->SetRelativeTransform(SourceBooth->MainCabinet->GetRelativeTransform());
         }
-        if (ClosetMesh && SourceBooth->ClosetMesh)
+        if (IsValid(ClosetMesh) && IsValid(SourceBooth->ClosetMesh))
         {
             ClosetMesh->SetRelativeTransform(SourceBooth->ClosetMesh->GetRelativeTransform());
         }
-        if (ClosetDoorMeshSlot0 && SourceBooth->ClosetDoorMeshSlot0)
+        if (IsValid(ClosetDoorMeshSlot0) && IsValid(SourceBooth->ClosetDoorMeshSlot0))
         {
             ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
         }
-        if (ClosetDoorMeshSlot1 && SourceBooth->ClosetDoorMeshSlot1)
+        if (IsValid(ClosetDoorMeshSlot1) && IsValid(SourceBooth->ClosetDoorMeshSlot1))
         {
             ClosetDoorMeshSlot1->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot1->GetRelativeTransform());
         }
-        if (CountertopMesh && SourceBooth->CountertopMesh)
+        if (IsValid(CountertopMesh) && IsValid(SourceBooth->CountertopMesh))
         {
             CountertopMesh->SetRelativeTransform(SourceBooth->CountertopMesh->GetRelativeTransform());
         }
-        if (MirrorMesh && SourceBooth->MirrorMesh)
+        if (IsValid(MirrorMesh) && IsValid(SourceBooth->MirrorMesh))
         {
             MirrorMesh->SetRelativeTransform(SourceBooth->MirrorMesh->GetRelativeTransform());
         }
     }
 
     // ── Cabinet ───────────────────────────────────────────────────────────
-    if (!SourceBooth || (SourceBooth->MainCabinet && SourceBooth->MainCabinet->GetStaticMesh() != nullptr))
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->MainCabinet) && SourceBooth->MainCabinet->GetStaticMesh() != nullptr))
     {
         ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
     }
-    else
+    else if (IsValid(CabinetMesh))
     {
         CabinetMesh->SetStaticMesh(nullptr);
         CabinetMesh->SetVisibility(false);
@@ -323,11 +342,11 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Closet ────────────────────────────────────────────────────────────
-    if (!SourceBooth || (SourceBooth->ClosetMesh && SourceBooth->ClosetMesh->GetStaticMesh() != nullptr))
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->ClosetMesh) && SourceBooth->ClosetMesh->GetStaticMesh() != nullptr))
     {
         ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ProductData.ClosetOptions, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex);
     }
-    else
+    else if (IsValid(ClosetMesh))
     {
         ClosetMesh->SetStaticMesh(nullptr);
         ClosetMesh->SetVisibility(false);
@@ -335,7 +354,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Doors ─────────────────────────────────────────────────────────────
-    if (!SourceBooth || (SourceBooth->DoorMeshSlot0 && SourceBooth->DoorMeshSlot0->GetStaticMesh() != nullptr))
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->DoorMeshSlot0) && SourceBooth->DoorMeshSlot0->GetStaticMesh() != nullptr))
     {
         const FFurnitureDoorGroup& CabDoors = ProductData.DoorsConfig.CabinetDoors;
 
@@ -345,46 +364,46 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         switch (CabDoors.DoorCount)
         {
         case EDoorCount::NoDoors:
-            DoorMeshSlot0->SetVisibility(false);
-            DoorMeshSlot1->SetVisibility(false);
+            if (IsValid(DoorMeshSlot0)) DoorMeshSlot0->SetVisibility(false);
+            if (IsValid(DoorMeshSlot1)) DoorMeshSlot1->SetVisibility(false);
             break;
         case EDoorCount::OneDoor:
-            if (DoorMeshSlot0->GetStaticMesh())
+            if (IsValid(DoorMeshSlot0) && DoorMeshSlot0->GetStaticMesh())
             {
                 DoorMeshSlot0->SetVisibility(true);
             }
-            if (SourceBooth && SourceBooth->DoorMeshSlot0)
+            if (IsValid(SourceBooth) && IsValid(SourceBooth->DoorMeshSlot0))
             {
-                DoorMeshSlot0->SetRelativeTransform(SourceBooth->DoorMeshSlot0->GetRelativeTransform());
+                if (IsValid(DoorMeshSlot0)) DoorMeshSlot0->SetRelativeTransform(SourceBooth->DoorMeshSlot0->GetRelativeTransform());
             }
-            else
+            else if (IsValid(DoorMeshSlot0))
             {
                 DoorMeshSlot0->SetRelativeLocation(CabDoors.SingleDoor.SlotConfig.ClosedPositionOffset);
             }
-            DoorMeshSlot1->SetVisibility(false);
+            if (IsValid(DoorMeshSlot1)) DoorMeshSlot1->SetVisibility(false);
             break;
         case EDoorCount::TwoDoors:
-            if (DoorMeshSlot0->GetStaticMesh())
+            if (IsValid(DoorMeshSlot0) && DoorMeshSlot0->GetStaticMesh())
             {
                 DoorMeshSlot0->SetVisibility(true);
             }
-            if (SourceBooth && SourceBooth->DoorMeshSlot0)
+            if (IsValid(SourceBooth) && IsValid(SourceBooth->DoorMeshSlot0))
             {
-                DoorMeshSlot0->SetRelativeTransform(SourceBooth->DoorMeshSlot0->GetRelativeTransform());
+                if (IsValid(DoorMeshSlot0)) DoorMeshSlot0->SetRelativeTransform(SourceBooth->DoorMeshSlot0->GetRelativeTransform());
             }
-            else
+            else if (IsValid(DoorMeshSlot0))
             {
                 DoorMeshSlot0->SetRelativeLocation(CabDoors.DoubleDoors.Slot0Config.ClosedPositionOffset);
             }
-            if (DoorMeshSlot1->GetStaticMesh())
+            if (IsValid(DoorMeshSlot1) && DoorMeshSlot1->GetStaticMesh())
             {
                 DoorMeshSlot1->SetVisibility(true);
             }
-            if (SourceBooth && SourceBooth->DoorMeshSlot1)
+            if (IsValid(SourceBooth) && IsValid(SourceBooth->DoorMeshSlot1))
             {
-                DoorMeshSlot1->SetRelativeTransform(SourceBooth->DoorMeshSlot1->GetRelativeTransform());
+                if (IsValid(DoorMeshSlot1)) DoorMeshSlot1->SetRelativeTransform(SourceBooth->DoorMeshSlot1->GetRelativeTransform());
             }
-            else
+            else if (IsValid(DoorMeshSlot1))
             {
                 DoorMeshSlot1->SetRelativeLocation(CabDoors.DoubleDoors.Slot1Config.ClosedPositionOffset);
             }
@@ -393,16 +412,22 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
     else
     {
-        DoorMeshSlot0->SetStaticMesh(nullptr);
-        DoorMeshSlot0->SetVisibility(false);
-        DoorMeshSlot0->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        DoorMeshSlot1->SetStaticMesh(nullptr);
-        DoorMeshSlot1->SetVisibility(false);
-        DoorMeshSlot1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        if (IsValid(DoorMeshSlot0))
+        {
+            DoorMeshSlot0->SetStaticMesh(nullptr);
+            DoorMeshSlot0->SetVisibility(false);
+            DoorMeshSlot0->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        }
+        if (IsValid(DoorMeshSlot1))
+        {
+            DoorMeshSlot1->SetStaticMesh(nullptr);
+            DoorMeshSlot1->SetVisibility(false);
+            DoorMeshSlot1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        }
     }
 
     // ── Closet Doors ──────────────────────────────────────────────────────
-    if (!SourceBooth || (SourceBooth->ClosetDoorMeshSlot0 && SourceBooth->ClosetDoorMeshSlot0->GetStaticMesh() != nullptr))
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->ClosetDoorMeshSlot0) && SourceBooth->ClosetDoorMeshSlot0->GetStaticMesh() != nullptr))
     {
         const FFurnitureDoorGroup& ClosetDoors = ProductData.DoorsConfig.ClosetDoors;
 
@@ -412,46 +437,46 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         switch (ClosetDoors.DoorCount)
         {
         case EDoorCount::NoDoors:
-            ClosetDoorMeshSlot0->SetVisibility(false);
-            ClosetDoorMeshSlot1->SetVisibility(false);
+            if (IsValid(ClosetDoorMeshSlot0)) ClosetDoorMeshSlot0->SetVisibility(false);
+            if (IsValid(ClosetDoorMeshSlot1)) ClosetDoorMeshSlot1->SetVisibility(false);
             break;
         case EDoorCount::OneDoor:
-            if (ClosetDoorMeshSlot0->GetStaticMesh())
+            if (IsValid(ClosetDoorMeshSlot0) && ClosetDoorMeshSlot0->GetStaticMesh())
             {
                 ClosetDoorMeshSlot0->SetVisibility(true);
             }
-            if (SourceBooth && SourceBooth->ClosetDoorMeshSlot0)
+            if (IsValid(SourceBooth) && IsValid(SourceBooth->ClosetDoorMeshSlot0))
             {
-                ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
+                if (IsValid(ClosetDoorMeshSlot0)) ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
             }
-            else
+            else if (IsValid(ClosetDoorMeshSlot0))
             {
                 ClosetDoorMeshSlot0->SetRelativeLocation(ClosetDoors.SingleDoor.SlotConfig.ClosedPositionOffset);
             }
-            ClosetDoorMeshSlot1->SetVisibility(false);
+            if (IsValid(ClosetDoorMeshSlot1)) ClosetDoorMeshSlot1->SetVisibility(false);
             break;
         case EDoorCount::TwoDoors:
-            if (ClosetDoorMeshSlot0->GetStaticMesh())
+            if (IsValid(ClosetDoorMeshSlot0) && ClosetDoorMeshSlot0->GetStaticMesh())
             {
                 ClosetDoorMeshSlot0->SetVisibility(true);
             }
-            if (SourceBooth && SourceBooth->ClosetDoorMeshSlot0)
+            if (IsValid(SourceBooth) && IsValid(SourceBooth->ClosetDoorMeshSlot0))
             {
-                ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
+                if (IsValid(ClosetDoorMeshSlot0)) ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
             }
-            else
+            else if (IsValid(ClosetDoorMeshSlot0))
             {
                 ClosetDoorMeshSlot0->SetRelativeLocation(ClosetDoors.DoubleDoors.Slot0Config.ClosedPositionOffset);
             }
-            if (ClosetDoorMeshSlot1->GetStaticMesh())
+            if (IsValid(ClosetDoorMeshSlot1) && ClosetDoorMeshSlot1->GetStaticMesh())
             {
                 ClosetDoorMeshSlot1->SetVisibility(true);
             }
-            if (SourceBooth && SourceBooth->ClosetDoorMeshSlot1)
+            if (IsValid(SourceBooth) && IsValid(SourceBooth->ClosetDoorMeshSlot1))
             {
-                ClosetDoorMeshSlot1->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot1->GetRelativeTransform());
+                if (IsValid(ClosetDoorMeshSlot1)) ClosetDoorMeshSlot1->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot1->GetRelativeTransform());
             }
-            else
+            else if (IsValid(ClosetDoorMeshSlot1))
             {
                 ClosetDoorMeshSlot1->SetRelativeLocation(ClosetDoors.DoubleDoors.Slot1Config.ClosedPositionOffset);
             }
@@ -460,47 +485,56 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
     else
     {
-        ClosetDoorMeshSlot0->SetStaticMesh(nullptr);
-        ClosetDoorMeshSlot0->SetVisibility(false);
-        ClosetDoorMeshSlot0->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        ClosetDoorMeshSlot1->SetStaticMesh(nullptr);
-        ClosetDoorMeshSlot1->SetVisibility(false);
-        ClosetDoorMeshSlot1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        if (IsValid(ClosetDoorMeshSlot0))
+        {
+            ClosetDoorMeshSlot0->SetStaticMesh(nullptr);
+            ClosetDoorMeshSlot0->SetVisibility(false);
+            ClosetDoorMeshSlot0->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        }
+        if (IsValid(ClosetDoorMeshSlot1))
+        {
+            ClosetDoorMeshSlot1->SetStaticMesh(nullptr);
+            ClosetDoorMeshSlot1->SetVisibility(false);
+            ClosetDoorMeshSlot1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        }
     }
 
     // ── Countertop ────────────────────────────────────────────────────────
-    if (!SourceBooth || (SourceBooth->CountertopMesh && SourceBooth->CountertopMesh->GetStaticMesh() != nullptr))
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->CountertopMesh) && SourceBooth->CountertopMesh->GetStaticMesh() != nullptr))
     {
         FFurnitureComponentOptions ResolvedCountertop;
-        if (SourceBooth)
+        if (IsValid(SourceBooth))
         {
             SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Countertop, ResolvedCountertop);
         }
         ApplyComponentMeshAndMaterials(CountertopMesh.Get(), ResolvedCountertop, ActiveState.CountertopSizeIndex, ActiveState.ActiveCountertopColorIndex);
 
-        FFurniturePlacementOffset CO = SourceBooth ? SourceBooth->GetActiveCountertopOffset() : FFurniturePlacementOffset();
-        if (SourceBooth && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
+        FFurniturePlacementOffset CO = IsValid(SourceBooth) ? SourceBooth->GetActiveCountertopOffset() : FFurniturePlacementOffset();
+        if (IsValid(SourceBooth) && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
         {
             const FTransform BaselineCountertop = SourceBooth->GetBaselineCountertopTransform();
             FVector TargetLocation = FVector(0.f, 0.f, BaselineCountertop.GetLocation().Z) + CO.RelativeLocation;
             FRotator TargetRotation = CO.RelativeRotation;
             FVector TargetScale = CO.RelativeScale * BaselineCountertop.GetScale3D();
-            CountertopMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
-            CountertopMesh->SetRelativeScale3D(TargetScale);
+            if (IsValid(CountertopMesh))
+            {
+                CountertopMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
+                CountertopMesh->SetRelativeScale3D(TargetScale);
+            }
         }
-        else
+        else if (IsValid(CountertopMesh))
         {
             FTransform ProductDelta;
             ProductDelta.SetLocation(CO.RelativeLocation);
             ProductDelta.SetRotation(CO.RelativeRotation.Quaternion());
             ProductDelta.SetScale3D(CO.RelativeScale);
 
-            const FTransform BaselineCountertop = SourceBooth ? SourceBooth->GetBaselineCountertopTransform() : FTransform::Identity;
+            const FTransform BaselineCountertop = IsValid(SourceBooth) ? SourceBooth->GetBaselineCountertopTransform() : FTransform::Identity;
             const FTransform FinalCountertopTransform = ProductDelta * BaselineCountertop;
             CountertopMesh->SetRelativeTransform(FinalCountertopTransform);
         }
     }
-    else
+    else if (IsValid(CountertopMesh))
     {
         CountertopMesh->SetStaticMesh(nullptr);
         CountertopMesh->SetVisibility(false);
@@ -508,28 +542,31 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Sink ──────────────────────────────────────────────────────────────
-    ECountertopType ActiveCountertopType = SourceBooth ? SourceBooth->GetActiveCountertopType() : ECountertopType::SurfaceMounted;
+    ECountertopType ActiveCountertopType = IsValid(SourceBooth) ? SourceBooth->GetActiveCountertopType() : ECountertopType::SurfaceMounted;
     if (ActiveCountertopType == ECountertopType::SurfaceMounted && 
-        (!SourceBooth || (SourceBooth->SinkMesh && SourceBooth->SinkMesh->GetStaticMesh() != nullptr)))
+        (!IsValid(SourceBooth) || (IsValid(SourceBooth->SinkMesh) && SourceBooth->SinkMesh->GetStaticMesh() != nullptr)))
     {
         FFurnitureComponentOptions ResolvedSink;
-        if (SourceBooth)
+        if (IsValid(SourceBooth))
         {
             SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Sink, ResolvedSink);
         }
         ApplyComponentMeshAndMaterials(SinkMesh.Get(), ResolvedSink, ActiveState.SinkSizeIndex, ActiveState.SinkColorIndex);
 
-        FFurniturePlacementOffset SO = SourceBooth ? SourceBooth->GetActiveSinkOffset() : FFurniturePlacementOffset();
+        FFurniturePlacementOffset SO = IsValid(SourceBooth) ? SourceBooth->GetActiveSinkOffset() : FFurniturePlacementOffset();
         FTransform ProductDelta;
         ProductDelta.SetLocation(SO.RelativeLocation);
         ProductDelta.SetRotation(SO.RelativeRotation.Quaternion());
         ProductDelta.SetScale3D(SO.RelativeScale);
 
-        const FTransform BaselineSink = SourceBooth ? SourceBooth->GetBaselineSinkTransform() : FTransform::Identity;
+        const FTransform BaselineSink = IsValid(SourceBooth) ? SourceBooth->GetBaselineSinkTransform() : FTransform::Identity;
         const FTransform FinalSinkTransform = ProductDelta * BaselineSink;
-        SinkMesh->SetRelativeTransform(FinalSinkTransform);
+        if (IsValid(SinkMesh))
+        {
+            SinkMesh->SetRelativeTransform(FinalSinkTransform);
+        }
     }
-    else
+    else if (IsValid(SinkMesh))
     {
         SinkMesh->SetStaticMesh(nullptr);
         SinkMesh->SetVisibility(false);
@@ -537,39 +574,42 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Faucet ────────────────────────────────────────────────────────────
-    if (!SourceBooth || (SourceBooth->FaucetMesh && SourceBooth->FaucetMesh->GetStaticMesh() != nullptr))
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->FaucetMesh) && SourceBooth->FaucetMesh->GetStaticMesh() != nullptr))
     {
         FFurnitureComponentOptions ResolvedFaucet;
-        if (SourceBooth)
+        if (IsValid(SourceBooth))
         {
             SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Faucet, ResolvedFaucet);
         }
         ApplyComponentMeshAndMaterials(FaucetMesh.Get(), ResolvedFaucet, ActiveState.FaucetSizeIndex, ActiveState.FaucetColorIndex);
         {
-            FFurniturePlacementOffset FO = SourceBooth ? SourceBooth->GetActiveFaucetOffset() : FFurniturePlacementOffset();
-            if (SourceBooth && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
+            FFurniturePlacementOffset FO = IsValid(SourceBooth) ? SourceBooth->GetActiveFaucetOffset() : FFurniturePlacementOffset();
+            if (IsValid(SourceBooth) && SourceBooth->GetActiveCountertopType() == ECountertopType::BuiltIn)
             {
                 const FTransform BaselineFaucet = SourceBooth->GetBaselineFaucetTransform();
                 FVector TargetLocation = FVector(0.f, 0.f, BaselineFaucet.GetLocation().Z) + FO.RelativeLocation;
                 FRotator TargetRotation = FO.RelativeRotation;
                 FVector TargetScale = FO.RelativeScale * BaselineFaucet.GetScale3D();
-                FaucetMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
-                FaucetMesh->SetRelativeScale3D(TargetScale);
+                if (IsValid(FaucetMesh))
+                {
+                    FaucetMesh->SetRelativeLocationAndRotation(TargetLocation, TargetRotation);
+                    FaucetMesh->SetRelativeScale3D(TargetScale);
+                }
             }
-            else
+            else if (IsValid(FaucetMesh))
             {
                 FTransform ProductDelta;
                 ProductDelta.SetLocation(FO.RelativeLocation);
                 ProductDelta.SetRotation(FO.RelativeRotation.Quaternion());
                 ProductDelta.SetScale3D(FO.RelativeScale);
 
-                const FTransform BaselineFaucet = SourceBooth ? SourceBooth->GetBaselineFaucetTransform() : FTransform::Identity;
+                const FTransform BaselineFaucet = IsValid(SourceBooth) ? SourceBooth->GetBaselineFaucetTransform() : FTransform::Identity;
                 const FTransform FinalFaucetTransform = ProductDelta * BaselineFaucet;
                 FaucetMesh->SetRelativeTransform(FinalFaucetTransform);
             }
         }
     }
-    else
+    else if (IsValid(FaucetMesh))
     {
         FaucetMesh->SetStaticMesh(nullptr);
         FaucetMesh->SetVisibility(false);
@@ -577,27 +617,30 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // ── Mirror ────────────────────────────────────────────────────────────
-    if (!SourceBooth || (SourceBooth->MirrorMesh && SourceBooth->MirrorMesh->GetStaticMesh() != nullptr))
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->MirrorMesh) && SourceBooth->MirrorMesh->GetStaticMesh() != nullptr))
     {
         FFurnitureComponentOptions ResolvedMirror;
-        if (SourceBooth)
+        if (IsValid(SourceBooth))
         {
             SourceBooth->GetResolvedComponentOptions(EFurnitureComponentType::Mirror, ResolvedMirror);
         }
         ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ResolvedMirror, ActiveState.MirrorSizeIndex, ActiveState.MirrorColorIndex);
         {
-            FFurniturePlacementOffset MO = SourceBooth ? SourceBooth->GetActiveMirrorOffset() : FFurniturePlacementOffset();
+            FFurniturePlacementOffset MO = IsValid(SourceBooth) ? SourceBooth->GetActiveMirrorOffset() : FFurniturePlacementOffset();
             FTransform ProductDelta;
             ProductDelta.SetLocation(MO.RelativeLocation);
             ProductDelta.SetRotation(MO.RelativeRotation.Quaternion());
             ProductDelta.SetScale3D(MO.RelativeScale);
 
-            const FTransform BaselineMirror = SourceBooth ? SourceBooth->GetBaselineMirrorTransform() : FTransform::Identity;
+            const FTransform BaselineMirror = IsValid(SourceBooth) ? SourceBooth->GetBaselineMirrorTransform() : FTransform::Identity;
             const FTransform FinalMirrorTransform = ProductDelta * BaselineMirror;
-            MirrorMesh->SetRelativeTransform(FinalMirrorTransform);
+            if (IsValid(MirrorMesh))
+            {
+                MirrorMesh->SetRelativeTransform(FinalMirrorTransform);
+            }
         }
     }
-    else
+    else if (IsValid(MirrorMesh))
     {
         MirrorMesh->SetStaticMesh(nullptr);
         MirrorMesh->SetVisibility(false);
@@ -662,21 +705,21 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType Component
     CurrentFocusedComponent = TargetComponent;
 
     FVector LocalFocusLoc = FVector::ZeroVector;
-    if (TargetComponent && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
+    if (IsValid(TargetComponent) && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
     {
         FVector WorldLoc = TargetComponent->GetComponentLocation();
         LocalFocusLoc = GetActorTransform().InverseTransformPosition(WorldLoc);
     }
 
-    if (MeshRoot)
+    if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
     }
 
-    if (SpringArm)
+    if (IsValid(SpringArm))
     {
         SpringArm->SetRelativeRotation(FRotator(-15.f, 0.f, 0.f));
-        if (TargetComponent && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
+        if (IsValid(TargetComponent) && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
         {
             SpringArm->SetRelativeLocation(LocalFocusLoc);
             SpringArm->TargetArmLength = DefaultZoomDistance;
@@ -694,17 +737,17 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType Component
 
 void AFurniturePreviewActor::SetupBackdrop(UStaticMesh* InMesh, UMaterialInterface* InMaterial)
 {
-    if (!BackdropMesh)
+    if (!IsValid(BackdropMesh))
     {
         return;
     }
 
-    if (InMesh)
+    if (IsValid(InMesh))
     {
         BackdropMesh->SetStaticMesh(InMesh);
     }
 
-    if (InMaterial)
+    if (IsValid(InMaterial))
     {
         BackdropMesh->SetMaterial(0, InMaterial);
     }
@@ -715,7 +758,7 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
     CurrentYaw   += DeltaYaw;
     CurrentPitch  = FMath::Clamp(CurrentPitch + DeltaPitch, PitchMin, PitchMax);
 
-    if (SpringArm)
+    if (IsValid(SpringArm))
     {
         SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
     }
@@ -724,7 +767,7 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 {
     CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, ZoomMin, ZoomMax);
-    if (SpringArm)
+    if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
@@ -743,23 +786,29 @@ void AFurniturePreviewActor::SetFillLightEnabled(bool bEnable)
     EnforceLightingSettings();
 }
 
+void AFurniturePreviewActor::SetRimLightEnabled(bool bEnable)
+{
+    bEnableRimLight = bEnable;
+    EnforceLightingSettings();
+}
+
 void AFurniturePreviewActor::ResetRotation()
 {
     CurrentYaw   = DefaultYaw;
     CurrentPitch = DefaultPitch;
     CurrentZoomLength = DefaultCameraDistance;
 
-    if (MeshRoot)
+    if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
     }
 
-    if (SpringArm)
+    if (IsValid(SpringArm))
     {
         SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
-    if (Camera)
+    if (IsValid(Camera))
     {
         Camera->FieldOfView = CameraFOV;
     }
@@ -773,12 +822,12 @@ void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
     CurrentYaw = DefaultYaw;
     CurrentPitch = DefaultPitch;
 
-    if (MeshRoot)
+    if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
     }
 
-    if (SpringArm)
+    if (IsValid(SpringArm))
     {
         SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
     }
@@ -793,7 +842,7 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
                                                             int32 SizeIndex,
                                                             int32 ColorIndex)
 {
-    if (!Target)
+    if (!IsValid(Target) || Target->IsUnreachable())
     {
         return;
     }
@@ -813,14 +862,17 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
 
     if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
     {
-        Target->SetStaticMesh(nullptr);
-        Target->SetVisibility(false);
-        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        if (IsValid(Target))
+        {
+            Target->SetStaticMesh(nullptr);
+            Target->SetVisibility(false);
+            Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        }
         return;
     }
 
     UStaticMesh* LoadedMesh = TargetMeshPtr.LoadSynchronous();
-    if (LoadedMesh)
+    if (IsValid(LoadedMesh) && IsValid(Target))
     {
         Target->SetStaticMesh(LoadedMesh);
         Target->SetVisibility(true);
@@ -851,7 +903,7 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
             for (const FFurnitureMaterialSlot& SlotOverride : SelectedColor->MaterialOverrides)
             {
                 UMaterialInterface* LoadedMat = SlotOverride.Material.LoadSynchronous();
-                if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+                if (IsValid(LoadedMat) && IsValid(Target) && Target->GetNumMaterials() > SlotOverride.SlotIndex)
                 {
                     Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
                 }
@@ -865,14 +917,14 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
             {
                 UMaterialInterface* MatteMat = ActiveOption.MirrorMaterialOverride.LoadSynchronous();
                 int32 SlotIdx = ActiveOption.MirrorMaterialSlotIndex;
-                if (MatteMat && SlotIdx >= 0 && SlotIdx < NumMaterials)
+                if (IsValid(MatteMat) && IsValid(Target) && SlotIdx >= 0 && SlotIdx < NumMaterials)
                 {
                     Target->SetMaterial(SlotIdx, MatteMat);
                 }
             }
         }
     }
-    else
+    else if (IsValid(Target))
     {
         Target->SetStaticMesh(nullptr);
         Target->SetVisibility(false);
@@ -885,7 +937,7 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
                                                             int32 SizeIndex,
                                                             int32 ColorIndex)
 {
-    if (!Target)
+    if (!IsValid(Target) || Target->IsUnreachable())
     {
         return;
     }
@@ -902,14 +954,17 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
 
     if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
     {
-        Target->SetStaticMesh(nullptr);
-        Target->SetVisibility(false);
-        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        if (IsValid(Target))
+        {
+            Target->SetStaticMesh(nullptr);
+            Target->SetVisibility(false);
+            Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        }
         return;
     }
 
     UStaticMesh* LoadedMesh = TargetMeshPtr.LoadSynchronous();
-    if (LoadedMesh)
+    if (IsValid(LoadedMesh) && IsValid(Target))
     {
         Target->SetStaticMesh(LoadedMesh);
         Target->SetVisibility(true);
@@ -945,14 +1000,14 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
             for (const FFurnitureMaterialSlot& SlotOverride : SelectedColor->MaterialOverrides)
             {
                 UMaterialInterface* LoadedMat = SlotOverride.Material.LoadSynchronous();
-                if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+                if (IsValid(LoadedMat) && IsValid(Target) && Target->GetNumMaterials() > SlotOverride.SlotIndex)
                 {
                     Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
                 }
             }
         }
     }
-    else
+    else if (IsValid(Target))
     {
         Target->SetStaticMesh(nullptr);
         Target->SetVisibility(false);
@@ -966,7 +1021,7 @@ void AFurniturePreviewActor::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Tar
                                                        int32 ColorIndex,
                                                        int32 SlotIndex)
 {
-    if (!Target)
+    if (!IsValid(Target) || Target->IsUnreachable())
     {
         return;
     }
@@ -1034,14 +1089,17 @@ void AFurniturePreviewActor::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Tar
 
     if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
     {
-        Target->SetStaticMesh(nullptr);
-        Target->SetVisibility(false);
-        Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        if (IsValid(Target))
+        {
+            Target->SetStaticMesh(nullptr);
+            Target->SetVisibility(false);
+            Target->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        }
         return;
     }
 
     UStaticMesh* LoadedMesh = TargetMeshPtr.LoadSynchronous();
-    if (LoadedMesh)
+    if (IsValid(LoadedMesh) && IsValid(Target))
     {
         Target->SetStaticMesh(LoadedMesh);
         Target->SetVisibility(true);
@@ -1058,14 +1116,14 @@ void AFurniturePreviewActor::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Tar
             for (const FFurnitureMaterialSlot& SlotOverride : MaterialOverrides)
             {
                 UMaterialInterface* LoadedMat = SlotOverride.Material.LoadSynchronous();
-                if (LoadedMat && Target->GetNumMaterials() > SlotOverride.SlotIndex)
+                if (IsValid(LoadedMat) && IsValid(Target) && Target->GetNumMaterials() > SlotOverride.SlotIndex)
                 {
                     Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
                 }
             }
         }
     }
-    else
+    else if (IsValid(Target))
     {
         Target->SetStaticMesh(nullptr);
         Target->SetVisibility(false);
@@ -1075,7 +1133,7 @@ void AFurniturePreviewActor::ApplyDoorMeshAndMaterials(UStaticMeshComponent* Tar
 
 void AFurniturePreviewActor::UpdateLightIntensityForZoom()
 {
-    if (FillLight && ReferenceZoomDistance > 0.f)
+    if (IsValid(FillLight) && ReferenceZoomDistance > 0.f)
     {
         float ZoomRatio = CurrentZoomLength / ReferenceZoomDistance;
         FillLight->SetIntensity(ActiveBaseFillIntensity * ZoomRatio * ZoomRatio);
@@ -1086,7 +1144,7 @@ void AFurniturePreviewActor::EnforceLightingSettings()
 {
     auto ForceConfigureMesh = [](UStaticMeshComponent* Comp, bool bCastShadow)
     {
-        if (Comp)
+        if (IsValid(Comp))
         {
             Comp->SetMobility(EComponentMobility::Movable);
             Comp->SetCastShadow(bCastShadow);
@@ -1109,12 +1167,12 @@ void AFurniturePreviewActor::EnforceLightingSettings()
     ForceConfigureMesh(MirrorMesh.Get(), bMirrorCastShadow);
     ForceConfigureMesh(BackdropMesh.Get(), false);
 
-    if (BackdropMesh)
+    if (IsValid(BackdropMesh))
     {
         BackdropMesh->SetAffectDynamicIndirectLighting(false);
     }
 
-    if (KeyLight)
+    if (IsValid(KeyLight))
     {
         KeyLight->SetLightColor(KeyLightColor);
         KeyLight->bUseTemperature = false;
@@ -1122,7 +1180,7 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         KeyLight->LightingChannels.bChannel0 = true;
     }
 
-    if (FillLight)
+    if (IsValid(FillLight))
     {
         FillLight->SetLightColor(FillLightColor);
         FillLight->bUseTemperature = false;
@@ -1130,11 +1188,19 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         FillLight->LightingChannels.bChannel0 = true;
         UpdateLightIntensityForZoom();
     }
+
+    if (IsValid(RimLight))
+    {
+        RimLight->SetLightColor(RimLightColor);
+        RimLight->bUseTemperature = false;
+        RimLight->SetVisibility(bEnableRimLight);
+        RimLight->LightingChannels.bChannel0 = true;
+    }
 }
 
 void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config)
 {
-    if (!KeyLight || !FillLight)
+    if (!IsValid(KeyLight) || !IsValid(FillLight))
     {
         return;
     }
@@ -1167,7 +1233,7 @@ void AFurniturePreviewActor::ApplyDirectionalLightScale()
     for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
     {
         ADirectionalLight* DirLight = *It;
-        if (DirLight && DirLight->GetLightComponent())
+        if (IsValid(DirLight) && IsValid(DirLight->GetLightComponent()))
         {
             SavedDirectionalLightIntensity = DirLight->GetLightComponent()->Intensity;
             DirLight->GetLightComponent()->SetIntensity(SavedDirectionalLightIntensity * PreviewDirectionalLightIntensityScale);
@@ -1181,7 +1247,7 @@ void AFurniturePreviewActor::RestoreDirectionalLight()
 {
     if (ADirectionalLight* DirLight = CachedDirectionalLight.Get())
     {
-        if (DirLight->GetLightComponent() && SavedDirectionalLightIntensity >= 0.f)
+        if (IsValid(DirLight) && IsValid(DirLight->GetLightComponent()) && SavedDirectionalLightIntensity >= 0.f)
         {
             DirLight->GetLightComponent()->SetIntensity(SavedDirectionalLightIntensity);
         }
