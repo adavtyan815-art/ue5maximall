@@ -172,7 +172,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     BackdropMesh->LightingChannels.bChannel0 = true;
     BackdropMesh->LightingChannels.bChannel1 = false;
     BackdropMesh->LightingChannels.bChannel2 = false;
-    BackdropMesh->SetRelativeScale3D(FVector(15.f, 15.f, 15.f));
+    BackdropMesh->SetRelativeScale3D(FVector(100.f, 100.f, 100.f));
 
     // ── Key Light (Attached to SpringArm so it orbits WITH camera) ────────
     KeyLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("KeyLight"));
