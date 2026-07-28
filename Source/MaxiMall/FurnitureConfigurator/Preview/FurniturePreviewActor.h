@@ -182,14 +182,6 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float PitchMax = 80.f;
 
-    /** Default distance of the camera from the actor (SpringArm target length). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float DefaultCameraDistance = 250.f;
-
-    /** Field of view of the camera in degrees (65° studio catalog standard). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float CameraFOV = 65.f;
-
     /** Minimum distance the camera can zoom in. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float ZoomMin = 100.f;
@@ -197,34 +189,6 @@ public:
     /** Maximum distance the camera can zoom out. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     float ZoomMax = 500.f;
-
-    /** Focus distance for Cabinet inspect mode. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float CabinetFocusDistance = 250.f;
-
-    /** Focus distance for Closet inspect mode. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float ClosetFocusDistance = 250.f;
-
-    /** Focus distance for Cabinet Doors inspect mode. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float DoorsFocusDistance = 200.f;
-
-    /** Focus distance for Countertop inspect mode. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float CountertopFocusDistance = 200.f;
-
-    /** Focus distance for Sink inspect mode. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float SinkFocusDistance = 150.f;
-
-    /** Focus distance for Faucet inspect mode. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float FaucetFocusDistance = 100.f;
-
-    /** Focus distance for Mirror inspect mode. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float MirrorFocusDistance = 150.f;
 
     /** Color of the key light (pure neutral white by default). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")

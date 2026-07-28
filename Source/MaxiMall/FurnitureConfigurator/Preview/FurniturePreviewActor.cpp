@@ -227,14 +227,14 @@ void AFurniturePreviewActor::BeginPlay()
 {
     Super::BeginPlay();
 
-    CurrentZoomLength = DefaultCameraDistance;
+    CurrentZoomLength = CabinetLighting.FocusDistance;
     if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
     if (IsValid(Camera))
     {
-        Camera->FieldOfView = CameraFOV;
+        Camera->FieldOfView = CabinetLighting.CameraFOV;
     }
 
     UpdateLightIntensityForZoom();
