@@ -1136,7 +1136,7 @@ void AFurniturePreviewActor::UpdateLightIntensityForZoom()
     if (IsValid(FillLight) && ReferenceZoomDistance > 0.f)
     {
         float ZoomRatio = CurrentZoomLength / ReferenceZoomDistance;
-        FillLight->SetIntensity(ActiveBaseFillIntensity * ZoomRatio * ZoomRatio);
+        FillLight->SetIntensity(ActiveBaseFillIntensity * ZoomRatio * ZoomRatio * MasterLightIntensityScale);
     }
 }
 
@@ -1178,6 +1178,7 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         KeyLight->bUseTemperature = false;
         KeyLight->SetVisibility(bEnableKeyLight);
         KeyLight->LightingChannels.bChannel0 = true;
+        KeyLight->SetIntensity(CabinetLighting.KeyLightIntensity * MasterLightIntensityScale);
     }
 
     if (IsValid(FillLight))
@@ -1195,6 +1196,7 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         RimLight->bUseTemperature = false;
         RimLight->SetVisibility(bEnableRimLight);
         RimLight->LightingChannels.bChannel0 = true;
+        RimLight->SetIntensity(30000.f * MasterLightIntensityScale);
     }
 }
 

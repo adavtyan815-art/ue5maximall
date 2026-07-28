@@ -252,6 +252,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "10.0"))
     float PreviewDirectionalLightIntensityScale = 1.0f;
 
+    /** Master global intensity scale applied to all 3 preview lights simultaneously (1.0 = 100%, 0.5 = 50%, 2.0 = 200%). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "10.0", DisplayName = "Master Light Intensity Scale"))
+    float MasterLightIntensityScale = 1.0f;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FFurniturePreviewLightingConfig CabinetLighting;
 
