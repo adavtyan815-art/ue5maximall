@@ -91,20 +91,11 @@ AFurniturePreviewActor::AFurniturePreviewActor()
 
     PitchMin = -80.f;
     PitchMax = 80.f;
-    DefaultCameraDistance = 250.f;
-    CameraFOV = 65.f;
     ZoomMin = 100.f;
     ZoomMax = 500.f;
-    CabinetFocusDistance = 250.f;
-    ClosetFocusDistance = 250.f;
-    DoorsFocusDistance = 200.f;
-    CountertopFocusDistance = 200.f;
-    SinkFocusDistance = 150.f;
-    FaucetFocusDistance = 100.f;
-    MirrorFocusDistance = 150.f;
     ActiveBaseFillIntensity = 10000.f;
     ReferenceZoomDistance = 250.f;
-    CurrentZoomLength = DefaultCameraDistance;
+    CurrentZoomLength = CabinetLighting.FocusDistance;
     DefaultYaw = 0.f;
     DefaultPitch = -15.f;
     CurrentYaw = 0.f;
@@ -252,14 +243,14 @@ void AFurniturePreviewActor::PostInitializeComponents()
 {
     Super::PostInitializeComponents();
 
-    CurrentZoomLength = DefaultCameraDistance;
+    CurrentZoomLength = CabinetLighting.FocusDistance;
     if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
     if (IsValid(Camera))
     {
-        Camera->FieldOfView = CameraFOV;
+        Camera->FieldOfView = CabinetLighting.CameraFOV;
     }
 
     EnforceLightingSettings();
@@ -282,14 +273,14 @@ void AFurniturePreviewActor::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
     
-    CurrentZoomLength = DefaultCameraDistance;
+    CurrentZoomLength = CabinetLighting.FocusDistance;
     if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
     if (IsValid(Camera))
     {
-        Camera->FieldOfView = CameraFOV;
+        Camera->FieldOfView = CabinetLighting.CameraFOV;
     }
 
     EnforceLightingSettings();
@@ -787,7 +778,7 @@ void AFurniturePreviewActor::ResetRotation()
 {
     CurrentYaw   = DefaultYaw;
     CurrentPitch = DefaultPitch;
-    CurrentZoomLength = DefaultCameraDistance;
+    CurrentZoomLength = CabinetLighting.FocusDistance;
 
     if (IsValid(MeshRoot))
     {
@@ -801,7 +792,7 @@ void AFurniturePreviewActor::ResetRotation()
     }
     if (IsValid(Camera))
     {
-        Camera->FieldOfView = CameraFOV;
+        Camera->FieldOfView = CabinetLighting.CameraFOV;
     }
     UpdateLightIntensityForZoom();
 }
