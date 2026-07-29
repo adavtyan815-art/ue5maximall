@@ -785,8 +785,12 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // Rotate model itself (MeshRoot) in place -> ZERO camera wall clipping!
-        if (IsValid(MeshRoot))
+        // Camera stays 100% stationary! Rotate the focused model around its own pivot/axis:
+        if (IsValid(CurrentFocusedComponent))
+        {
+            CurrentFocusedComponent->AddLocalRotation(FRotator(0.f, DeltaYaw, 0.f));
+        }
+        else if (IsValid(MeshRoot))
         {
             MeshRoot->AddLocalRotation(FRotator(0.f, DeltaYaw, 0.f));
         }
@@ -812,6 +816,12 @@ void AFurniturePreviewActor::ResetRotation()
     if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
+        MeshRoot->SetRelativeLocation(FVector::ZeroVector);
+    }
+
+    if (IsValid(CurrentFocusedComponent))
+    {
+        CurrentFocusedComponent->SetRelativeRotation(FRotator::ZeroRotator);
     }
 
     if (IsValid(SpringArm))
@@ -847,14 +857,43 @@ void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
 
 void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 {
-    CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, ActiveConfig.ZoomMin, ActiveConfig.ZoomMax);
-
-    if (IsValid(SpringArm))
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        SpringArm->TargetArmLength = CurrentZoomLength;
+        // Camera stays 100% stationary! Move focused model closer/further along view axis:
+        if (IsValid(MeshRoot))
+        {
+            FVector LocalOffset = MeshRoot->GetRelativeLocation();
+            LocalOffset.X = FMath::Clamp(LocalOffset.X - DeltaZoom * 0.5f, 0.f, 60.f);
+            MeshRoot->SetRelativeLocation(LocalOffset);
+        }
+    }
+    else
+    {
+        CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, ActiveConfig.ZoomMin, ActiveConfig.ZoomMax);
+
+        if (IsValid(SpringArm))
+        {
+            SpringArm->TargetArmLength = CurrentZoomLength;
+        }
+
+        UpdateLightIntensityForZoom();
     }
 
-    UpdateLightIntensityForZoom();
+    // Keep focused component 100% pin-sharp!
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
+    {
+        float DistanceToFocus = 100.0f;
+        if (IsValid(CurrentFocusedComponent))
+        {
+            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), CurrentFocusedComponent->GetComponentLocation());
+        }
+        else if (IsValid(MeshRoot))
+        {
+            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), MeshRoot->GetComponentLocation());
+        }
+        Camera->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
+        Camera->PostProcessSettings.DepthOfFieldFocalDistance = DistanceToFocus;
+    }
 }
 
 void AFurniturePreviewActor::SetKeyLightEnabled(bool bEnable)
@@ -1183,8 +1222,18 @@ void AFurniturePreviewActor::EnforceLightingSettings()
 
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
     {
+        float DistanceToFocus = 100.0f;
+        if (IsValid(CurrentFocusedComponent))
+        {
+            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), CurrentFocusedComponent->GetComponentLocation());
+        }
+        else if (IsValid(MeshRoot))
+        {
+            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), MeshRoot->GetComponentLocation());
+        }
+
         Camera->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
-        Camera->PostProcessSettings.DepthOfFieldFocalDistance = CurrentZoomLength;
+        Camera->PostProcessSettings.DepthOfFieldFocalDistance = DistanceToFocus;
         Camera->PostProcessSettings.bOverride_DepthOfFieldFstop = true;
         Camera->PostProcessSettings.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
         Camera->PostProcessSettings.bOverride_DepthOfFieldSensorWidth = true;
