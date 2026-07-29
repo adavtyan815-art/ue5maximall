@@ -1241,8 +1241,8 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         Camera->PostProcessSettings.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
         Camera->PostProcessSettings.bOverride_DepthOfFieldSensorWidth = true;
         Camera->PostProcessSettings.DepthOfFieldSensorWidth = 35.0f;
-        Camera->PostProcessSettings.bOverride_DepthOfFieldDepthOfFieldNearBlurSize = true;
-        Camera->PostProcessSettings.DepthOfFieldDepthOfFieldNearBlurSize = 0.0f; // ZERO near blur, model is 100% sharp!
+        Camera->PostProcessSettings.bOverride_DepthOfFieldNearBlurSize = true;
+        Camera->PostProcessSettings.DepthOfFieldNearBlurSize = 0.0f; // ZERO near blur, model is 100% sharp!
     }
     else if (IsValid(Camera))
     {
