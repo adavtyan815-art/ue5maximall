@@ -783,23 +783,19 @@ void AFurniturePreviewActor::SetupBackdrop(UStaticMesh* InMesh, UMaterialInterfa
 
 void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
+    CurrentYaw += DeltaYaw;
+    CurrentPitch = FMath::Clamp(CurrentPitch + DeltaPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
+
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // Camera stays 100% stationary! Rotate the model around its own axis:
-        // -DeltaYaw: Right drag turns model right, Left drag turns model left.
-        // -DeltaPitch: Up drag tilts model up, Down drag tilts model down.
-        USceneComponent* TargetComp = IsValid(MeshRoot) ? MeshRoot.Get() : Cast<USceneComponent>(CurrentFocusedComponent);
-        if (IsValid(TargetComp))
+        // Camera stays 100% stationary! Apply clean relative rotation to model (MeshRoot) around its own pivot:
+        if (IsValid(MeshRoot))
         {
-            FRotator DeltaRot(-DeltaPitch, -DeltaYaw, 0.f);
-            TargetComp->AddLocalRotation(DeltaRot);
+            MeshRoot->SetRelativeRotation(FRotator(CurrentPitch - ActiveConfig.Pitch, CurrentYaw - ActiveConfig.Yaw, 0.f));
         }
     }
     else
     {
-        CurrentYaw += DeltaYaw;
-        CurrentPitch = FMath::Clamp(CurrentPitch + DeltaPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
-
         if (IsValid(SpringArm))
         {
             SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
@@ -816,7 +812,7 @@ void AFurniturePreviewActor::ResetRotation()
     if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
-        MeshRoot->SetRelativeLocation(FVector::ZeroVector);
+        MeshRoot->SetRelativeLocation(FVector(WorldInPlaceForwardOffset, 0.f, 0.f));
     }
 
     if (IsValid(CurrentFocusedComponent))
@@ -826,8 +822,8 @@ void AFurniturePreviewActor::ResetRotation()
 
     if (IsValid(SpringArm))
     {
-        SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
-        SpringArm->TargetArmLength = CurrentZoomLength;
+        SpringArm->SetRelativeRotation(FRotator(ActiveConfig.Pitch, ActiveConfig.Yaw, 0.f));
+        SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
     }
     if (IsValid(Camera))
     {
@@ -857,21 +853,20 @@ void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
 
 void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 {
+    CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, ActiveConfig.ZoomMin, ActiveConfig.ZoomMax);
+
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // Camera stays 100% stationary! Shift model directly towards/away from stationary camera:
-        USceneComponent* TargetComp = IsValid(MeshRoot) ? MeshRoot.Get() : Cast<USceneComponent>(CurrentFocusedComponent);
-        if (IsValid(TargetComp) && IsValid(Camera))
+        // Camera stays 100% stationary! Smoothly slide model towards/away from camera:
+        if (IsValid(MeshRoot))
         {
-            FVector DirToCamera = (Camera->GetComponentLocation() - TargetComp->GetComponentLocation()).GetSafeNormal();
-            FVector Movement = DirToCamera * (-DeltaZoom * 0.5f);
-            TargetComp->AddWorldOffset(Movement);
+            float NormalizedZoom = 1.0f - ((CurrentZoomLength - ActiveConfig.ZoomMin) / FMath::Max(1.0f, ActiveConfig.ZoomMax - ActiveConfig.ZoomMin));
+            float ClampedOffset = WorldInPlaceForwardOffset + (NormalizedZoom * 50.0f);
+            MeshRoot->SetRelativeLocation(FVector(ClampedOffset, 0.f, 0.f));
         }
     }
     else
     {
-        CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, ActiveConfig.ZoomMin, ActiveConfig.ZoomMax);
-
         if (IsValid(SpringArm))
         {
             SpringArm->TargetArmLength = CurrentZoomLength;
