@@ -222,12 +222,8 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     SkyLight->SetupAttachment(PreviewRoot);
     SkyLight->SetMobility(EComponentMobility::Movable);
     SkyLight->SourceType = ESkyLightSourceType::SLS_CapturedScene;
-    SkyLight->bRealtimeCapture = true;
-    SkyLight->Intensity = ActiveConfig.SkyLightIntensity;
-    SkyLight->LightColor = ActiveConfig.SkyLightColor;
-    SkyLight->LightingChannels.bChannel0 = true;
-    SkyLight->LightingChannels.bChannel1 = false;
-    SkyLight->LightingChannels.bChannel2 = false;
+    SkyLight->SetIntensity(ActiveConfig.SkyLightIntensity);
+    SkyLight->SetLightColor(ActiveConfig.SkyLightColor);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
