@@ -43,7 +43,7 @@ struct FFurniturePreviewLightingConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
     float CameraFOV = 65.f;
 
-    /** Default pitch angle of camera for this component section. */
+    /** Default pitch angle of camera for this component section (negative = looking down). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
     float Pitch = -15.f;
 
@@ -51,44 +51,92 @@ struct FFurniturePreviewLightingConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
     float Yaw = 0.f;
 
+    /** Minimum pitch angle limit for camera orbit (in degrees). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float PitchMin = -80.f;
+
+    /** Maximum pitch angle limit for camera orbit (in degrees). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float PitchMax = 80.f;
+
+    /** Minimum distance the camera can zoom in. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float ZoomMin = 100.f;
+
+    /** Maximum distance the camera can zoom out. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float ZoomMax = 500.f;
+
+    /** Enable/disable shadow casting for this component mesh. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shadows")
+    bool bCastShadow = true;
+
+    /** Toggle Key Light on/off for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Toggles")
+    bool bEnableKeyLight = true;
+
+    /** Toggle Fill Light on/off for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Toggles")
+    bool bEnableFillLight = true;
+
+    /** Toggle Rim Light on/off for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Toggles")
+    bool bEnableRimLight = true;
+
     /** Key light intensity for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities")
     float KeyLightIntensity = 80000.f;
 
     /** Fill light intensity for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities")
     float FillLightIntensity = 10000.f;
 
     /** Rim light intensity for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities")
     float RimLightIntensity = 30000.f;
 
     /** Sun light (Directional Light) scale for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities", meta = (ClampMin = "0.0", ClampMax = "10.0"))
     float DirectionalLightScale = 1.0f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    /** Master global intensity scale applied to all 3 preview lights simultaneously for this section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+    float MasterLightIntensityScale = 1.0f;
+
+    /** Color of the key light for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
+    FLinearColor KeyLightColor = FLinearColor::White;
+
+    /** Color of the fill light for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
+    FLinearColor FillLightColor = FLinearColor::White;
+
+    /** Color of the rim light for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
+    FLinearColor RimLightColor = FLinearColor::White;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     FVector KeyLightLocation = FVector(-300.f, -300.f, 300.f);
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     float KeyLightInnerConeAngle = 30.f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     float KeyLightOuterConeAngle = 50.f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     float AttenuationRadius = 1000.f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     float ShadowBias = 0.02f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     float ShadowSlopeBias = 0.02f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     float ContactShadowLength = 0.05f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     float KeyLightSourceRadius = 15.f;
 };
 
@@ -113,155 +161,87 @@ public:
     // VISUAL COMPONENTS
     // ─────────────────────────────────────────────────────────────────────
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USceneComponent> PreviewRoot;
 
     /** Dynamic pivot root component for rotating furniture meshes. */
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USceneComponent> MeshRoot;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> CabinetMesh;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> DoorMeshSlot0;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> DoorMeshSlot1;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> CountertopMesh;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> SinkMesh;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> FaucetMesh;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> MirrorMesh;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> ClosetMesh;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot0;
 
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot1;
 
     /** SpringArm component to handle orbit distance and rotation. */
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USpringArmComponent> SpringArm;
 
     /** Camera component to render the high quality viewport. */
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UCameraComponent> Camera;
 
     /** Backdrop mesh component for the clean studio background. */
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> BackdropMesh;
 
-    /** Optional Key Light spotlight (attached to SpringArm for consistent view-angle lighting). */
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    /** Key Light spotlight (attached to SpringArm for consistent view-angle lighting). */
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USpotLightComponent> KeyLight;
 
-    /** Optional Camera-mounted Fill Light pointlight. */
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    /** Camera-mounted Fill Light pointlight. */
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UPointLightComponent> FillLight;
 
-    /** Optional Rim / Back Light spotlight (placed behind model to separate from backdrop). */
-    UPROPERTY(BlueprintReadOnly, Category = "Preview Config")
+    /** Rim / Back Light spotlight (placed behind model to separate from backdrop). */
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USpotLightComponent> RimLight;
 
-    /** Minimum pitch angle limit for camera orbit (in degrees). */
+    // ─────────────────────────────────────────────────────────────────────
+    // SECTION PROFILES (Fully encapsulated settings per model/section)
+    // ─────────────────────────────────────────────────────────────────────
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float PitchMin = -80.f;
-
-    /** Maximum pitch angle limit for camera orbit (in degrees). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float PitchMax = 80.f;
-
-    /** Minimum distance the camera can zoom in. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float ZoomMin = 100.f;
-
-    /** Maximum distance the camera can zoom out. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    float ZoomMax = 500.f;
-
-    /** Color of the key light (pure neutral white by default). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    FLinearColor KeyLightColor = FLinearColor::White;
-
-    /** Color of the fill light (pure neutral white by default). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    FLinearColor FillLightColor = FLinearColor::White;
-
-    /** Color of the rim light (pure neutral white by default). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    FLinearColor RimLightColor = FLinearColor::White;
-
-    /** Enable/disable shadow casting for Cabinet mesh. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    bool bCabinetCastShadow = true;
-
-    /** Enable/disable shadow casting for Closet mesh. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    bool bClosetCastShadow = true;
-
-    /** Enable/disable shadow casting for Countertop mesh. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    bool bCountertopCastShadow = true;
-
-    /** Enable/disable shadow casting for Sink mesh. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    bool bSinkCastShadow = false;
-
-    /** Enable/disable shadow casting for Faucet mesh. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    bool bFaucetCastShadow = true;
-
-    /** Enable/disable shadow casting for Mirror mesh. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    bool bMirrorCastShadow = true;
-
-    /** Toggle Key Light on/off independently. When true, simply adds Key Light to main scene lighting. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (DisplayName = "Enable Key Light"))
-    bool bEnableKeyLight = false;
-
-    /** Toggle Fill Light on/off independently. When true, simply adds Fill Light to main scene lighting. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (DisplayName = "Enable Fill Light"))
-    bool bEnableFillLight = false;
-
-    /** Toggle Rim Light on/off independently. When true, simply adds Rim Light to main scene lighting. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (DisplayName = "Enable Rim Light"))
-    bool bEnableRimLight = false;
-
-    /** Intensity multiplier applied to the world Directional Light while the preview is active. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "10.0"))
-    float PreviewDirectionalLightIntensityScale = 1.0f;
-
-    /** Master global intensity scale applied to all 3 preview lights simultaneously (1.0 = 100%, 0.5 = 50%, 2.0 = 200%). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config", meta = (ClampMin = "0.0", ClampMax = "10.0", DisplayName = "Master Light Intensity Scale"))
-    float MasterLightIntensityScale = 1.0f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
     FFurniturePreviewLightingConfig CabinetLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FFurniturePreviewLightingConfig ClosetLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FFurniturePreviewLightingConfig CountertopLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FFurniturePreviewLightingConfig SinkLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FFurniturePreviewLightingConfig FaucetLighting;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Section Profiles")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     FFurniturePreviewLightingConfig MirrorLighting;
 
     // ─────────────────────────────────────────────────────────────────────
@@ -302,19 +282,21 @@ public:
               meta = (DisplayName = "Zoom Preview"))
     void ZoomPreview(float DeltaZoom);
 
-    /** Dynamically toggles Key Light. */
+    /** Dynamically toggles Key Light for current active profile. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Key Light Enabled"))
     void SetKeyLightEnabled(bool bEnable);
 
-    /** Dynamically toggles Fill Light. */
+    /** Dynamically toggles Fill Light for current active profile. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Fill Light Enabled"))
     void SetFillLightEnabled(bool bEnable);
 
-    /** Dynamically toggles Rim Light. */
+    /** Dynamically toggles Rim Light for current active profile. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Rim Light Enabled"))
     void SetRimLightEnabled(bool bEnable);
 
 private:
+
+    FFurniturePreviewLightingConfig ActiveConfig;
 
     float CurrentZoomLength = 250.f;
     float CurrentYaw   = 0.f;

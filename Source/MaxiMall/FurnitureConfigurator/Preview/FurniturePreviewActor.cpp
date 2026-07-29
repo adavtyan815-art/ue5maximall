@@ -89,46 +89,53 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     ClosetDoorMeshSlot1->SetupAttachment(ClosetMesh);
     ConfigurePreviewMesh(ClosetDoorMeshSlot1.Get());
 
-    PitchMin = -80.f;
-    PitchMax = 80.f;
-    ZoomMin = 100.f;
-    ZoomMax = 500.f;
     ActiveBaseFillIntensity = 10000.f;
     ReferenceZoomDistance = 250.f;
-    CurrentZoomLength = CabinetLighting.FocusDistance;
     DefaultYaw = 0.f;
     DefaultPitch = -15.f;
     CurrentYaw = 0.f;
     CurrentPitch = -15.f;
 
-    KeyLightColor = FLinearColor::White;
-    FillLightColor = FLinearColor::White;
-    RimLightColor = FLinearColor::White;
-
-    bEnableKeyLight = false;
-    bEnableFillLight = false;
-    bEnableRimLight = false;
-    PreviewDirectionalLightIntensityScale = 1.0f;
-
-    // Profiles
+    // Profiles Defaults
+    CabinetLighting.FocusDistance = 250.f;
+    CabinetLighting.CameraFOV = 65.f;
+    CabinetLighting.Pitch = -15.f;
+    CabinetLighting.Yaw = 0.f;
+    CabinetLighting.PitchMin = -80.f;
+    CabinetLighting.PitchMax = 80.f;
+    CabinetLighting.ZoomMin = 100.f;
+    CabinetLighting.ZoomMax = 500.f;
+    CabinetLighting.bCastShadow = true;
+    CabinetLighting.bEnableKeyLight = true;
+    CabinetLighting.bEnableFillLight = true;
+    CabinetLighting.bEnableRimLight = true;
     CabinetLighting.KeyLightIntensity = 80000.f;
     CabinetLighting.FillLightIntensity = 10000.f;
+    CabinetLighting.RimLightIntensity = 30000.f;
+    CabinetLighting.DirectionalLightScale = 1.0f;
+    CabinetLighting.MasterLightIntensityScale = 1.0f;
+    CabinetLighting.KeyLightColor = FLinearColor::White;
+    CabinetLighting.FillLightColor = FLinearColor::White;
+    CabinetLighting.RimLightColor = FLinearColor::White;
     CabinetLighting.KeyLightLocation = FVector(-300.f, -300.f, 300.f);
 
-    ClosetLighting.KeyLightIntensity = 80000.f;
-    ClosetLighting.FillLightIntensity = 10000.f;
+    ClosetLighting = CabinetLighting;
 
-    CountertopLighting.KeyLightIntensity = 60000.f;
-    CountertopLighting.FillLightIntensity = 10000.f;
+    CountertopLighting = CabinetLighting;
+    CountertopLighting.FocusDistance = 200.f;
 
-    SinkLighting.KeyLightIntensity = 50000.f;
-    SinkLighting.FillLightIntensity = 10000.f;
+    SinkLighting = CabinetLighting;
+    SinkLighting.FocusDistance = 150.f;
+    SinkLighting.bCastShadow = false;
 
-    FaucetLighting.KeyLightIntensity = 40000.f;
-    FaucetLighting.FillLightIntensity = 10000.f;
+    FaucetLighting = CabinetLighting;
+    FaucetLighting.FocusDistance = 100.f;
 
-    MirrorLighting.KeyLightIntensity = 60000.f;
-    MirrorLighting.FillLightIntensity = 10000.f;
+    MirrorLighting = CabinetLighting;
+    MirrorLighting.FocusDistance = 150.f;
+
+    ActiveConfig = CabinetLighting;
+    CurrentZoomLength = ActiveConfig.FocusDistance;
 
     // ── Spring Arm & Camera ───────────────────────────────────────────────
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
@@ -168,8 +175,8 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // ── Key Light (Attached to SpringArm so it orbits WITH camera) ────────
     KeyLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("KeyLight"));
     KeyLight->SetupAttachment(SpringArm);
-    KeyLight->SetVisibility(bEnableKeyLight);
-    KeyLight->SetLightColor(KeyLightColor);
+    KeyLight->SetVisibility(ActiveConfig.bEnableKeyLight);
+    KeyLight->SetLightColor(ActiveConfig.KeyLightColor);
     KeyLight->bUseTemperature = false;
     
     KeyLight->SetRelativeLocation(FVector(-300.f, -300.f, 300.f));
@@ -185,8 +192,8 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // ── Fill Light (Mounted on Camera, intensity scales dynamically with zoom) ──
     FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FillLight"));
     FillLight->SetupAttachment(Camera);
-    FillLight->SetVisibility(bEnableFillLight);
-    FillLight->SetLightColor(FillLightColor);
+    FillLight->SetVisibility(ActiveConfig.bEnableFillLight);
+    FillLight->SetLightColor(ActiveConfig.FillLightColor);
     FillLight->bUseTemperature = false;
     FillLight->SetIntensity(ActiveBaseFillIntensity);
     FillLight->SetCastShadows(false);
@@ -195,8 +202,8 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // ── Rim Light (Placed behind model to separate from backdrop) ───────────
     RimLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("RimLight"));
     RimLight->SetupAttachment(PreviewRoot);
-    RimLight->SetVisibility(bEnableRimLight);
-    RimLight->SetLightColor(RimLightColor);
+    RimLight->SetVisibility(ActiveConfig.bEnableRimLight);
+    RimLight->SetLightColor(ActiveConfig.RimLightColor);
     RimLight->bUseTemperature = false;
 
     RimLight->SetRelativeLocation(FVector(200.f, 200.f, 250.f));
@@ -218,14 +225,21 @@ void AFurniturePreviewActor::BeginPlay()
 {
     Super::BeginPlay();
 
-    CurrentZoomLength = CabinetLighting.FocusDistance;
+    ActiveConfig = CabinetLighting;
+    CurrentZoomLength = ActiveConfig.FocusDistance;
+    DefaultYaw = ActiveConfig.Yaw;
+    DefaultPitch = ActiveConfig.Pitch;
+    CurrentYaw = DefaultYaw;
+    CurrentPitch = DefaultPitch;
+
     if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
+        SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
     }
     if (IsValid(Camera))
     {
-        Camera->FieldOfView = CabinetLighting.CameraFOV;
+        Camera->FieldOfView = ActiveConfig.CameraFOV;
     }
 
     UpdateLightIntensityForZoom();
@@ -243,14 +257,15 @@ void AFurniturePreviewActor::PostInitializeComponents()
 {
     Super::PostInitializeComponents();
 
-    CurrentZoomLength = CabinetLighting.FocusDistance;
+    ActiveConfig = CabinetLighting;
+    CurrentZoomLength = ActiveConfig.FocusDistance;
     if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
     if (IsValid(Camera))
     {
-        Camera->FieldOfView = CabinetLighting.CameraFOV;
+        Camera->FieldOfView = ActiveConfig.CameraFOV;
     }
 
     EnforceLightingSettings();
@@ -273,14 +288,15 @@ void AFurniturePreviewActor::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
     
-    CurrentZoomLength = CabinetLighting.FocusDistance;
+    ActiveConfig = CabinetLighting;
+    CurrentZoomLength = ActiveConfig.FocusDistance;
     if (IsValid(SpringArm))
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
     if (IsValid(Camera))
     {
-        Camera->FieldOfView = CabinetLighting.CameraFOV;
+        Camera->FieldOfView = ActiveConfig.CameraFOV;
     }
 
     EnforceLightingSettings();
@@ -290,40 +306,24 @@ void AFurniturePreviewActor::OnConstruction(const FTransform& Transform)
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState, AShowroomBooth* SourceBooth)
+void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& ProductData,
+                                                const FShowroomBoothConfigState& ActiveState,
+                                                AShowroomBooth* SourceBooth)
 {
-    if (IsValid(SourceBooth))
+    // Reset MeshRoot transform
+    if (IsValid(MeshRoot))
     {
-        if (IsValid(CabinetMesh) && IsValid(SourceBooth->MainCabinet))
-        {
-            CabinetMesh->SetRelativeTransform(SourceBooth->MainCabinet->GetRelativeTransform());
-        }
-        if (IsValid(ClosetMesh) && IsValid(SourceBooth->ClosetMesh))
-        {
-            ClosetMesh->SetRelativeTransform(SourceBooth->ClosetMesh->GetRelativeTransform());
-        }
-        if (IsValid(ClosetDoorMeshSlot0) && IsValid(SourceBooth->ClosetDoorMeshSlot0))
-        {
-            ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
-        }
-        if (IsValid(ClosetDoorMeshSlot1) && IsValid(SourceBooth->ClosetDoorMeshSlot1))
-        {
-            ClosetDoorMeshSlot1->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot1->GetRelativeTransform());
-        }
-        if (IsValid(CountertopMesh) && IsValid(SourceBooth->CountertopMesh))
-        {
-            CountertopMesh->SetRelativeTransform(SourceBooth->CountertopMesh->GetRelativeTransform());
-        }
-        if (IsValid(MirrorMesh) && IsValid(SourceBooth->MirrorMesh))
-        {
-            MirrorMesh->SetRelativeTransform(SourceBooth->MirrorMesh->GetRelativeTransform());
-        }
+        MeshRoot->SetRelativeTransform(FTransform::Identity);
     }
 
     // ── Cabinet ───────────────────────────────────────────────────────────
-    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->MainCabinet) && SourceBooth->MainCabinet->GetStaticMesh() != nullptr))
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->CabinetMesh) && SourceBooth->CabinetMesh->GetStaticMesh() != nullptr))
     {
-        ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
+        ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.Cabinet, ActiveState.CabinetSizeIndex, ActiveState.CabinetColorIndex);
+        if (IsValid(CabinetMesh))
+        {
+            CabinetMesh->SetRelativeTransform(FTransform::Identity);
+        }
     }
     else if (IsValid(CabinetMesh))
     {
@@ -332,27 +332,15 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         CabinetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
-    // ── Closet ────────────────────────────────────────────────────────────
-    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->ClosetMesh) && SourceBooth->ClosetMesh->GetStaticMesh() != nullptr))
-    {
-        ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ProductData.ClosetOptions, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex);
-    }
-    else if (IsValid(ClosetMesh))
-    {
-        ClosetMesh->SetStaticMesh(nullptr);
-        ClosetMesh->SetVisibility(false);
-        ClosetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    }
-
-    // ── Doors ─────────────────────────────────────────────────────────────
+    // ── Cabinet Doors ─────────────────────────────────────────────────────
     if (!IsValid(SourceBooth) || (IsValid(SourceBooth->DoorMeshSlot0) && SourceBooth->DoorMeshSlot0->GetStaticMesh() != nullptr))
     {
-        const FFurnitureDoorGroup& CabDoors = ProductData.DoorsConfig.CabinetDoors;
+        const FFurnitureDoorGroup& CabinetDoors = ProductData.DoorsConfig.CabinetDoors;
 
-        ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), CabDoors, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 0);
-        ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), CabDoors, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 1);
+        ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), CabinetDoors, ActiveState.CabinetSizeIndex, ActiveState.CabinetColorIndex, 0);
+        ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), CabinetDoors, ActiveState.CabinetSizeIndex, ActiveState.CabinetColorIndex, 1);
 
-        switch (CabDoors.DoorCount)
+        switch (CabinetDoors.DoorCount)
         {
         case EDoorCount::NoDoors:
             if (IsValid(DoorMeshSlot0)) DoorMeshSlot0->SetVisibility(false);
@@ -369,7 +357,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             }
             else if (IsValid(DoorMeshSlot0))
             {
-                DoorMeshSlot0->SetRelativeLocation(CabDoors.SingleDoor.SlotConfig.ClosedPositionOffset);
+                DoorMeshSlot0->SetRelativeLocation(CabinetDoors.SingleDoor.SlotConfig.ClosedPositionOffset);
             }
             if (IsValid(DoorMeshSlot1)) DoorMeshSlot1->SetVisibility(false);
             break;
@@ -384,8 +372,9 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             }
             else if (IsValid(DoorMeshSlot0))
             {
-                DoorMeshSlot0->SetRelativeLocation(CabDoors.DoubleDoors.Slot0Config.ClosedPositionOffset);
+                DoorMeshSlot0->SetRelativeLocation(CabinetDoors.DoubleDoors.Slot0Config.ClosedPositionOffset);
             }
+
             if (IsValid(DoorMeshSlot1) && DoorMeshSlot1->GetStaticMesh())
             {
                 DoorMeshSlot1->SetVisibility(true);
@@ -396,7 +385,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             }
             else if (IsValid(DoorMeshSlot1))
             {
-                DoorMeshSlot1->SetRelativeLocation(CabDoors.DoubleDoors.Slot1Config.ClosedPositionOffset);
+                DoorMeshSlot1->SetRelativeLocation(CabinetDoors.DoubleDoors.Slot1Config.ClosedPositionOffset);
             }
             break;
         }
@@ -415,6 +404,39 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             DoorMeshSlot1->SetVisibility(false);
             DoorMeshSlot1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         }
+    }
+
+    // ── Closet ────────────────────────────────────────────────────────────
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->ClosetMesh) && SourceBooth->ClosetMesh->GetStaticMesh() != nullptr))
+    {
+        FFurnitureCabinetOptions ResolvedCloset;
+        if (IsValid(SourceBooth))
+        {
+            SourceBooth->GetResolvedCabinetOptions(EFurnitureComponentType::Closet, ResolvedCloset);
+        }
+        ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ResolvedCloset, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex);
+
+        if (IsValid(SourceBooth) && IsValid(SourceBooth->ClosetMesh))
+        {
+            if (IsValid(ClosetMesh)) ClosetMesh->SetRelativeTransform(SourceBooth->ClosetMesh->GetRelativeTransform());
+        }
+        else if (IsValid(ClosetMesh))
+        {
+            FFurniturePlacementOffset ClosetOffset;
+            if (ProductData.Cabinet.Sizes.IsValidIndex(ActiveState.CabinetSizeIndex))
+            {
+                ClosetOffset = ProductData.Cabinet.Sizes[ActiveState.CabinetSizeIndex].ClosetOffset;
+            }
+            ClosetMesh->SetRelativeLocation(ClosetOffset.RelativeLocation);
+            ClosetMesh->SetRelativeRotation(ClosetOffset.RelativeRotation);
+            ClosetMesh->SetRelativeScale3D(ClosetOffset.RelativeScale);
+        }
+    }
+    else if (IsValid(ClosetMesh))
+    {
+        ClosetMesh->SetStaticMesh(nullptr);
+        ClosetMesh->SetVisibility(false);
+        ClosetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
     // ── Closet Doors ──────────────────────────────────────────────────────
@@ -459,6 +481,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             {
                 ClosetDoorMeshSlot0->SetRelativeLocation(ClosetDoors.DoubleDoors.Slot0Config.ClosedPositionOffset);
             }
+
             if (IsValid(ClosetDoorMeshSlot1) && ClosetDoorMeshSlot1->GetStaticMesh())
             {
                 ClosetDoorMeshSlot1->SetVisibility(true);
@@ -644,45 +667,44 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType ComponentType)
 {
     UStaticMeshComponent* TargetComponent = nullptr;
-    FFurniturePreviewLightingConfig SelectedConfig = CabinetLighting;
 
     switch (ComponentType)
     {
     case EFurnitureComponentType::Cabinet:
         TargetComponent = CabinetMesh.Get();
-        SelectedConfig = CabinetLighting;
+        ActiveConfig = CabinetLighting;
         break;
     case EFurnitureComponentType::Closet:
         TargetComponent = ClosetMesh.Get();
-        SelectedConfig = ClosetLighting;
+        ActiveConfig = ClosetLighting;
         break;
     case EFurnitureComponentType::Doors:
         TargetComponent = DoorMeshSlot0.Get();
-        SelectedConfig = CabinetLighting;
+        ActiveConfig = CabinetLighting;
         break;
     case EFurnitureComponentType::Countertop:
         TargetComponent = CountertopMesh.Get();
-        SelectedConfig = CountertopLighting;
+        ActiveConfig = CountertopLighting;
         break;
     case EFurnitureComponentType::Sink:
         TargetComponent = SinkMesh.Get();
-        SelectedConfig = SinkLighting;
+        ActiveConfig = SinkLighting;
         break;
     case EFurnitureComponentType::Faucet:
         TargetComponent = FaucetMesh.Get();
-        SelectedConfig = FaucetLighting;
+        ActiveConfig = FaucetLighting;
         break;
     case EFurnitureComponentType::Mirror:
         TargetComponent = MirrorMesh.Get();
-        SelectedConfig = MirrorLighting;
+        ActiveConfig = MirrorLighting;
         break;
     case EFurnitureComponentType::None:
     default:
-        SelectedConfig = CabinetLighting;
+        ActiveConfig = CabinetLighting;
         break;
     }
 
-    ApplyLightingConfig(SelectedConfig);
+    ApplyLightingConfig(ActiveConfig);
 
     CurrentFocusedComponent = TargetComponent;
 
@@ -700,18 +722,18 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType Component
 
     if (IsValid(SpringArm))
     {
-        SpringArm->SetRelativeRotation(FRotator(SelectedConfig.Pitch, SelectedConfig.Yaw, 0.f));
+        SpringArm->SetRelativeRotation(FRotator(ActiveConfig.Pitch, ActiveConfig.Yaw, 0.f));
         if (IsValid(TargetComponent) && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
         {
             SpringArm->SetRelativeLocation(LocalFocusLoc);
-            SpringArm->TargetArmLength = SelectedConfig.FocusDistance;
-            CurrentZoomLength = SelectedConfig.FocusDistance;
+            SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
+            CurrentZoomLength = ActiveConfig.FocusDistance;
         }
         else
         {
             SpringArm->SetRelativeLocation(FVector::ZeroVector);
-            SpringArm->TargetArmLength = SelectedConfig.FocusDistance;
-            CurrentZoomLength = SelectedConfig.FocusDistance;
+            SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
+            CurrentZoomLength = ActiveConfig.FocusDistance;
         }
         UpdateLightIntensityForZoom();
     }
@@ -719,26 +741,23 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType Component
 
 void AFurniturePreviewActor::SetupBackdrop(UStaticMesh* InMesh, UMaterialInterface* InMaterial)
 {
-    if (!IsValid(BackdropMesh))
+    if (IsValid(BackdropMesh))
     {
-        return;
-    }
-
-    if (IsValid(InMesh))
-    {
-        BackdropMesh->SetStaticMesh(InMesh);
-    }
-
-    if (IsValid(InMaterial))
-    {
-        BackdropMesh->SetMaterial(0, InMaterial);
+        if (IsValid(InMesh))
+        {
+            BackdropMesh->SetStaticMesh(InMesh);
+        }
+        if (IsValid(InMaterial))
+        {
+            BackdropMesh->SetMaterial(0, InMaterial);
+        }
     }
 }
 
 void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
-    CurrentYaw   += DeltaYaw;
-    CurrentPitch  = FMath::Clamp(CurrentPitch + DeltaPitch, PitchMin, PitchMax);
+    CurrentYaw += DeltaYaw;
+    CurrentPitch = FMath::Clamp(CurrentPitch + DeltaPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
 
     if (IsValid(SpringArm))
     {
@@ -746,39 +765,11 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
     }
 }
 
-void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
-{
-    CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, ZoomMin, ZoomMax);
-    if (IsValid(SpringArm))
-    {
-        SpringArm->TargetArmLength = CurrentZoomLength;
-    }
-    UpdateLightIntensityForZoom();
-}
-
-void AFurniturePreviewActor::SetKeyLightEnabled(bool bEnable)
-{
-    bEnableKeyLight = bEnable;
-    EnforceLightingSettings();
-}
-
-void AFurniturePreviewActor::SetFillLightEnabled(bool bEnable)
-{
-    bEnableFillLight = bEnable;
-    EnforceLightingSettings();
-}
-
-void AFurniturePreviewActor::SetRimLightEnabled(bool bEnable)
-{
-    bEnableRimLight = bEnable;
-    EnforceLightingSettings();
-}
-
 void AFurniturePreviewActor::ResetRotation()
 {
-    CurrentYaw   = DefaultYaw;
-    CurrentPitch = DefaultPitch;
-    CurrentZoomLength = CabinetLighting.FocusDistance;
+    CurrentYaw   = ActiveConfig.Yaw;
+    CurrentPitch = ActiveConfig.Pitch;
+    CurrentZoomLength = ActiveConfig.FocusDistance;
 
     if (IsValid(MeshRoot))
     {
@@ -792,7 +783,7 @@ void AFurniturePreviewActor::ResetRotation()
     }
     if (IsValid(Camera))
     {
-        Camera->FieldOfView = CabinetLighting.CameraFOV;
+        Camera->FieldOfView = ActiveConfig.CameraFOV;
     }
     UpdateLightIntensityForZoom();
 }
@@ -800,7 +791,7 @@ void AFurniturePreviewActor::ResetRotation()
 void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
 {
     DefaultYaw = InYaw;
-    DefaultPitch = FMath::Clamp(InPitch, PitchMin, PitchMax);
+    DefaultPitch = FMath::Clamp(InPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
     CurrentYaw = DefaultYaw;
     CurrentPitch = DefaultPitch;
 
@@ -812,11 +803,42 @@ void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
     if (IsValid(SpringArm))
     {
         SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
+        SpringArm->TargetArmLength = CurrentZoomLength;
     }
 }
 
+void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
+{
+    CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, ActiveConfig.ZoomMin, ActiveConfig.ZoomMax);
+
+    if (IsValid(SpringArm))
+    {
+        SpringArm->TargetArmLength = CurrentZoomLength;
+    }
+
+    UpdateLightIntensityForZoom();
+}
+
+void AFurniturePreviewActor::SetKeyLightEnabled(bool bEnable)
+{
+    ActiveConfig.bEnableKeyLight = bEnable;
+    EnforceLightingSettings();
+}
+
+void AFurniturePreviewActor::SetFillLightEnabled(bool bEnable)
+{
+    ActiveConfig.bEnableFillLight = bEnable;
+    EnforceLightingSettings();
+}
+
+void AFurniturePreviewActor::SetRimLightEnabled(bool bEnable)
+{
+    ActiveConfig.bEnableRimLight = bEnable;
+    EnforceLightingSettings();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Private Helpers
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
@@ -829,17 +851,14 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
         return;
     }
 
-    TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
-    int32 ActiveModelIndex = -1;
-    if (Options.Models.IsValidIndex(SizeIndex))
+    TSoftObjectPtr<UStaticMesh> TargetMeshPtr = nullptr;
+    if (Options.Sizes.IsValidIndex(SizeIndex))
     {
-        TargetMeshPtr = Options.Models[SizeIndex].Mesh;
-        ActiveModelIndex = SizeIndex;
+        TargetMeshPtr = Options.Sizes[SizeIndex].Mesh;
     }
-    else if (Options.Models.Num() > 0)
+    else if (Options.Sizes.Num() > 0)
     {
-        TargetMeshPtr = Options.Models[0].Mesh;
-        ActiveModelIndex = 0;
+        TargetMeshPtr = Options.Sizes[0].Mesh;
     }
 
     if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
@@ -867,17 +886,13 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
         }
 
         const FFurnitureColorOption* SelectedColor = nullptr;
-        if (Options.Models.IsValidIndex(SizeIndex))
+        if (Options.Colors.IsValidIndex(ColorIndex))
         {
-            const TArray<FFurnitureColorOption>& Colors = Options.Models[SizeIndex].Colors;
-            if (Colors.IsValidIndex(ColorIndex))
-            {
-                SelectedColor = &Colors[ColorIndex];
-            }
-            else if (Colors.Num() > 0)
-            {
-                SelectedColor = &Colors[0];
-            }
+            SelectedColor = &Options.Colors[ColorIndex];
+        }
+        else if (Options.Colors.Num() > 0)
+        {
+            SelectedColor = &Options.Colors[0];
         }
 
         if (SelectedColor)
@@ -888,20 +903,6 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
                 if (IsValid(LoadedMat) && IsValid(Target) && Target->GetNumMaterials() > SlotOverride.SlotIndex)
                 {
                     Target->SetMaterial(SlotOverride.SlotIndex, LoadedMat);
-                }
-            }
-        }
-
-        if (Target == MirrorMesh.Get() && Options.Models.IsValidIndex(ActiveModelIndex))
-        {
-            const FFurnitureModelOption& ActiveOption = Options.Models[ActiveModelIndex];
-            if (!ActiveOption.MirrorMaterialOverride.IsNull())
-            {
-                UMaterialInterface* MatteMat = ActiveOption.MirrorMaterialOverride.LoadSynchronous();
-                int32 SlotIdx = ActiveOption.MirrorMaterialSlotIndex;
-                if (IsValid(MatteMat) && IsValid(Target) && SlotIdx >= 0 && SlotIdx < NumMaterials)
-                {
-                    Target->SetMaterial(SlotIdx, MatteMat);
                 }
             }
         }
@@ -924,14 +925,14 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
         return;
     }
 
-    TSoftObjectPtr<UStaticMesh> TargetMeshPtr;
+    TSoftObjectPtr<UStaticMesh> TargetMeshPtr = nullptr;
     if (Options.Sizes.IsValidIndex(SizeIndex))
     {
-        TargetMeshPtr = Options.Sizes[SizeIndex];
+        TargetMeshPtr = Options.Sizes[SizeIndex].Mesh;
     }
     else if (Options.Sizes.Num() > 0)
     {
-        TargetMeshPtr = Options.Sizes[0];
+        TargetMeshPtr = Options.Sizes[0].Mesh;
     }
 
     if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
@@ -958,23 +959,14 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
             Target->SetMaterial(i, nullptr);
         }
 
-        TArray<FFurnitureColorOption> FilteredColors;
-        for (const FFurnitureColorOption& ColorOpt : Options.Colors)
-        {
-            if (ColorOpt.SizeIndices.Num() == 0 || ColorOpt.SizeIndices.Contains(SizeIndex))
-            {
-                FilteredColors.Add(ColorOpt);
-            }
-        }
-
         const FFurnitureColorOption* SelectedColor = nullptr;
-        if (FilteredColors.IsValidIndex(ColorIndex))
+        if (Options.Colors.IsValidIndex(ColorIndex))
         {
-            SelectedColor = &FilteredColors[ColorIndex];
+            SelectedColor = &Options.Colors[ColorIndex];
         }
-        else if (FilteredColors.Num() > 0)
+        else if (Options.Colors.Num() > 0)
         {
-            SelectedColor = &FilteredColors[0];
+            SelectedColor = &Options.Colors[0];
         }
 
         if (SelectedColor)
@@ -1118,7 +1110,7 @@ void AFurniturePreviewActor::UpdateLightIntensityForZoom()
     if (IsValid(FillLight) && ReferenceZoomDistance > 0.f)
     {
         float ZoomRatio = CurrentZoomLength / ReferenceZoomDistance;
-        FillLight->SetIntensity(ActiveBaseFillIntensity * ZoomRatio * ZoomRatio * MasterLightIntensityScale);
+        FillLight->SetIntensity(ActiveBaseFillIntensity * ZoomRatio * ZoomRatio * ActiveConfig.MasterLightIntensityScale);
     }
 }
 
@@ -1137,16 +1129,16 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         }
     };
 
-    ForceConfigureMesh(CabinetMesh.Get(), bCabinetCastShadow);
-    ForceConfigureMesh(DoorMeshSlot0.Get(), bCabinetCastShadow);
-    ForceConfigureMesh(DoorMeshSlot1.Get(), bCabinetCastShadow);
-    ForceConfigureMesh(ClosetMesh.Get(), bClosetCastShadow);
-    ForceConfigureMesh(ClosetDoorMeshSlot0.Get(), bClosetCastShadow);
-    ForceConfigureMesh(ClosetDoorMeshSlot1.Get(), bClosetCastShadow);
-    ForceConfigureMesh(CountertopMesh.Get(), bCountertopCastShadow);
-    ForceConfigureMesh(SinkMesh.Get(), bSinkCastShadow);
-    ForceConfigureMesh(FaucetMesh.Get(), bFaucetCastShadow);
-    ForceConfigureMesh(MirrorMesh.Get(), bMirrorCastShadow);
+    ForceConfigureMesh(CabinetMesh.Get(), CabinetLighting.bCastShadow);
+    ForceConfigureMesh(DoorMeshSlot0.Get(), CabinetLighting.bCastShadow);
+    ForceConfigureMesh(DoorMeshSlot1.Get(), CabinetLighting.bCastShadow);
+    ForceConfigureMesh(ClosetMesh.Get(), ClosetLighting.bCastShadow);
+    ForceConfigureMesh(ClosetDoorMeshSlot0.Get(), ClosetLighting.bCastShadow);
+    ForceConfigureMesh(ClosetDoorMeshSlot1.Get(), ClosetLighting.bCastShadow);
+    ForceConfigureMesh(CountertopMesh.Get(), CountertopLighting.bCastShadow);
+    ForceConfigureMesh(SinkMesh.Get(), SinkLighting.bCastShadow);
+    ForceConfigureMesh(FaucetMesh.Get(), FaucetLighting.bCastShadow);
+    ForceConfigureMesh(MirrorMesh.Get(), MirrorLighting.bCastShadow);
     ForceConfigureMesh(BackdropMesh.Get(), false);
 
     if (IsValid(BackdropMesh))
@@ -1154,39 +1146,18 @@ void AFurniturePreviewActor::EnforceLightingSettings()
         BackdropMesh->SetAffectDynamicIndirectLighting(false);
     }
 
-    if (IsValid(KeyLight))
-    {
-        KeyLight->SetLightColor(KeyLightColor);
-        KeyLight->bUseTemperature = false;
-        KeyLight->SetVisibility(bEnableKeyLight);
-        KeyLight->LightingChannels.bChannel0 = true;
-        KeyLight->SetIntensity(CabinetLighting.KeyLightIntensity * MasterLightIntensityScale);
-    }
-
-    if (IsValid(FillLight))
-    {
-        FillLight->SetLightColor(FillLightColor);
-        FillLight->bUseTemperature = false;
-        FillLight->SetVisibility(bEnableFillLight);
-        FillLight->LightingChannels.bChannel0 = true;
-        UpdateLightIntensityForZoom();
-    }
-
-    if (IsValid(RimLight))
-    {
-        RimLight->SetLightColor(RimLightColor);
-        RimLight->bUseTemperature = false;
-        RimLight->SetVisibility(bEnableRimLight);
-        RimLight->LightingChannels.bChannel0 = true;
-        RimLight->SetIntensity(30000.f * MasterLightIntensityScale);
-    }
+    ApplyLightingConfig(ActiveConfig);
 }
 
 void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config)
 {
+    ActiveConfig = Config;
+
     if (IsValid(KeyLight))
     {
-        KeyLight->SetIntensity(Config.KeyLightIntensity * MasterLightIntensityScale);
+        KeyLight->SetLightColor(Config.KeyLightColor);
+        KeyLight->SetVisibility(Config.bEnableKeyLight);
+        KeyLight->SetIntensity(Config.KeyLightIntensity * Config.MasterLightIntensityScale);
         KeyLight->SetRelativeLocation(Config.KeyLightLocation);
         KeyLight->InnerConeAngle = Config.KeyLightInnerConeAngle;
         KeyLight->OuterConeAngle = Config.KeyLightOuterConeAngle;
@@ -1201,6 +1172,8 @@ void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLighting
 
     if (IsValid(FillLight))
     {
+        FillLight->SetLightColor(Config.FillLightColor);
+        FillLight->SetVisibility(Config.bEnableFillLight);
         FillLight->SetAttenuationRadius(Config.AttenuationRadius);
         ActiveBaseFillIntensity = Config.FillLightIntensity;
         UpdateLightIntensityForZoom();
@@ -1208,7 +1181,9 @@ void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLighting
 
     if (IsValid(RimLight))
     {
-        RimLight->SetIntensity(Config.RimLightIntensity * MasterLightIntensityScale);
+        RimLight->SetLightColor(Config.RimLightColor);
+        RimLight->SetVisibility(Config.bEnableRimLight);
+        RimLight->SetIntensity(Config.RimLightIntensity * Config.MasterLightIntensityScale);
         RimLight->SetAttenuationRadius(Config.AttenuationRadius);
     }
 
