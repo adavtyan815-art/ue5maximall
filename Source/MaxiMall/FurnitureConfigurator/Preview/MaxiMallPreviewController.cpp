@@ -441,7 +441,7 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
 
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
-    FVector SpawnLocation = PreviewStagingLocation;
+    FVector TargetSpawnLocation = PreviewStagingLocation;
     FRotator SpawnRotation = FRotator::ZeroRotator;
     if (TargetBooth)
     {
@@ -453,12 +453,12 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
 
     if (EffectiveMode == EPreviewViewportMode::WorldInPlace && TargetBooth)
     {
-        SpawnLocation = TargetBooth->GetActorLocation();
+        TargetSpawnLocation = TargetBooth->GetActorLocation();
     }
 
     ActivePreviewActor = World->SpawnActor<AFurniturePreviewActor>(
         SpawnClass,
-        SpawnLocation,
+        TargetSpawnLocation,
         SpawnRotation,
         SpawnParams);
 
