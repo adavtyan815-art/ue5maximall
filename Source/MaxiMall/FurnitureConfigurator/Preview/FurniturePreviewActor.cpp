@@ -761,7 +761,15 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         }
         WIP_CameraWorldLoc = CharCamLoc;
         WIP_CameraForward  = FRotationMatrix(CharCamRot).GetScaledAxis(EAxis::X); // cam forward (unit)
-        WIP_CameraRight    = FRotationMatrix(CharCamRot).GetScaledAxis(EAxis::Y); // cam right   (unit)
+        // CameraRight MUST be perfectly horizontal (Z = 0) so that up/down rotation
+        // is always around a pure horizontal axis — regardless of the camera's pitch.
+        // If the camera has pitch (looking up/down), the raw Y axis would be tilted,
+        // which would cause diagonal rotation. Stripping Z gives a clean horizontal axis.
+        {
+            FVector RawRight = FRotationMatrix(CharCamRot).GetScaledAxis(EAxis::Y);
+            FVector HorizRight = FVector(RawRight.X, RawRight.Y, 0.f).GetSafeNormal();
+            WIP_CameraRight = HorizRight.IsNearlyZero() ? FVector(0.f, 1.f, 0.f) : HorizRight;
+        }
 
         // ── 5. Choose initial viewing distance by component type ────────────
         float ViewDist = 180.0f;
