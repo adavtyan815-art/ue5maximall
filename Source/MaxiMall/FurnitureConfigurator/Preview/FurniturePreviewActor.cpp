@@ -1262,7 +1262,7 @@ void AFurniturePreviewActor::ApplyWorldPostProcessSettings()
     for (TActorIterator<APostProcessVolume> It(GetWorld()); It; ++It)
     {
         APostProcessVolume* PPVolume = *It;
-        if (IsValid(PPVolume) && (PPVolume->bUnbound || PPVolume->EncompassesPoint(GetActorLocation())))
+        if (IsValid(PPVolume) && (PPVolume->bUnbound || PPVolume->EncompassesPoint(GetActorLocation(), 0.0f)))
         {
             Camera->PostProcessSettings = PPVolume->Settings;
             break;
