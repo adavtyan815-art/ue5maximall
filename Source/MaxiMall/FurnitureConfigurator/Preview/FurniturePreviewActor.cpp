@@ -875,6 +875,9 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
+        WorldInPlaceYaw += (-DeltaYaw);
+        WorldInPlacePitch = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -45.f, 45.f);
+
         UStaticMeshComponent* TargetComp = CabinetMesh.Get();
         if (IsValid(CurrentFocusedComponent))
         {
@@ -884,33 +887,16 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
         if (IsValid(TargetComp) && GetWorld())
         {
             APlayerController* PC = GetWorld()->GetFirstPlayerController();
-            FVector CamLoc;
-            FRotator CamRot;
+            FRotator CamRot = GetActorRotation();
             if (PC)
             {
+                FVector CamLoc;
                 PC->GetPlayerViewPoint(CamLoc, CamRot);
             }
-            else
-            {
-                CamRot = GetActorRotation();
-            }
 
-            FVector CamUp = FRotationMatrix(CamRot).GetScaledAxis(EAxis::Z);
-            FVector CamRight = FRotationMatrix(CamRot).GetScaledAxis(EAxis::Y);
-
-            // Horizontal Yaw: rotate around Player Camera's Up Vector (strictly orthogonal to screen view)
-            if (FMath::Abs(DeltaYaw) > 0.001f)
-            {
-                FQuat YawQuat(CamUp, FMath::DegreesToRadians(-DeltaYaw));
-                TargetComp->AddWorldRotation(YawQuat);
-            }
-
-            // Vertical Pitch: rotate around Player Camera's Right Vector (strictly orthogonal to screen view)
-            if (FMath::Abs(DeltaPitch) > 0.001f)
-            {
-                FQuat PitchQuat(CamRight, FMath::DegreesToRadians(-DeltaPitch));
-                TargetComp->AddWorldRotation(PitchQuat);
-            }
+            // Facing the camera with STRICT 0.0f ROLL (zero side tilting!):
+            FRotator CleanRotator(WorldInPlacePitch, CamRot.Yaw + 180.f + WorldInPlaceYaw, 0.f);
+            TargetComp->SetWorldRotation(CleanRotator);
         }
     }
     else
@@ -921,7 +907,6 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
         if (IsValid(SpringArm))
         {
             SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
-        }
     }
 }
 
