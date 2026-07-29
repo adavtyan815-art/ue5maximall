@@ -907,6 +907,7 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
         if (IsValid(SpringArm))
         {
             SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
+        }
     }
 }
 
