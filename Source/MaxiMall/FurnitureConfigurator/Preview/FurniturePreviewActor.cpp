@@ -798,18 +798,25 @@ void AFurniturePreviewActor::UpdateWorldInPlaceModelPosition()
         PC->GetPlayerViewPoint(ActiveCamLoc, ActiveCamRot);
 
         FVector BoothLoc = GetActorLocation();
-        FVector DirToPlayerCam = (ActiveCamLoc - BoothLoc).GetSafeNormal();
-        float TotalDistToCam = FVector::Dist(BoothLoc, ActiveCamLoc);
 
-        // 1. Min Offset (Zoom Out limit = WorldInPlaceForwardOffset in front of booth wall)
-        // 2. Max Offset (Zoom In limit = TotalDistToCam - 40cm, in front of player character camera lens)
+        // 1. Calculate HORIZONTAL direction vector towards player camera (Z = 0 so model NEVER drifts upwards into air!)
+        FVector HorizontalDirToPlayerCam = FVector(ActiveCamLoc.X - BoothLoc.X, ActiveCamLoc.Y - BoothLoc.Y, 0.f).GetSafeNormal();
+        if (HorizontalDirToPlayerCam.IsNearlyZero())
+        {
+            HorizontalDirToPlayerCam = GetActorForwardVector();
+        }
+
+        float TotalDistToCam = FVector::Dist2D(BoothLoc, ActiveCamLoc);
+
+        // 2. Min Offset (Zoom Out limit = WorldInPlaceForwardOffset in front of booth wall)
+        // 3. Max Offset (Zoom In limit = TotalDistToCam - 40cm, in front of player character camera lens)
         float MinOffset = WorldInPlaceForwardOffset;
         float MaxOffset = FMath::Max(MinOffset + 10.0f, TotalDistToCam - 40.0f);
 
         WorldInPlaceZoomOffset = FMath::Clamp(WorldInPlaceZoomOffset, 0.f, MaxOffset - MinOffset);
         float FinalForwardCM = MinOffset + WorldInPlaceZoomOffset;
 
-        FVector TargetWorldLoc = BoothLoc + (DirToPlayerCam * FinalForwardCM);
+        FVector TargetWorldLoc = BoothLoc + (HorizontalDirToPlayerCam * FinalForwardCM);
         MeshRoot->SetWorldLocation(TargetWorldLoc);
     }
 }
@@ -868,22 +875,6 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        float AbsYaw = FMath::Abs(DeltaYaw);
-        float AbsPitch = FMath::Abs(DeltaPitch);
-
-        float EffectiveDeltaYaw = DeltaYaw;
-        float EffectiveDeltaPitch = DeltaPitch;
-
-        // 1. Dominant axis thresholding (locks to single axis if user drags mainly horizontal or vertical):
-        if (AbsYaw > AbsPitch * 1.15f)
-        {
-            EffectiveDeltaPitch = 0.f; // Lock strictly to horizontal rotation!
-        }
-        else if (AbsPitch > AbsYaw * 1.15f)
-        {
-            EffectiveDeltaYaw = 0.f; // Lock strictly to vertical tilt!
-        }
-
         UStaticMeshComponent* TargetComp = CabinetMesh.Get();
         if (IsValid(CurrentFocusedComponent))
         {
@@ -908,16 +899,16 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
             FVector CamRight = FRotationMatrix(CamRot).GetScaledAxis(EAxis::Y);
 
             // Horizontal Yaw: rotate around Player Camera's Up Vector (strictly orthogonal to screen view)
-            if (FMath::Abs(EffectiveDeltaYaw) > 0.001f)
+            if (FMath::Abs(DeltaYaw) > 0.001f)
             {
-                FQuat YawQuat(CamUp, FMath::DegreesToRadians(-EffectiveDeltaYaw));
+                FQuat YawQuat(CamUp, FMath::DegreesToRadians(-DeltaYaw));
                 TargetComp->AddWorldRotation(YawQuat);
             }
 
             // Vertical Pitch: rotate around Player Camera's Right Vector (strictly orthogonal to screen view)
-            if (FMath::Abs(EffectiveDeltaPitch) > 0.001f)
+            if (FMath::Abs(DeltaPitch) > 0.001f)
             {
-                FQuat PitchQuat(CamRight, FMath::DegreesToRadians(-EffectiveDeltaPitch));
+                FQuat PitchQuat(CamRight, FMath::DegreesToRadians(-DeltaPitch));
                 TargetComp->AddWorldRotation(PitchQuat);
             }
         }
