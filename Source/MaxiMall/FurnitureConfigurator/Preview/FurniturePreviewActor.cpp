@@ -17,6 +17,8 @@
 #include "Engine/PostProcessVolume.h"
 #include "Engine/TextureCube.h"
 #include "EngineUtils.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Kismet/GameplayStatics.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -786,30 +788,42 @@ void AFurniturePreviewActor::SetupBackdrop(UStaticMesh* InMesh, UMaterialInterfa
 
 void AFurniturePreviewActor::UpdateWorldInPlaceModelPosition()
 {
-    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(MeshRoot) && IsValid(Camera))
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(MeshRoot) && GetWorld())
     {
-        FVector CamLoc = Camera->GetComponentLocation();
-        FVector ActorLoc = GetActorLocation();
-        FVector DirToCam = (CamLoc - ActorLoc).GetSafeNormal();
-        float TotalDistToCam = FVector::Dist(ActorLoc, CamLoc);
+        APlayerController* PC = GetWorld()->GetFirstPlayerController();
+        if (!PC) return;
 
-        // 1. Min Offset (Zoom Out limit = WorldInPlaceForwardOffset in front of booth - zero clipping into booth behind)
-        // 2. Max Offset (Zoom In limit = TotalDistToCam - 45cm - zero clipping through camera lens)
+        FVector ActiveCamLoc;
+        FRotator ActiveCamRot;
+        PC->GetPlayerViewPoint(ActiveCamLoc, ActiveCamRot);
+
+        FVector BoothLoc = GetActorLocation();
+        FVector DirToPlayerCam = (ActiveCamLoc - BoothLoc).GetSafeNormal();
+        float TotalDistToCam = FVector::Dist(BoothLoc, ActiveCamLoc);
+
+        // 1. Min Offset (Zoom Out limit = WorldInPlaceForwardOffset in front of booth wall)
+        // 2. Max Offset (Zoom In limit = TotalDistToCam - 40cm, in front of player character camera lens)
         float MinOffset = WorldInPlaceForwardOffset;
-        float MaxOffset = FMath::Max(MinOffset + 10.0f, TotalDistToCam - 45.0f);
+        float MaxOffset = FMath::Max(MinOffset + 10.0f, TotalDistToCam - 40.0f);
 
         WorldInPlaceZoomOffset = FMath::Clamp(WorldInPlaceZoomOffset, 0.f, MaxOffset - MinOffset);
         float FinalForwardCM = MinOffset + WorldInPlaceZoomOffset;
 
-        FVector TargetWorldLoc = ActorLoc + (DirToCam * FinalForwardCM);
+        FVector TargetWorldLoc = BoothLoc + (DirToPlayerCam * FinalForwardCM);
         MeshRoot->SetWorldLocation(TargetWorldLoc);
     }
 }
 
 void AFurniturePreviewActor::UpdateWorldInPlaceDOF()
 {
-    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace && GetWorld())
     {
+        APlayerController* PC = GetWorld()->GetFirstPlayerController();
+        if (!PC || !PC->PlayerCameraManager) return;
+
+        APlayerCameraManager* PCM = PC->PlayerCameraManager;
+        FVector ActiveCamLoc = PCM->GetCameraLocation();
+
         UStaticMeshComponent* TargetMeshComp = CabinetMesh.Get();
         if (IsValid(CurrentFocusedComponent))
         {
@@ -821,24 +835,23 @@ void AFurniturePreviewActor::UpdateWorldInPlaceDOF()
 
         if (IsValid(TargetMeshComp) && TargetMeshComp->GetVisibleFlag() && TargetMeshComp->GetStaticMesh())
         {
-            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), TargetMeshComp->GetComponentLocation());
+            DistanceToFocus = FVector::Dist(ActiveCamLoc, TargetMeshComp->GetComponentLocation());
             MeshDepthExtent = TargetMeshComp->Bounds.BoxExtent.Size() * 2.0f;
         }
         else if (IsValid(MeshRoot))
         {
-            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), MeshRoot->GetComponentLocation());
+            DistanceToFocus = FVector::Dist(ActiveCamLoc, MeshRoot->GetComponentLocation());
         }
 
-        Camera->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
-        Camera->PostProcessSettings.DepthOfFieldFocalDistance = DistanceToFocus;
-        Camera->PostProcessSettings.bOverride_DepthOfFieldFocalRegion = true;
-        Camera->PostProcessSettings.DepthOfFieldFocalRegion = FMath::Max(250.0f, MeshDepthExtent + 100.0f);
-        Camera->PostProcessSettings.bOverride_DepthOfFieldFstop = true;
-        Camera->PostProcessSettings.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
-        Camera->PostProcessSettings.bOverride_DepthOfFieldSensorWidth = true;
-        Camera->PostProcessSettings.DepthOfFieldSensorWidth = 35.0f;
-        Camera->PostProcessSettings.bOverride_DepthOfFieldNearBlurSize = true;
-        Camera->PostProcessSettings.DepthOfFieldNearBlurSize = 0.0f; // 0 near blur!
+        FPostProcessSettings& PPS = PCM->PostProcessSettings;
+        PPS.bOverride_DepthOfFieldFocalDistance = true;
+        PPS.DepthOfFieldFocalDistance = DistanceToFocus;
+        PPS.bOverride_DepthOfFieldFocalRegion = true;
+        PPS.DepthOfFieldFocalRegion = FMath::Max(250.0f, MeshDepthExtent + 100.0f);
+        PPS.bOverride_DepthOfFieldFstop = true;
+        PPS.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
+        PPS.bOverride_DepthOfFieldNearBlurSize = true;
+        PPS.DepthOfFieldNearBlurSize = 0.0f; // 0 near blur!
     }
 }
 
@@ -868,18 +881,33 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
             TargetComp = CurrentFocusedComponent;
         }
 
-        if (IsValid(TargetComp))
+        if (IsValid(TargetComp) && GetWorld())
         {
-            // Horizontal Yaw: rotate around Z-axis
-            if (FMath::Abs(EffectiveDeltaYaw) > 0.001f)
+            APlayerController* PC = GetWorld()->GetFirstPlayerController();
+            FVector CamLoc;
+            FRotator CamRot;
+            if (PC)
             {
-                TargetComp->AddWorldRotation(FRotator(0.f, -EffectiveDeltaYaw, 0.f));
+                PC->GetPlayerViewPoint(CamLoc, CamRot);
+            }
+            else
+            {
+                CamRot = GetActorRotation();
             }
 
-            // Vertical Pitch: rotate around Camera's Right Vector so Up/Down tilt is ALWAYS relative to the player's screen!
-            if (FMath::Abs(EffectiveDeltaPitch) > 0.001f && IsValid(Camera))
+            FVector CamUp = FRotationMatrix(CamRot).GetScaledAxis(EAxis::Z);
+            FVector CamRight = FRotationMatrix(CamRot).GetScaledAxis(EAxis::Y);
+
+            // Horizontal Yaw: rotate around Player Camera's Up Vector (strictly orthogonal to screen view)
+            if (FMath::Abs(EffectiveDeltaYaw) > 0.001f)
             {
-                FVector CamRight = Camera->GetRightVector();
+                FQuat YawQuat(CamUp, FMath::DegreesToRadians(-EffectiveDeltaYaw));
+                TargetComp->AddWorldRotation(YawQuat);
+            }
+
+            // Vertical Pitch: rotate around Player Camera's Right Vector (strictly orthogonal to screen view)
+            if (FMath::Abs(EffectiveDeltaPitch) > 0.001f)
+            {
                 FQuat PitchQuat(CamRight, FMath::DegreesToRadians(-EffectiveDeltaPitch));
                 TargetComp->AddWorldRotation(PitchQuat);
             }
