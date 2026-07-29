@@ -1,4 +1,4 @@
-// Copyright MaxiMall Project. All Rights Reserved.
+// Copyright awsTutorial Project. All Rights Reserved.
 // FurnitureTypes.h
 //
 // Central type definitions for the Modular Furniture Configurator System.
@@ -88,6 +88,19 @@ enum class EFaucetType : uint8
     Integrated    UMETA(DisplayName = "Integrated (Wall/Counter-Integrated)"),
 };
 
+/**
+ * Defines the rendering strategy for the 3D Preview Viewport.
+ *
+ * IsolatedStudio – Teleports model to isolated studio (Location 10000) with studio backdrop & HDRI reflection probes.
+ * WorldInPlace   – Keeps model inside room booth (0 distance), rotates MeshRoot instead of camera, applies DOF blur.
+ */
+UENUM(BlueprintType)
+enum class EPreviewViewportMode : uint8
+{
+    IsolatedStudio    UMETA(DisplayName = "Isolated Studio (Location 10000)"),
+    WorldInPlace      UMETA(DisplayName = "World In-Place (Room Booth with Model Rotation & Blur)"),
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPPORTING SUB-STRUCTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,7 +110,7 @@ enum class EFaucetType : uint8
  * SlotIndex maps directly to UStaticMeshComponent::SetMaterial(Index, Material).
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureMaterialSlot
+struct AWSTUTORIAL_API FFurnitureMaterialSlot
 {
     GENERATED_BODY()
 
@@ -114,7 +127,7 @@ struct MAXIMALL_API FFurnitureMaterialSlot
  * All material overrides for a single mesh component in a product variant.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureMeshMaterials
+struct AWSTUTORIAL_API FFurnitureMeshMaterials
 {
     GENERATED_BODY()
 
@@ -131,7 +144,7 @@ struct MAXIMALL_API FFurnitureMeshMaterials
  * A color/material option for a component, containing material overrides.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureColorOption
+struct AWSTUTORIAL_API FFurnitureColorOption
 {
     GENERATED_BODY()
 
@@ -161,7 +174,7 @@ struct MAXIMALL_API FFurnitureColorOption
  * Product metadata for a specific combination of component selections.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureMetadata
+struct AWSTUTORIAL_API FFurnitureMetadata
 {
     GENERATED_BODY()
 
@@ -179,7 +192,7 @@ struct MAXIMALL_API FFurnitureMetadata
  * A mapped combination key-value entry for size and color configurations.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureMetadataEntry
+struct AWSTUTORIAL_API FFurnitureMetadataEntry
 {
     GENERATED_BODY()
 
@@ -194,7 +207,7 @@ struct MAXIMALL_API FFurnitureMetadataEntry
 };
 
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureCabinetOptions
+struct AWSTUTORIAL_API FFurnitureCabinetOptions
 {
     GENERATED_BODY()
 
@@ -212,7 +225,7 @@ struct MAXIMALL_API FFurnitureCabinetOptions
 };
 
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurniturePlacementOffset
+struct AWSTUTORIAL_API FFurniturePlacementOffset
 {
     GENERATED_BODY()
 
@@ -227,7 +240,7 @@ struct MAXIMALL_API FFurniturePlacementOffset
 };
 
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureModelOption
+struct AWSTUTORIAL_API FFurnitureModelOption
 {
     GENERATED_BODY()
 
@@ -256,7 +269,7 @@ struct MAXIMALL_API FFurnitureModelOption
 };
 
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureCountertopRow : public FTableRowBase
+struct AWSTUTORIAL_API FFurnitureCountertopRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -277,7 +290,7 @@ struct MAXIMALL_API FFurnitureCountertopRow : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureSinkRow : public FTableRowBase
+struct AWSTUTORIAL_API FFurnitureSinkRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -295,7 +308,7 @@ struct MAXIMALL_API FFurnitureSinkRow : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureFaucetRow : public FTableRowBase
+struct AWSTUTORIAL_API FFurnitureFaucetRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -316,7 +329,7 @@ struct MAXIMALL_API FFurnitureFaucetRow : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureMirrorRow : public FTableRowBase
+struct AWSTUTORIAL_API FFurnitureMirrorRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -342,7 +355,7 @@ struct MAXIMALL_API FFurnitureMirrorRow : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureComponentOptions
+struct AWSTUTORIAL_API FFurnitureComponentOptions
 {
     GENERATED_BODY()
 
@@ -357,7 +370,7 @@ struct MAXIMALL_API FFurnitureComponentOptions
  * A door color/material option containing material overrides for a single door mesh, with no Thumbnail.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureDoorColorOption
+struct AWSTUTORIAL_API FFurnitureDoorColorOption
 {
     GENERATED_BODY()
 
@@ -369,7 +382,7 @@ struct MAXIMALL_API FFurnitureDoorColorOption
  * Size options for double doors, holding exactly two explicit mesh slots.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureDoubleDoorsSizeOption
+struct AWSTUTORIAL_API FFurnitureDoubleDoorsSizeOption
 {
     GENERATED_BODY()
 
@@ -384,7 +397,7 @@ struct MAXIMALL_API FFurnitureDoubleDoorsSizeOption
  * Color options for double doors, holding two separate material override blocks.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureDoubleDoorsColorOption
+struct AWSTUTORIAL_API FFurnitureDoubleDoorsColorOption
 {
     GENERATED_BODY()
 
@@ -404,7 +417,7 @@ struct MAXIMALL_API FFurnitureDoubleDoorsColorOption
  * between "product A door position" and "product B door position" is applied.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FDoorSlotConfig
+struct AWSTUTORIAL_API FDoorSlotConfig
 {
     GENERATED_BODY()
 
@@ -441,7 +454,7 @@ struct MAXIMALL_API FDoorSlotConfig
  * Configuration schema strictly for a single door setup.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureSingleDoorConfig
+struct AWSTUTORIAL_API FFurnitureSingleDoorConfig
 {
     GENERATED_BODY()
 
@@ -459,7 +472,7 @@ struct MAXIMALL_API FFurnitureSingleDoorConfig
  * Configuration schema strictly for a double doors setup.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureDoubleDoorsConfig
+struct AWSTUTORIAL_API FFurnitureDoubleDoorsConfig
 {
     GENERATED_BODY()
 
@@ -480,7 +493,7 @@ struct MAXIMALL_API FFurnitureDoubleDoorsConfig
  * Combines configuration for single or double doors, visible conditionally in details panel.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureDoorGroup
+struct AWSTUTORIAL_API FFurnitureDoorGroup
 {
     GENERATED_BODY()
 
@@ -500,7 +513,7 @@ struct MAXIMALL_API FFurnitureDoorGroup
  * Unified doors configuration splits cabinet and closet doors.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureDoorsConfig
+struct AWSTUTORIAL_API FFurnitureDoorsConfig
 {
     GENERATED_BODY()
 
@@ -515,7 +528,7 @@ struct MAXIMALL_API FFurnitureDoorsConfig
  * Replicated configuration state tracking choices for all subcomponents of a booth.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FShowroomBoothConfigState
+struct AWSTUTORIAL_API FShowroomBoothConfigState
 {
     GENERATED_BODY()
 
@@ -577,7 +590,7 @@ struct MAXIMALL_API FShowroomBoothConfigState
  * booth switches to a different product. No persistent hard references exist.
  */
 USTRUCT(BlueprintType)
-struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
+struct AWSTUTORIAL_API FFurnitureProductRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -602,30 +615,30 @@ struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
     // ── Countertop ────────────────────────────────────────────────────────
 
     /** Countertop allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetCountertopOptions"))
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop", meta = (GetOptions = "awsTutorial.FurnitureEditorHelper.GetCountertopOptions"))
     TArray<FName> AllowedCountertopIDs;
 
     // ── Sink ──────────────────────────────────────────────────────────────
 
     /** Standalone sink allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetSinkOptions"))
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink", meta = (GetOptions = "awsTutorial.FurnitureEditorHelper.GetSinkOptions"))
     TArray<FName> AllowedSinkIDs;
 
     // ── Faucet ────────────────────────────────────────────────────────────
 
     /** Faucet allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetFaucetOptions"))
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet", meta = (GetOptions = "awsTutorial.FurnitureEditorHelper.GetFaucetOptions"))
     TArray<FName> AllowedFaucetIDs;
 
     // ── Mirror ────────────────────────────────────────────────────────────
 
     /** Mirror allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetMirrorOptions"))
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror", meta = (GetOptions = "awsTutorial.FurnitureEditorHelper.GetMirrorOptions"))
     TArray<FName> AllowedMirrorIDs;
 };
 
 UCLASS()
-class MAXIMALL_API UFurnitureEditorHelper : public UObject
+class AWSTUTORIAL_API UFurnitureEditorHelper : public UObject
 {
     GENERATED_BODY()
 

@@ -760,6 +760,12 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType Component
     }
 }
 
+void AFurniturePreviewActor::SetViewportMode(EPreviewViewportMode NewMode)
+{
+    ViewportMode = NewMode;
+    EnforceLightingSettings();
+}
+
 void AFurniturePreviewActor::SetupBackdrop(UStaticMesh* InMesh, UMaterialInterface* InMaterial)
 {
     if (IsValid(BackdropMesh))
@@ -777,12 +783,23 @@ void AFurniturePreviewActor::SetupBackdrop(UStaticMesh* InMesh, UMaterialInterfa
 
 void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
-    CurrentYaw += DeltaYaw;
-    CurrentPitch = FMath::Clamp(CurrentPitch + DeltaPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
-
-    if (IsValid(SpringArm))
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
+        // Rotate model itself (MeshRoot) in place -> ZERO camera wall clipping!
+        if (IsValid(MeshRoot))
+        {
+            MeshRoot->AddLocalRotation(FRotator(0.f, DeltaYaw, 0.f));
+        }
+    }
+    else
+    {
+        CurrentYaw += DeltaYaw;
+        CurrentPitch = FMath::Clamp(CurrentPitch + DeltaPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
+
+        if (IsValid(SpringArm))
+        {
+            SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
+        }
     }
 }
 
@@ -1161,6 +1178,21 @@ void AFurniturePreviewActor::EnforceLightingSettings()
     if (IsValid(BackdropMesh))
     {
         BackdropMesh->SetAffectDynamicIndirectLighting(false);
+        BackdropMesh->SetVisibility(ViewportMode == EPreviewViewportMode::IsolatedStudio);
+    }
+
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
+    {
+        Camera->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
+        Camera->PostProcessSettings.DepthOfFieldFocalDistance = CurrentZoomLength;
+        Camera->PostProcessSettings.bOverride_DepthOfFieldFstop = true;
+        Camera->PostProcessSettings.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
+        Camera->PostProcessSettings.bOverride_DepthOfFieldSensorWidth = true;
+        Camera->PostProcessSettings.DepthOfFieldSensorWidth = 35.0f;
+    }
+    else if (IsValid(Camera))
+    {
+        Camera->PostProcessSettings.bOverride_DepthOfFieldFstop = false;
     }
 
     ApplyLightingConfig(ActiveConfig);
