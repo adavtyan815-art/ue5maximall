@@ -364,12 +364,17 @@ private:
     void ApplyWorldPostProcessSettings();
     void UpdateWorldInPlaceModelPosition();
     void UpdateWorldInPlaceDOF();
-    void WIP_ApplyDoF(); // Clean internal helper: focal distance = SpringArm arm length
+    void WIP_ApplyDoF();            // focal distance = SpringArm arm length
+    FVector WIP_GetFocusPivotWorld() const; // world-space bounding box center of focused mesh
 
     float SavedDirectionalLightIntensity = -1.f;
-    float WorldInPlaceYaw = 0.f;
+    float WorldInPlaceYaw   = 0.f;
     float WorldInPlacePitch = 0.f;
     float WorldInPlaceZoomOffset = 0.f;
+
+    // Stored at SetFocusComponent time so ResetRotation can restore the exact camera state.
+    FVector  WIP_InitialSpringArmWorldLoc = FVector::ZeroVector;
+    FRotator WIP_InitialSpringArmWorldRot = FRotator::ZeroRotator;
 
     UPROPERTY()
     TWeakObjectPtr<class ADirectionalLight> CachedDirectionalLight;
