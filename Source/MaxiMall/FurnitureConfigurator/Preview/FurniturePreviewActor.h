@@ -364,6 +364,7 @@ private:
     void ApplyWorldPostProcessSettings();
     void UpdateWorldInPlaceModelPosition();
     void UpdateWorldInPlaceDOF();
+    void WIP_ApplyDoF(); // Clean internal helper: focal distance = SpringArm arm length
 
     float SavedDirectionalLightIntensity = -1.f;
     float WorldInPlaceYaw = 0.f;

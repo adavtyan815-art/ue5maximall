@@ -687,76 +687,146 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     EnforceLightingSettings();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WorldInPlace View Mode — Clean implementation from scratch
+//
+// Architecture:
+//   PreviewRoot  — spawns at the SAME WORLD LOCATION as the ShowroomBooth.
+//   MeshRoot     — child of PreviewRoot, holds all furniture mesh components.
+//                  We ONLY rotate MeshRoot.Pitch and MeshRoot.Yaw (Roll = 0 always).
+//   SpringArm    — child of PreviewRoot, NOT of MeshRoot.
+//                  SpringArm.RelativeRotation = (0, 0, 0) at all times in WorldInPlace.
+//                  This means the camera ALWAYS looks straight at the booth face — 100% perpendicular.
+//   Camera       — child of SpringArm socket.
+//                  SpringArm.TargetArmLength drives both zoom AND DoF focal distance.
+//
+// Result:
+//   1. Camera is always perpendicular to the wall — no angle drift.
+//   2. Model is always centered — SpringArm.RelativeLocation = mesh world center in actor-local space.
+//   3. Rotation: Yaw/Pitch applied only to MeshRoot, Roll = 0. Clean axes, no tilting.
+//   4. Zoom: only SpringArm.TargetArmLength changes — strictly along camera forward axis.
+//   5. DoF: focal distance = SpringArm.TargetArmLength — model is always pin-sharp, background blurs.
+// ─────────────────────────────────────────────────────────────────────────────
+
 void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetType)
 {
-    UStaticMeshComponent* TargetComponent = nullptr;
+    // ── 1. Resolve target component pointer ───────────────────────────────
+    UStaticMeshComponent* TargetComp = nullptr;
     switch (TargetType)
     {
-    case EFurnitureComponentType::Cabinet:     TargetComponent = CabinetMesh.Get(); break;
-    case EFurnitureComponentType::Closet:      TargetComponent = ClosetMesh.Get(); break;
-    case EFurnitureComponentType::Countertop:  TargetComponent = CountertopMesh.Get(); break;
-    case EFurnitureComponentType::Sink:        TargetComponent = SinkMesh.Get(); break;
-    case EFurnitureComponentType::Faucet:      TargetComponent = FaucetMesh.Get(); break;
-    case EFurnitureComponentType::Mirror:      TargetComponent = MirrorMesh.Get(); break;
+    case EFurnitureComponentType::Cabinet:    TargetComp = CabinetMesh.Get();    break;
+    case EFurnitureComponentType::Closet:     TargetComp = ClosetMesh.Get();     break;
+    case EFurnitureComponentType::Countertop: TargetComp = CountertopMesh.Get(); break;
+    case EFurnitureComponentType::Sink:       TargetComp = SinkMesh.Get();       break;
+    case EFurnitureComponentType::Faucet:     TargetComp = FaucetMesh.Get();     break;
+    case EFurnitureComponentType::Mirror:     TargetComp = MirrorMesh.Get();     break;
     default: break;
     }
-
-    CurrentFocusedComponent = TargetComponent;
-
-    FVector LocalFocusLoc = FVector::ZeroVector;
-    if (IsValid(TargetComponent) && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
-    {
-        FVector WorldLoc = TargetComponent->GetComponentLocation();
-        LocalFocusLoc = GetActorTransform().InverseTransformPosition(WorldLoc);
-    }
+    CurrentFocusedComponent = TargetComp;
 
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        WorldInPlaceYaw = 0.f;
+        // ── 2. Reset rotation accumulators ────────────────────────────────
+        WorldInPlaceYaw   = 0.f;
         WorldInPlacePitch = 0.f;
 
+        // ── 3. Reset MeshRoot to identity (no rotation, no offset) ────────
+        //    The model stays exactly where it lives in the world (same position as the real booth).
         if (IsValid(MeshRoot))
         {
-            MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
-            MeshRoot->SetRelativeLocation(FVector(WorldInPlaceForwardOffset, 0.f, 0.f));
+            MeshRoot->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+        }
+
+        // ── 4. Position SpringArm pivot at the focused mesh world center ──
+        //    This makes the camera look EXACTLY at the center of the selected component.
+        //    We compute the component center in PreviewRoot-local space.
+        if (IsValid(SpringArm))
+        {
+            FVector PivotLocalSpace = FVector::ZeroVector;
+            if (IsValid(TargetComp) && TargetComp->GetVisibleFlag() && TargetComp->GetStaticMesh())
+            {
+                // World-space center of the mesh's bounding box
+                FVector MeshWorldCenter = TargetComp->Bounds.Origin;
+                // Convert to PreviewRoot local space (same as actor local space)
+                PivotLocalSpace = GetActorTransform().InverseTransformPosition(MeshWorldCenter);
+            }
+
+            // SpringArm pivot = center of the focused mesh
+            SpringArm->SetRelativeLocation(PivotLocalSpace);
+
+            // SpringArm rotation = (0, 0, 0) → camera looks STRAIGHT forward in actor space.
+            // Since PreviewRoot is spawned with the booth's Yaw, camera is
+            // AUTOMATICALLY perpendicular to the booth wall. No math needed.
+            SpringArm->SetRelativeRotation(FRotator::ZeroRotator);
+
+            // ── 5. Set arm length (= initial zoom distance) ───────────────
+            // Chosen so the focused mesh fills the frame nicely.
+            float ArmLength = 180.0f;
+            if      (TargetType == EFurnitureComponentType::Faucet)     ArmLength =  80.0f;
+            else if (TargetType == EFurnitureComponentType::Sink)        ArmLength = 120.0f;
+            else if (TargetType == EFurnitureComponentType::Mirror)      ArmLength = 140.0f;
+            else if (TargetType == EFurnitureComponentType::Countertop)  ArmLength = 160.0f;
+
+            CurrentZoomLength = ArmLength;
+            SpringArm->TargetArmLength = CurrentZoomLength;
+        }
+
+        // ── 6. Apply DoF: focal distance = arm length ─────────────────────
+        WIP_ApplyDoF();
+    }
+    else
+    {
+        // IsolatedStudio mode — orbit camera around focused component.
+        FVector LocalFocusLoc = FVector::ZeroVector;
+        if (IsValid(TargetComp) && TargetComp->GetVisibleFlag() && TargetComp->GetStaticMesh())
+        {
+            FVector WorldLoc = TargetComp->GetComponentLocation();
+            LocalFocusLoc = GetActorTransform().InverseTransformPosition(WorldLoc);
         }
 
         if (IsValid(SpringArm))
         {
             SpringArm->SetRelativeLocation(LocalFocusLoc);
-            SpringArm->SetRelativeRotation(FRotator::ZeroRotator); // 100% perpendicular view to booth!
-
-            float IdealFocusDist = 180.0f;
-            if (TargetType == EFurnitureComponentType::Faucet) IdealFocusDist = 80.0f;
-            else if (TargetType == EFurnitureComponentType::Sink) IdealFocusDist = 120.0f;
-            else if (TargetType == EFurnitureComponentType::Mirror) IdealFocusDist = 140.0f;
-
-            CurrentZoomLength = IdealFocusDist;
-            SpringArm->TargetArmLength = CurrentZoomLength;
-        }
-    }
-    else
-    {
-        if (IsValid(SpringArm))
-        {
             SpringArm->SetRelativeRotation(FRotator(ActiveConfig.Pitch, ActiveConfig.Yaw, 0.f));
-            if (IsValid(TargetComponent) && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
-            {
-                SpringArm->SetRelativeLocation(LocalFocusLoc);
-                SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
-                CurrentZoomLength = ActiveConfig.FocusDistance;
-            }
-            else
-            {
-                SpringArm->SetRelativeLocation(FVector::ZeroVector);
-                SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
-                CurrentZoomLength = ActiveConfig.FocusDistance;
-            }
-            UpdateLightIntensityForZoom();
+            SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
+            CurrentZoomLength = ActiveConfig.FocusDistance;
         }
+        UpdateLightIntensityForZoom();
     }
 
     EnforceLightingSettings();
+}
+
+// ── WorldInPlace: Apply Depth of Field using SpringArm arm length as focal distance. ──
+// The camera IS the SpringArm camera — arm length = exact distance from lens to pivot = model center.
+// So focal distance = arm length always keeps the model pin-sharp.
+void AFurniturePreviewActor::WIP_ApplyDoF()
+{
+    if (!IsValid(Camera)) return;
+
+    // focal distance = SpringArm length (distance from camera to model center)
+    float FocalDist = IsValid(SpringArm) ? SpringArm->TargetArmLength : 150.0f;
+
+    // focal region = depth of the mesh bounding box so the whole model stays sharp
+    float FocalRegion = 300.0f;
+    UStaticMeshComponent* TargetComp = IsValid(CurrentFocusedComponent) ? CurrentFocusedComponent.Get() : CabinetMesh.Get();
+    if (IsValid(TargetComp) && TargetComp->GetVisibleFlag() && TargetComp->GetStaticMesh())
+    {
+        // Full diagonal extent of the bounding box
+        FocalRegion = FMath::Max(150.0f, TargetComp->Bounds.BoxExtent.Size() * 2.0f + 50.0f);
+    }
+
+    FPostProcessSettings& PP = Camera->PostProcessSettings;
+    PP.bOverride_DepthOfFieldFocalDistance  = true;
+    PP.DepthOfFieldFocalDistance            = FocalDist;
+    PP.bOverride_DepthOfFieldFocalRegion    = true;
+    PP.DepthOfFieldFocalRegion              = FocalRegion;
+    PP.bOverride_DepthOfFieldFstop          = true;
+    PP.DepthOfFieldFstop                    = WorldInPlaceBackgroundBlurFstop;
+    PP.bOverride_DepthOfFieldSensorWidth    = true;
+    PP.DepthOfFieldSensorWidth              = 35.0f;
+    PP.bOverride_DepthOfFieldNearBlurSize   = true;
+    PP.DepthOfFieldNearBlurSize             = 0.0f; // ZERO near blur — model is 100% sharp!
 }
 
 void AFurniturePreviewActor::SetViewportMode(EPreviewViewportMode NewMode)
@@ -769,99 +839,21 @@ void AFurniturePreviewActor::SetupBackdrop(UStaticMesh* InMesh, UMaterialInterfa
 {
     if (IsValid(BackdropMesh))
     {
-        if (IsValid(InMesh))
-        {
-            BackdropMesh->SetStaticMesh(InMesh);
-        }
-        if (IsValid(InMaterial))
-        {
-            BackdropMesh->SetMaterial(0, InMaterial);
-        }
+        if (IsValid(InMesh))     BackdropMesh->SetStaticMesh(InMesh);
+        if (IsValid(InMaterial)) BackdropMesh->SetMaterial(0, InMaterial);
     }
 }
 
 void AFurniturePreviewActor::UpdateWorldInPlaceModelPosition()
 {
-    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(MeshRoot) && GetWorld())
-    {
-        APlayerController* PC = GetWorld()->GetFirstPlayerController();
-        if (!PC) return;
-
-        FVector ActiveCamLoc;
-        FRotator ActiveCamRot;
-        PC->GetPlayerViewPoint(ActiveCamLoc, ActiveCamRot);
-
-        FVector BoothLoc = GetActorLocation();
-
-        // 1. Calculate HORIZONTAL direction vector towards player camera (Z = 0 so model NEVER drifts upwards into air!)
-        FVector HorizontalDirToPlayerCam = FVector(ActiveCamLoc.X - BoothLoc.X, ActiveCamLoc.Y - BoothLoc.Y, 0.f).GetSafeNormal();
-        if (HorizontalDirToPlayerCam.IsNearlyZero())
-        {
-            HorizontalDirToPlayerCam = GetActorForwardVector();
-        }
-
-        float TotalDistToCam = FVector::Dist2D(BoothLoc, ActiveCamLoc);
-
-        // 2. Min Offset (Zoom Out limit = WorldInPlaceForwardOffset in front of booth wall)
-        // 3. Max Offset (Zoom In limit = TotalDistToCam - 40cm, in front of player character camera lens)
-        float MinOffset = WorldInPlaceForwardOffset;
-        float MaxOffset = FMath::Max(MinOffset + 10.0f, TotalDistToCam - 40.0f);
-
-        WorldInPlaceZoomOffset = FMath::Clamp(WorldInPlaceZoomOffset, 0.f, MaxOffset - MinOffset);
-        float FinalForwardCM = MinOffset + WorldInPlaceZoomOffset;
-
-        FVector TargetWorldLoc = BoothLoc + (HorizontalDirToPlayerCam * FinalForwardCM);
-        MeshRoot->SetWorldLocation(TargetWorldLoc);
-    }
+    // DEPRECATED — kept for compatibility. Position is now managed by MeshRoot.
 }
 
 void AFurniturePreviewActor::UpdateWorldInPlaceDOF()
 {
-    if (ViewportMode == EPreviewViewportMode::WorldInPlace && GetWorld())
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        APlayerController* PC = GetWorld()->GetFirstPlayerController();
-        if (!PC) return;
-
-        FVector ActiveCamLoc;
-        FRotator ActiveCamRot;
-        PC->GetPlayerViewPoint(ActiveCamLoc, ActiveCamRot);
-
-        UStaticMeshComponent* TargetMeshComp = CabinetMesh.Get();
-        if (IsValid(CurrentFocusedComponent))
-        {
-            TargetMeshComp = CurrentFocusedComponent;
-        }
-
-        float DistanceToFocus = 100.0f;
-        float MeshDepthExtent = 200.0f;
-
-        if (IsValid(TargetMeshComp) && TargetMeshComp->GetVisibleFlag() && TargetMeshComp->GetStaticMesh())
-        {
-            DistanceToFocus = FVector::Dist(ActiveCamLoc, TargetMeshComp->GetComponentLocation());
-            MeshDepthExtent = TargetMeshComp->Bounds.BoxExtent.Size() * 2.0f;
-        }
-        else if (IsValid(MeshRoot))
-        {
-            DistanceToFocus = FVector::Dist(ActiveCamLoc, MeshRoot->GetComponentLocation());
-        }
-
-        UCameraComponent* TargetCamComp = IsValid(Camera) ? Camera.Get() : nullptr;
-        if (!TargetCamComp && PC->GetPawn())
-        {
-            TargetCamComp = PC->GetPawn()->FindComponentByClass<UCameraComponent>();
-        }
-
-        if (IsValid(TargetCamComp))
-        {
-            TargetCamComp->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
-            TargetCamComp->PostProcessSettings.DepthOfFieldFocalDistance = DistanceToFocus;
-            TargetCamComp->PostProcessSettings.bOverride_DepthOfFieldFocalRegion = true;
-            TargetCamComp->PostProcessSettings.DepthOfFieldFocalRegion = FMath::Max(250.0f, MeshDepthExtent + 100.0f);
-            TargetCamComp->PostProcessSettings.bOverride_DepthOfFieldFstop = true;
-            TargetCamComp->PostProcessSettings.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
-            TargetCamComp->PostProcessSettings.bOverride_DepthOfFieldNearBlurSize = true;
-            TargetCamComp->PostProcessSettings.DepthOfFieldNearBlurSize = 0.0f;
-        }
+        WIP_ApplyDoF();
     }
 }
 
@@ -869,20 +861,24 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        WorldInPlaceYaw += (-DeltaYaw);
+        // ── Accumulate Yaw and Pitch deltas ───────────────────────────────
+        WorldInPlaceYaw   += (-DeltaYaw);
         WorldInPlacePitch = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -45.f, 45.f);
 
-        // Rotate MeshRoot cleanly with STRICT 0.0f ROLL (zero side tilting!):
+        // ── Apply to MeshRoot ONLY — Roll is ALWAYS 0.f ───────────────────
+        // Result: left/right input rotates only around Z axis (Yaw).
+        //         up/down input rotates only around Y axis (Pitch).
+        //         The model NEVER tilts sideways. Guaranteed 0° roll.
         if (IsValid(MeshRoot))
         {
             MeshRoot->SetRelativeRotation(FRotator(WorldInPlacePitch, WorldInPlaceYaw, 0.f));
         }
+        // Camera and SpringArm are NOT touched — camera stays perpendicular always.
     }
     else
     {
-        CurrentYaw += DeltaYaw;
+        CurrentYaw   += DeltaYaw;
         CurrentPitch = FMath::Clamp(CurrentPitch + DeltaPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
-
         if (IsValid(SpringArm))
         {
             SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
@@ -892,53 +888,56 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 
 void AFurniturePreviewActor::ResetRotation()
 {
-    CurrentYaw   = ActiveConfig.Yaw;
-    CurrentPitch = ActiveConfig.Pitch;
-    CurrentZoomLength = ActiveConfig.FocusDistance;
-    WorldInPlaceYaw = 0.f;
+    WorldInPlaceYaw   = 0.f;
     WorldInPlacePitch = 0.f;
-    WorldInPlaceZoomOffset = 0.f;
 
+    // Reset MeshRoot to no rotation
     if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
     }
-    UpdateWorldInPlaceModelPosition();
 
-    if (IsValid(CurrentFocusedComponent))
-    {
-        CurrentFocusedComponent->SetRelativeRotation(FRotator::ZeroRotator);
-    }
-
+    // IsolatedStudio reset
+    CurrentYaw   = ActiveConfig.Yaw;
+    CurrentPitch = ActiveConfig.Pitch;
+    CurrentZoomLength = ActiveConfig.FocusDistance;
     if (IsValid(SpringArm))
     {
-        SpringArm->SetRelativeRotation(FRotator(ActiveConfig.Pitch, ActiveConfig.Yaw, 0.f));
-        SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
+        if (ViewportMode != EPreviewViewportMode::WorldInPlace)
+        {
+            SpringArm->SetRelativeRotation(FRotator(ActiveConfig.Pitch, ActiveConfig.Yaw, 0.f));
+            SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
+        }
     }
     if (IsValid(Camera))
     {
         Camera->FieldOfView = ActiveConfig.CameraFOV;
     }
+
     UpdateLightIntensityForZoom();
-    UpdateWorldInPlaceDOF();
+
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace)
+    {
+        WIP_ApplyDoF();
+    }
 }
 
 void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
 {
-    DefaultYaw = InYaw;
+    DefaultYaw   = InYaw;
     DefaultPitch = FMath::Clamp(InPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
-    CurrentYaw = DefaultYaw;
+    CurrentYaw   = DefaultYaw;
     CurrentPitch = DefaultPitch;
-    WorldInPlaceYaw = 0.f;
+
+    WorldInPlaceYaw   = 0.f;
     WorldInPlacePitch = 0.f;
-    WorldInPlaceZoomOffset = 0.f;
 
     if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
     }
 
-    if (IsValid(SpringArm))
+    if (IsValid(SpringArm) && ViewportMode != EPreviewViewportMode::WorldInPlace)
     {
         SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
         SpringArm->TargetArmLength = CurrentZoomLength;
@@ -949,23 +948,25 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // Smoothly adjust WorldInPlaceZoomOffset (0..80 cm towards camera)
-        WorldInPlaceZoomOffset = FMath::Clamp(WorldInPlaceZoomOffset - DeltaZoom * 0.5f, 0.f, 80.f);
-        UpdateWorldInPlaceModelPosition();
-    }
-    else
-    {
-        CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, ActiveConfig.ZoomMin, ActiveConfig.ZoomMax);
-
+        // Zoom = change arm length.
+        // Min = 30 cm (before clipping into mesh), Max = 400 cm.
+        CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, 30.0f, 400.0f);
         if (IsValid(SpringArm))
         {
             SpringArm->TargetArmLength = CurrentZoomLength;
         }
-
+        // Update DoF so focus tracks the new distance
+        WIP_ApplyDoF();
+    }
+    else
+    {
+        CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, ActiveConfig.ZoomMin, ActiveConfig.ZoomMax);
+        if (IsValid(SpringArm))
+        {
+            SpringArm->TargetArmLength = CurrentZoomLength;
+        }
         UpdateLightIntensityForZoom();
     }
-
-    UpdateWorldInPlaceDOF();
 }
 
 void AFurniturePreviewActor::SetKeyLightEnabled(bool bEnable)
@@ -1294,34 +1295,9 @@ void AFurniturePreviewActor::EnforceLightingSettings()
 
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
     {
-        UStaticMeshComponent* TargetMeshComp = CabinetMesh.Get();
-        if (IsValid(CurrentFocusedComponent))
-        {
-            TargetMeshComp = CurrentFocusedComponent;
-        }
-        float DistanceToFocus = 100.0f;
-        float MeshDepthExtent = 200.0f;
-
-        if (IsValid(TargetMeshComp) && TargetMeshComp->GetVisibleFlag() && TargetMeshComp->GetStaticMesh())
-        {
-            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), TargetMeshComp->GetComponentLocation());
-            MeshDepthExtent = TargetMeshComp->Bounds.BoxExtent.Size() * 2.0f;
-        }
-        else if (IsValid(MeshRoot))
-        {
-            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), MeshRoot->GetComponentLocation());
-        }
-
-        Camera->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
-        Camera->PostProcessSettings.DepthOfFieldFocalDistance = DistanceToFocus;
-        Camera->PostProcessSettings.bOverride_DepthOfFieldFocalRegion = true;
-        Camera->PostProcessSettings.DepthOfFieldFocalRegion = 300.0f; // 30cm sharp focus depth band around the model!
-        Camera->PostProcessSettings.bOverride_DepthOfFieldFstop = true;
-        Camera->PostProcessSettings.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
-        Camera->PostProcessSettings.bOverride_DepthOfFieldSensorWidth = true;
-        Camera->PostProcessSettings.DepthOfFieldSensorWidth = 35.0f;
-        Camera->PostProcessSettings.bOverride_DepthOfFieldNearBlurSize = true;
-        Camera->PostProcessSettings.DepthOfFieldNearBlurSize = 0.0f; // ZERO near blur, model is 100% sharp!
+        // DoF is applied via WIP_ApplyDoF() which uses SpringArm arm length as focal distance.
+        // SpringArm arm length = exact distance from camera lens to model center at all times.
+        WIP_ApplyDoF();
     }
     else if (IsValid(Camera))
     {
