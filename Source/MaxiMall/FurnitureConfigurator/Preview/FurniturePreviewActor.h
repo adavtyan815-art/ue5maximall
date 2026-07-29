@@ -361,6 +361,7 @@ private:
     void ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config);
     void ApplyDirectionalLightScale();
     void RestoreDirectionalLight();
+    void ApplyWorldPostProcessSettings();
     void UpdateWorldInPlaceModelPosition();
     void UpdateWorldInPlaceDOF();
 
