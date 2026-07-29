@@ -267,11 +267,11 @@ public:
 
     /** In WorldInPlace mode, how far forward (cm towards camera) the focused model shifts from the wall. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | World In-Place")
-    float WorldInPlaceForwardOffset = 25.0f;
+    float WorldInPlaceForwardOffset = 40.0f;
 
-    /** In WorldInPlace mode, Depth of Field F-Stop for background blur (lower = blurrier background, 1.4 is soft cinematic blur). */
+    /** In WorldInPlace mode, Depth of Field F-Stop for background blur (lower = blurrier background, 1.2 is soft cinematic blur). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | World In-Place")
-    float WorldInPlaceBackgroundBlurFstop = 1.4f;
+    float WorldInPlaceBackgroundBlurFstop = 1.2f;
 
     // ─────────────────────────────────────────────────────────────────────
     // PUBLIC API
@@ -361,11 +361,13 @@ private:
     void ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config);
     void ApplyDirectionalLightScale();
     void RestoreDirectionalLight();
-    void ApplyWorldPostProcessSettings();
+    void UpdateWorldInPlaceModelPosition();
+    void UpdateWorldInPlaceDOF();
 
     float SavedDirectionalLightIntensity = -1.f;
     float WorldInPlaceYaw = 0.f;
     float WorldInPlacePitch = 0.f;
+    float WorldInPlaceZoomOffset = 0.f;
 
     UPROPERTY()
     TWeakObjectPtr<class ADirectionalLight> CachedDirectionalLight;
