@@ -364,6 +364,8 @@ private:
     void ApplyWorldPostProcessSettings();
 
     float SavedDirectionalLightIntensity = -1.f;
+    float WorldInPlaceYaw = 0.f;
+    float WorldInPlacePitch = 0.f;
 
     UPROPERTY()
     TWeakObjectPtr<class ADirectionalLight> CachedDirectionalLight;

@@ -783,19 +783,24 @@ void AFurniturePreviewActor::SetupBackdrop(UStaticMesh* InMesh, UMaterialInterfa
 
 void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
-    CurrentYaw += DeltaYaw;
-    CurrentPitch = FMath::Clamp(CurrentPitch + DeltaPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
-
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // Camera stays 100% stationary! Apply clean relative rotation to model (MeshRoot) around its own pivot:
-        if (IsValid(MeshRoot))
+        // 1. Invert control signs so dragging Right turns Right, dragging Up tilts Up:
+        WorldInPlaceYaw += (-DeltaYaw);
+        WorldInPlacePitch = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -60.f, 60.f);
+
+        // 2. Rotate the actual targeted UStaticMeshComponent around ITS OWN PIVOT!
+        UStaticMeshComponent* TargetComp = IsValid(CurrentFocusedComponent) ? CurrentFocusedComponent : CabinetMesh.Get();
+        if (IsValid(TargetComp))
         {
-            MeshRoot->SetRelativeRotation(FRotator(CurrentPitch - ActiveConfig.Pitch, CurrentYaw - ActiveConfig.Yaw, 0.f));
+            TargetComp->SetRelativeRotation(FRotator(WorldInPlacePitch, WorldInPlaceYaw, 0.f));
         }
     }
     else
     {
+        CurrentYaw += DeltaYaw;
+        CurrentPitch = FMath::Clamp(CurrentPitch + DeltaPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
+
         if (IsValid(SpringArm))
         {
             SpringArm->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.f));
@@ -808,6 +813,8 @@ void AFurniturePreviewActor::ResetRotation()
     CurrentYaw   = ActiveConfig.Yaw;
     CurrentPitch = ActiveConfig.Pitch;
     CurrentZoomLength = ActiveConfig.FocusDistance;
+    WorldInPlaceYaw = 0.f;
+    WorldInPlacePitch = 0.f;
 
     if (IsValid(MeshRoot))
     {
@@ -838,6 +845,8 @@ void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
     DefaultPitch = FMath::Clamp(InPitch, ActiveConfig.PitchMin, ActiveConfig.PitchMax);
     CurrentYaw = DefaultYaw;
     CurrentPitch = DefaultPitch;
+    WorldInPlaceYaw = 0.f;
+    WorldInPlacePitch = 0.f;
 
     if (IsValid(MeshRoot))
     {
@@ -857,7 +866,7 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // Camera stays 100% stationary! Smoothly slide model towards/away from camera:
+        // Camera stays 100% stationary! Smoothly slide model towards/away from camera along local X:
         if (IsValid(MeshRoot))
         {
             float NormalizedZoom = 1.0f - ((CurrentZoomLength - ActiveConfig.ZoomMin) / FMath::Max(1.0f, ActiveConfig.ZoomMax - ActiveConfig.ZoomMin));
@@ -878,10 +887,11 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
     // Dynamic focal distance update so model stays 100% pin-sharp!
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
     {
+        UStaticMeshComponent* TargetMeshComp = IsValid(CurrentFocusedComponent) ? CurrentFocusedComponent : CabinetMesh.Get();
         float DistanceToFocus = 100.0f;
-        if (IsValid(CurrentFocusedComponent))
+        if (IsValid(TargetMeshComp) && TargetMeshComp->GetVisibleFlag() && TargetMeshComp->GetStaticMesh())
         {
-            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), CurrentFocusedComponent->GetComponentLocation());
+            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), TargetMeshComp->GetComponentLocation());
         }
         else if (IsValid(MeshRoot))
         {
@@ -1218,10 +1228,14 @@ void AFurniturePreviewActor::EnforceLightingSettings()
 
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
     {
+        UStaticMeshComponent* TargetMeshComp = IsValid(CurrentFocusedComponent) ? CurrentFocusedComponent : CabinetMesh.Get();
         float DistanceToFocus = 100.0f;
-        if (IsValid(CurrentFocusedComponent))
+        float MeshDepthExtent = 200.0f;
+
+        if (IsValid(TargetMeshComp) && TargetMeshComp->GetVisibleFlag() && TargetMeshComp->GetStaticMesh())
         {
-            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), CurrentFocusedComponent->GetComponentLocation());
+            DistanceToFocus = FVector::Dist(Camera->GetComponentLocation(), TargetMeshComp->GetComponentLocation());
+            MeshDepthExtent = TargetMeshComp->Bounds.BoxExtent.Size() * 2.0f;
         }
         else if (IsValid(MeshRoot))
         {
