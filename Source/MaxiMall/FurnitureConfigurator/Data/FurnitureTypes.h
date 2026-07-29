@@ -110,7 +110,7 @@ enum class EPreviewViewportMode : uint8
  * SlotIndex maps directly to UStaticMeshComponent::SetMaterial(Index, Material).
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureMaterialSlot
+struct MAXIMALL_API FFurnitureMaterialSlot
 {
     GENERATED_BODY()
 
@@ -127,7 +127,7 @@ struct AWSTUTORIAL_API FFurnitureMaterialSlot
  * All material overrides for a single mesh component in a product variant.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureMeshMaterials
+struct MAXIMALL_API FFurnitureMeshMaterials
 {
     GENERATED_BODY()
 
@@ -144,7 +144,7 @@ struct AWSTUTORIAL_API FFurnitureMeshMaterials
  * A color/material option for a component, containing material overrides.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureColorOption
+struct MAXIMALL_API FFurnitureColorOption
 {
     GENERATED_BODY()
 
@@ -174,7 +174,7 @@ struct AWSTUTORIAL_API FFurnitureColorOption
  * Product metadata for a specific combination of component selections.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureMetadata
+struct MAXIMALL_API FFurnitureMetadata
 {
     GENERATED_BODY()
 
@@ -192,7 +192,7 @@ struct AWSTUTORIAL_API FFurnitureMetadata
  * A mapped combination key-value entry for size and color configurations.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureMetadataEntry
+struct MAXIMALL_API FFurnitureMetadataEntry
 {
     GENERATED_BODY()
 
@@ -207,7 +207,7 @@ struct AWSTUTORIAL_API FFurnitureMetadataEntry
 };
 
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureCabinetOptions
+struct MAXIMALL_API FFurnitureCabinetOptions
 {
     GENERATED_BODY()
 
@@ -225,7 +225,7 @@ struct AWSTUTORIAL_API FFurnitureCabinetOptions
 };
 
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurniturePlacementOffset
+struct MAXIMALL_API FFurniturePlacementOffset
 {
     GENERATED_BODY()
 
@@ -240,7 +240,7 @@ struct AWSTUTORIAL_API FFurniturePlacementOffset
 };
 
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureModelOption
+struct MAXIMALL_API FFurnitureModelOption
 {
     GENERATED_BODY()
 
@@ -269,7 +269,7 @@ struct AWSTUTORIAL_API FFurnitureModelOption
 };
 
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureCountertopRow : public FTableRowBase
+struct MAXIMALL_API FFurnitureCountertopRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -290,7 +290,7 @@ struct AWSTUTORIAL_API FFurnitureCountertopRow : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureSinkRow : public FTableRowBase
+struct MAXIMALL_API FFurnitureSinkRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -308,7 +308,7 @@ struct AWSTUTORIAL_API FFurnitureSinkRow : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureFaucetRow : public FTableRowBase
+struct MAXIMALL_API FFurnitureFaucetRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -329,7 +329,7 @@ struct AWSTUTORIAL_API FFurnitureFaucetRow : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureMirrorRow : public FTableRowBase
+struct MAXIMALL_API FFurnitureMirrorRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -355,7 +355,7 @@ struct AWSTUTORIAL_API FFurnitureMirrorRow : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureComponentOptions
+struct MAXIMALL_API FFurnitureComponentOptions
 {
     GENERATED_BODY()
 
@@ -370,7 +370,7 @@ struct AWSTUTORIAL_API FFurnitureComponentOptions
  * A door color/material option containing material overrides for a single door mesh, with no Thumbnail.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureDoorColorOption
+struct MAXIMALL_API FFurnitureDoorColorOption
 {
     GENERATED_BODY()
 
@@ -382,7 +382,7 @@ struct AWSTUTORIAL_API FFurnitureDoorColorOption
  * Size options for double doors, holding exactly two explicit mesh slots.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureDoubleDoorsSizeOption
+struct MAXIMALL_API FFurnitureDoubleDoorsSizeOption
 {
     GENERATED_BODY()
 
@@ -397,7 +397,7 @@ struct AWSTUTORIAL_API FFurnitureDoubleDoorsSizeOption
  * Color options for double doors, holding two separate material override blocks.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureDoubleDoorsColorOption
+struct MAXIMALL_API FFurnitureDoubleDoorsColorOption
 {
     GENERATED_BODY()
 
@@ -417,7 +417,7 @@ struct AWSTUTORIAL_API FFurnitureDoubleDoorsColorOption
  * between "product A door position" and "product B door position" is applied.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FDoorSlotConfig
+struct MAXIMALL_API FDoorSlotConfig
 {
     GENERATED_BODY()
 
@@ -454,7 +454,7 @@ struct AWSTUTORIAL_API FDoorSlotConfig
  * Configuration schema strictly for a single door setup.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureSingleDoorConfig
+struct MAXIMALL_API FFurnitureSingleDoorConfig
 {
     GENERATED_BODY()
 
@@ -472,7 +472,7 @@ struct AWSTUTORIAL_API FFurnitureSingleDoorConfig
  * Configuration schema strictly for a double doors setup.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureDoubleDoorsConfig
+struct MAXIMALL_API FFurnitureDoubleDoorsConfig
 {
     GENERATED_BODY()
 
@@ -493,7 +493,7 @@ struct AWSTUTORIAL_API FFurnitureDoubleDoorsConfig
  * Combines configuration for single or double doors, visible conditionally in details panel.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureDoorGroup
+struct MAXIMALL_API FFurnitureDoorGroup
 {
     GENERATED_BODY()
 
@@ -513,7 +513,7 @@ struct AWSTUTORIAL_API FFurnitureDoorGroup
  * Unified doors configuration splits cabinet and closet doors.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureDoorsConfig
+struct MAXIMALL_API FFurnitureDoorsConfig
 {
     GENERATED_BODY()
 
@@ -528,7 +528,7 @@ struct AWSTUTORIAL_API FFurnitureDoorsConfig
  * Replicated configuration state tracking choices for all subcomponents of a booth.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FShowroomBoothConfigState
+struct MAXIMALL_API FShowroomBoothConfigState
 {
     GENERATED_BODY()
 
@@ -590,7 +590,7 @@ struct AWSTUTORIAL_API FShowroomBoothConfigState
  * booth switches to a different product. No persistent hard references exist.
  */
 USTRUCT(BlueprintType)
-struct AWSTUTORIAL_API FFurnitureProductRow : public FTableRowBase
+struct MAXIMALL_API FFurnitureProductRow : public FTableRowBase
 {
     GENERATED_BODY()
 
@@ -638,7 +638,7 @@ struct AWSTUTORIAL_API FFurnitureProductRow : public FTableRowBase
 };
 
 UCLASS()
-class AWSTUTORIAL_API UFurnitureEditorHelper : public UObject
+class MAXIMALL_API UFurnitureEditorHelper : public UObject
 {
     GENERATED_BODY()
 
