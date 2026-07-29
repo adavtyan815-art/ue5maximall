@@ -785,14 +785,14 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // Camera stays 100% stationary! Rotate the focused model around its own pivot/axis:
-        if (IsValid(CurrentFocusedComponent))
+        // Camera stays 100% stationary! Rotate the model around its own axis:
+        // -DeltaYaw: Right drag turns model right, Left drag turns model left.
+        // -DeltaPitch: Up drag tilts model up, Down drag tilts model down.
+        USceneComponent* TargetComp = IsValid(MeshRoot) ? MeshRoot.Get() : Cast<USceneComponent>(CurrentFocusedComponent);
+        if (IsValid(TargetComp))
         {
-            CurrentFocusedComponent->AddLocalRotation(FRotator(0.f, DeltaYaw, 0.f));
-        }
-        else if (IsValid(MeshRoot))
-        {
-            MeshRoot->AddLocalRotation(FRotator(0.f, DeltaYaw, 0.f));
+            FRotator DeltaRot(-DeltaPitch, -DeltaYaw, 0.f);
+            TargetComp->AddLocalRotation(DeltaRot);
         }
     }
     else
@@ -859,12 +859,13 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // Camera stays 100% stationary! Move focused model closer/further along view axis:
-        if (IsValid(MeshRoot))
+        // Camera stays 100% stationary! Shift model directly towards/away from stationary camera:
+        USceneComponent* TargetComp = IsValid(MeshRoot) ? MeshRoot.Get() : Cast<USceneComponent>(CurrentFocusedComponent);
+        if (IsValid(TargetComp) && IsValid(Camera))
         {
-            FVector LocalOffset = MeshRoot->GetRelativeLocation();
-            LocalOffset.X = FMath::Clamp(LocalOffset.X - DeltaZoom * 0.5f, 0.f, 60.f);
-            MeshRoot->SetRelativeLocation(LocalOffset);
+            FVector DirToCamera = (Camera->GetComponentLocation() - TargetComp->GetComponentLocation()).GetSafeNormal();
+            FVector Movement = DirToCamera * (-DeltaZoom * 0.5f);
+            TargetComp->AddWorldOffset(Movement);
         }
     }
     else
@@ -879,7 +880,7 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
         UpdateLightIntensityForZoom();
     }
 
-    // Keep focused component 100% pin-sharp!
+    // Dynamic focal distance update so model stays 100% pin-sharp!
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
     {
         float DistanceToFocus = 100.0f;
@@ -1234,10 +1235,14 @@ void AFurniturePreviewActor::EnforceLightingSettings()
 
         Camera->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
         Camera->PostProcessSettings.DepthOfFieldFocalDistance = DistanceToFocus;
+        Camera->PostProcessSettings.bOverride_DepthOfFieldFocalRegion = true;
+        Camera->PostProcessSettings.DepthOfFieldFocalRegion = 300.0f; // 30cm sharp focus depth band around the model!
         Camera->PostProcessSettings.bOverride_DepthOfFieldFstop = true;
         Camera->PostProcessSettings.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
         Camera->PostProcessSettings.bOverride_DepthOfFieldSensorWidth = true;
         Camera->PostProcessSettings.DepthOfFieldSensorWidth = 35.0f;
+        Camera->PostProcessSettings.bOverride_DepthOfFieldDepthOfFieldNearBlurSize = true;
+        Camera->PostProcessSettings.DepthOfFieldDepthOfFieldNearBlurSize = 0.0f; // ZERO near blur, model is 100% sharp!
     }
     else if (IsValid(Camera))
     {
