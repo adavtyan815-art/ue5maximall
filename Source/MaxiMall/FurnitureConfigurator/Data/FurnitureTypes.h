@@ -615,30 +615,30 @@ struct FFurnitureProductRow : public FTableRowBase
     // ── Countertop ────────────────────────────────────────────────────────
 
     /** Countertop allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop", meta = (GetOptions = "awsTutorial.FurnitureEditorHelper.GetCountertopOptions"))
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetCountertopOptions"))
     TArray<FName> AllowedCountertopIDs;
 
     // ── Sink ──────────────────────────────────────────────────────────────
 
     /** Standalone sink allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink", meta = (GetOptions = "awsTutorial.FurnitureEditorHelper.GetSinkOptions"))
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetSinkOptions"))
     TArray<FName> AllowedSinkIDs;
 
     // ── Faucet ────────────────────────────────────────────────────────────
 
     /** Faucet allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet", meta = (GetOptions = "awsTutorial.FurnitureEditorHelper.GetFaucetOptions"))
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetFaucetOptions"))
     TArray<FName> AllowedFaucetIDs;
 
     // ── Mirror ────────────────────────────────────────────────────────────
 
     /** Mirror allowed model IDs from shared catalog. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror", meta = (GetOptions = "awsTutorial.FurnitureEditorHelper.GetMirrorOptions"))
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetMirrorOptions"))
     TArray<FName> AllowedMirrorIDs;
 };
 
 UCLASS()
-class AWSTUTORIAL_API UFurnitureEditorHelper : public UObject
+class MAXIMALL_API UFurnitureEditorHelper : public UObject
 {
     GENERATED_BODY()
 
