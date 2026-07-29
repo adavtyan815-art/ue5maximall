@@ -788,9 +788,21 @@ void AFurniturePreviewActor::UpdateWorldInPlaceModelPosition()
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(MeshRoot) && IsValid(Camera))
     {
-        FVector DirToCam = (Camera->GetComponentLocation() - GetActorLocation()).GetSafeNormal();
-        float TotalForwardCM = WorldInPlaceForwardOffset + WorldInPlaceZoomOffset;
-        MeshRoot->SetWorldLocation(GetActorLocation() + DirToCam * TotalForwardCM);
+        FVector CamLoc = Camera->GetComponentLocation();
+        FVector ActorLoc = GetActorLocation();
+        FVector DirToCam = (CamLoc - ActorLoc).GetSafeNormal();
+        float TotalDistToCam = FVector::Dist(ActorLoc, CamLoc);
+
+        // 1. Min Offset (Zoom Out limit = WorldInPlaceForwardOffset in front of booth - zero clipping into booth behind)
+        // 2. Max Offset (Zoom In limit = TotalDistToCam - 45cm - zero clipping through camera lens)
+        float MinOffset = WorldInPlaceForwardOffset;
+        float MaxOffset = FMath::Max(MinOffset + 10.0f, TotalDistToCam - 45.0f);
+
+        WorldInPlaceZoomOffset = FMath::Clamp(WorldInPlaceZoomOffset, 0.f, MaxOffset - MinOffset);
+        float FinalForwardCM = MinOffset + WorldInPlaceZoomOffset;
+
+        FVector TargetWorldLoc = ActorLoc + (DirToCam * FinalForwardCM);
+        MeshRoot->SetWorldLocation(TargetWorldLoc);
     }
 }
 
@@ -834,15 +846,18 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // 1. Dominant axis thresholding (locks to single axis if user drags mainly horizontal or vertical):
+        float AbsYaw = FMath::Abs(DeltaYaw);
+        float AbsPitch = FMath::Abs(DeltaPitch);
+
         float EffectiveDeltaYaw = DeltaYaw;
         float EffectiveDeltaPitch = DeltaPitch;
 
-        if (FMath::Abs(DeltaYaw) > FMath::Abs(DeltaPitch) * 1.3f)
+        // 1. Dominant axis thresholding (locks to single axis if user drags mainly horizontal or vertical):
+        if (AbsYaw > AbsPitch * 1.15f)
         {
             EffectiveDeltaPitch = 0.f; // Lock strictly to horizontal rotation!
         }
-        else if (FMath::Abs(DeltaPitch) > FMath::Abs(DeltaYaw) * 1.3f)
+        else if (AbsPitch > AbsYaw * 1.15f)
         {
             EffectiveDeltaYaw = 0.f; // Lock strictly to vertical tilt!
         }
