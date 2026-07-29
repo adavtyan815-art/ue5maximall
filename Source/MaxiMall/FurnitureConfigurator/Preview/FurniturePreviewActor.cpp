@@ -785,9 +785,21 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // 1. Invert control signs so dragging Right turns Right, dragging Up tilts Up:
-        WorldInPlaceYaw += (-DeltaYaw);
-        WorldInPlacePitch = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -60.f, 60.f);
+        // 1. Dominant axis thresholding (locks to single axis if user drags mainly horizontal or vertical):
+        float EffectiveDeltaYaw = DeltaYaw;
+        float EffectiveDeltaPitch = DeltaPitch;
+
+        if (FMath::Abs(DeltaYaw) > FMath::Abs(DeltaPitch) * 1.3f)
+        {
+            EffectiveDeltaPitch = 0.f; // Lock strictly to horizontal rotation!
+        }
+        else if (FMath::Abs(DeltaPitch) > FMath::Abs(DeltaYaw) * 1.3f)
+        {
+            EffectiveDeltaYaw = 0.f; // Lock strictly to vertical tilt!
+        }
+
+        WorldInPlaceYaw += (-EffectiveDeltaYaw);
+        WorldInPlacePitch = FMath::Clamp(WorldInPlacePitch + (-EffectiveDeltaPitch), -45.f, 45.f);
 
         // 2. Rotate the actual targeted UStaticMeshComponent around ITS OWN PIVOT!
         UStaticMeshComponent* TargetComp = CabinetMesh.Get();
@@ -823,7 +835,8 @@ void AFurniturePreviewActor::ResetRotation()
     if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
-        MeshRoot->SetRelativeLocation(FVector(WorldInPlaceForwardOffset, 0.f, 0.f));
+        FVector DirToCam = IsValid(Camera) ? Camera->GetRelativeLocation().GetSafeNormal() : FVector(1.f, 0.f, 0.f);
+        MeshRoot->SetRelativeLocation(DirToCam * WorldInPlaceForwardOffset);
     }
 
     if (IsValid(CurrentFocusedComponent))
@@ -870,12 +883,13 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // Camera stays 100% stationary! Smoothly slide model towards/away from camera along local X:
-        if (IsValid(MeshRoot))
+        // Camera stays 100% stationary! Smoothly slide model straight along camera line of sight:
+        if (IsValid(MeshRoot) && IsValid(Camera))
         {
             float NormalizedZoom = 1.0f - ((CurrentZoomLength - ActiveConfig.ZoomMin) / FMath::Max(1.0f, ActiveConfig.ZoomMax - ActiveConfig.ZoomMin));
             float ClampedOffset = WorldInPlaceForwardOffset + (NormalizedZoom * 50.0f);
-            MeshRoot->SetRelativeLocation(FVector(ClampedOffset, 0.f, 0.f));
+            FVector DirToCam = Camera->GetRelativeLocation().GetSafeNormal();
+            MeshRoot->SetRelativeLocation(DirToCam * ClampedOffset);
         }
     }
     else
