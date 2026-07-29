@@ -15,6 +15,7 @@
 #include "Engine/DirectionalLight.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Engine/PostProcessVolume.h"
+#include "Engine/TextureCube.h"
 #include "EngineUtils.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1207,6 +1208,17 @@ void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLighting
     {
         SkyLight->SetLightColor(Config.SkyLightColor);
         SkyLight->SetIntensity(Config.SkyLightIntensity * Config.MasterLightIntensityScale);
+
+        UTextureCube* TargetCubemap = Config.StudioCubemap.LoadSynchronous();
+        if (IsValid(TargetCubemap))
+        {
+            SkyLight->SourceType = ESkyLightSourceType::SLS_SpecifiedCubemap;
+            SkyLight->Cubemap = TargetCubemap;
+        }
+        else
+        {
+            SkyLight->SourceType = ESkyLightSourceType::SLS_CapturedScene;
+        }
         SkyLight->RecaptureSky();
     }
 

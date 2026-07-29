@@ -124,6 +124,10 @@ struct FFurniturePreviewLightingConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
     FLinearColor SkyLightColor = FLinearColor::White;
 
+    /** Optional HDRI Studio Cubemap texture to give metals (gold, chrome, brass) high-contrast reflection highlights. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
+    TSoftObjectPtr<class UTextureCube> StudioCubemap;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     FVector KeyLightLocation = FVector(-300.f, -300.f, 300.f);
 
