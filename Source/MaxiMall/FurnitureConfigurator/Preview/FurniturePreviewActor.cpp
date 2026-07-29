@@ -316,14 +316,55 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         MeshRoot->SetRelativeTransform(FTransform::Identity);
     }
 
-    // ── Cabinet ───────────────────────────────────────────────────────────
-    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->CabinetMesh) && SourceBooth->CabinetMesh->GetStaticMesh() != nullptr))
+    // ── Apply SourceBooth Transforms if available ─────────────────────────
+    if (IsValid(SourceBooth))
     {
-        ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.Cabinet, ActiveState.CabinetSizeIndex, ActiveState.CabinetColorIndex);
-        if (IsValid(CabinetMesh))
+        if (CabinetMesh && SourceBooth->MainCabinet)
         {
-            CabinetMesh->SetRelativeTransform(FTransform::Identity);
+            CabinetMesh->SetRelativeTransform(SourceBooth->MainCabinet->GetRelativeTransform());
         }
+        if (ClosetMesh && SourceBooth->ClosetMesh)
+        {
+            ClosetMesh->SetRelativeTransform(SourceBooth->ClosetMesh->GetRelativeTransform());
+        }
+        if (DoorMeshSlot0 && SourceBooth->DoorMeshSlot0)
+        {
+            DoorMeshSlot0->SetRelativeTransform(SourceBooth->DoorMeshSlot0->GetRelativeTransform());
+        }
+        if (DoorMeshSlot1 && SourceBooth->DoorMeshSlot1)
+        {
+            DoorMeshSlot1->SetRelativeTransform(SourceBooth->DoorMeshSlot1->GetRelativeTransform());
+        }
+        if (ClosetDoorMeshSlot0 && SourceBooth->ClosetDoorMeshSlot0)
+        {
+            ClosetDoorMeshSlot0->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot0->GetRelativeTransform());
+        }
+        if (ClosetDoorMeshSlot1 && SourceBooth->ClosetDoorMeshSlot1)
+        {
+            ClosetDoorMeshSlot1->SetRelativeTransform(SourceBooth->ClosetDoorMeshSlot1->GetRelativeTransform());
+        }
+        if (CountertopMesh && SourceBooth->CountertopMesh)
+        {
+            CountertopMesh->SetRelativeTransform(SourceBooth->CountertopMesh->GetRelativeTransform());
+        }
+        if (SinkMesh && SourceBooth->SinkMesh)
+        {
+            SinkMesh->SetRelativeTransform(SourceBooth->SinkMesh->GetRelativeTransform());
+        }
+        if (FaucetMesh && SourceBooth->FaucetMesh)
+        {
+            FaucetMesh->SetRelativeTransform(SourceBooth->FaucetMesh->GetRelativeTransform());
+        }
+        if (MirrorMesh && SourceBooth->MirrorMesh)
+        {
+            MirrorMesh->SetRelativeTransform(SourceBooth->MirrorMesh->GetRelativeTransform());
+        }
+    }
+
+    // ── Cabinet ───────────────────────────────────────────────────────────
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->MainCabinet) && SourceBooth->MainCabinet->GetStaticMesh() != nullptr))
+    {
+        ApplyComponentMeshAndMaterials(CabinetMesh.Get(), ProductData.CabinetOptions, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex);
     }
     else if (IsValid(CabinetMesh))
     {
@@ -332,15 +373,27 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         CabinetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
-    // ── Cabinet Doors ─────────────────────────────────────────────────────
+    // ── Closet ────────────────────────────────────────────────────────────
+    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->ClosetMesh) && SourceBooth->ClosetMesh->GetStaticMesh() != nullptr))
+    {
+        ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ProductData.ClosetOptions, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex);
+    }
+    else if (IsValid(ClosetMesh))
+    {
+        ClosetMesh->SetStaticMesh(nullptr);
+        ClosetMesh->SetVisibility(false);
+        ClosetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+
+    // ── Doors ─────────────────────────────────────────────────────────────
     if (!IsValid(SourceBooth) || (IsValid(SourceBooth->DoorMeshSlot0) && SourceBooth->DoorMeshSlot0->GetStaticMesh() != nullptr))
     {
-        const FFurnitureDoorGroup& CabinetDoors = ProductData.DoorsConfig.CabinetDoors;
+        const FFurnitureDoorGroup& CabDoors = ProductData.DoorsConfig.CabinetDoors;
 
-        ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), CabinetDoors, ActiveState.CabinetSizeIndex, ActiveState.CabinetColorIndex, 0);
-        ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), CabinetDoors, ActiveState.CabinetSizeIndex, ActiveState.CabinetColorIndex, 1);
+        ApplyDoorMeshAndMaterials(DoorMeshSlot0.Get(), CabDoors, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 0);
+        ApplyDoorMeshAndMaterials(DoorMeshSlot1.Get(), CabDoors, ActiveState.ActiveSizeIndex, ActiveState.ActiveColorIndex, 1);
 
-        switch (CabinetDoors.DoorCount)
+        switch (CabDoors.DoorCount)
         {
         case EDoorCount::NoDoors:
             if (IsValid(DoorMeshSlot0)) DoorMeshSlot0->SetVisibility(false);
@@ -357,7 +410,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             }
             else if (IsValid(DoorMeshSlot0))
             {
-                DoorMeshSlot0->SetRelativeLocation(CabinetDoors.SingleDoor.SlotConfig.ClosedPositionOffset);
+                DoorMeshSlot0->SetRelativeLocation(CabDoors.SingleDoor.SlotConfig.ClosedPositionOffset);
             }
             if (IsValid(DoorMeshSlot1)) DoorMeshSlot1->SetVisibility(false);
             break;
@@ -372,9 +425,8 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             }
             else if (IsValid(DoorMeshSlot0))
             {
-                DoorMeshSlot0->SetRelativeLocation(CabinetDoors.DoubleDoors.Slot0Config.ClosedPositionOffset);
+                DoorMeshSlot0->SetRelativeLocation(CabDoors.DoubleDoors.Slot0Config.ClosedPositionOffset);
             }
-
             if (IsValid(DoorMeshSlot1) && DoorMeshSlot1->GetStaticMesh())
             {
                 DoorMeshSlot1->SetVisibility(true);
@@ -385,7 +437,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             }
             else if (IsValid(DoorMeshSlot1))
             {
-                DoorMeshSlot1->SetRelativeLocation(CabinetDoors.DoubleDoors.Slot1Config.ClosedPositionOffset);
+                DoorMeshSlot1->SetRelativeLocation(CabDoors.DoubleDoors.Slot1Config.ClosedPositionOffset);
             }
             break;
         }
@@ -404,39 +456,6 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             DoorMeshSlot1->SetVisibility(false);
             DoorMeshSlot1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         }
-    }
-
-    // ── Closet ────────────────────────────────────────────────────────────
-    if (!IsValid(SourceBooth) || (IsValid(SourceBooth->ClosetMesh) && SourceBooth->ClosetMesh->GetStaticMesh() != nullptr))
-    {
-        FFurnitureCabinetOptions ResolvedCloset;
-        if (IsValid(SourceBooth))
-        {
-            SourceBooth->GetResolvedCabinetOptions(EFurnitureComponentType::Closet, ResolvedCloset);
-        }
-        ApplyComponentMeshAndMaterials(ClosetMesh.Get(), ResolvedCloset, ActiveState.ClosetSizeIndex, ActiveState.ClosetColorIndex);
-
-        if (IsValid(SourceBooth) && IsValid(SourceBooth->ClosetMesh))
-        {
-            if (IsValid(ClosetMesh)) ClosetMesh->SetRelativeTransform(SourceBooth->ClosetMesh->GetRelativeTransform());
-        }
-        else if (IsValid(ClosetMesh))
-        {
-            FFurniturePlacementOffset ClosetOffset;
-            if (ProductData.Cabinet.Sizes.IsValidIndex(ActiveState.CabinetSizeIndex))
-            {
-                ClosetOffset = ProductData.Cabinet.Sizes[ActiveState.CabinetSizeIndex].ClosetOffset;
-            }
-            ClosetMesh->SetRelativeLocation(ClosetOffset.RelativeLocation);
-            ClosetMesh->SetRelativeRotation(ClosetOffset.RelativeRotation);
-            ClosetMesh->SetRelativeScale3D(ClosetOffset.RelativeScale);
-        }
-    }
-    else if (IsValid(ClosetMesh))
-    {
-        ClosetMesh->SetStaticMesh(nullptr);
-        ClosetMesh->SetVisibility(false);
-        ClosetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
     // ── Closet Doors ──────────────────────────────────────────────────────
@@ -481,7 +500,6 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             {
                 ClosetDoorMeshSlot0->SetRelativeLocation(ClosetDoors.DoubleDoors.Slot0Config.ClosedPositionOffset);
             }
-
             if (IsValid(ClosetDoorMeshSlot1) && ClosetDoorMeshSlot1->GetStaticMesh())
             {
                 ClosetDoorMeshSlot1->SetVisibility(true);
@@ -852,13 +870,13 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
     }
 
     TSoftObjectPtr<UStaticMesh> TargetMeshPtr = nullptr;
-    if (Options.Sizes.IsValidIndex(SizeIndex))
+    if (Options.Models.IsValidIndex(SizeIndex))
     {
-        TargetMeshPtr = Options.Sizes[SizeIndex].Mesh;
+        TargetMeshPtr = Options.Models[SizeIndex].Mesh;
     }
-    else if (Options.Sizes.Num() > 0)
+    else if (Options.Models.Num() > 0)
     {
-        TargetMeshPtr = Options.Sizes[0].Mesh;
+        TargetMeshPtr = Options.Models[0].Mesh;
     }
 
     if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
@@ -886,13 +904,9 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
         }
 
         const FFurnitureColorOption* SelectedColor = nullptr;
-        if (Options.Colors.IsValidIndex(ColorIndex))
+        if (Options.Models.IsValidIndex(SizeIndex) && Options.Models[SizeIndex].Colors.IsValidIndex(ColorIndex))
         {
-            SelectedColor = &Options.Colors[ColorIndex];
-        }
-        else if (Options.Colors.Num() > 0)
-        {
-            SelectedColor = &Options.Colors[0];
+            SelectedColor = &Options.Models[SizeIndex].Colors[ColorIndex];
         }
 
         if (SelectedColor)
@@ -928,11 +942,11 @@ void AFurniturePreviewActor::ApplyComponentMeshAndMaterials(UStaticMeshComponent
     TSoftObjectPtr<UStaticMesh> TargetMeshPtr = nullptr;
     if (Options.Sizes.IsValidIndex(SizeIndex))
     {
-        TargetMeshPtr = Options.Sizes[SizeIndex].Mesh;
+        TargetMeshPtr = Options.Sizes[SizeIndex];
     }
     else if (Options.Sizes.Num() > 0)
     {
-        TargetMeshPtr = Options.Sizes[0].Mesh;
+        TargetMeshPtr = Options.Sizes[0];
     }
 
     if (TargetMeshPtr.IsNull() || TargetMeshPtr.ToSoftObjectPath().ToString().IsEmpty())
