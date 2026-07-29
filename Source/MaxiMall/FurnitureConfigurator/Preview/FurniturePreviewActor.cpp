@@ -819,10 +819,11 @@ void AFurniturePreviewActor::UpdateWorldInPlaceDOF()
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && GetWorld())
     {
         APlayerController* PC = GetWorld()->GetFirstPlayerController();
-        if (!PC || !PC->PlayerCameraManager) return;
+        if (!PC) return;
 
-        APlayerCameraManager* PCM = PC->PlayerCameraManager;
-        FVector ActiveCamLoc = PCM->GetCameraLocation();
+        FVector ActiveCamLoc;
+        FRotator ActiveCamRot;
+        PC->GetPlayerViewPoint(ActiveCamLoc, ActiveCamRot);
 
         UStaticMeshComponent* TargetMeshComp = CabinetMesh.Get();
         if (IsValid(CurrentFocusedComponent))
@@ -843,15 +844,23 @@ void AFurniturePreviewActor::UpdateWorldInPlaceDOF()
             DistanceToFocus = FVector::Dist(ActiveCamLoc, MeshRoot->GetComponentLocation());
         }
 
-        FPostProcessSettings& PPS = PCM->PostProcessSettings;
-        PPS.bOverride_DepthOfFieldFocalDistance = true;
-        PPS.DepthOfFieldFocalDistance = DistanceToFocus;
-        PPS.bOverride_DepthOfFieldFocalRegion = true;
-        PPS.DepthOfFieldFocalRegion = FMath::Max(250.0f, MeshDepthExtent + 100.0f);
-        PPS.bOverride_DepthOfFieldFstop = true;
-        PPS.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
-        PPS.bOverride_DepthOfFieldNearBlurSize = true;
-        PPS.DepthOfFieldNearBlurSize = 0.0f; // 0 near blur!
+        UCameraComponent* TargetCamComp = IsValid(Camera) ? Camera.Get() : nullptr;
+        if (!TargetCamComp && PC->GetPawn())
+        {
+            TargetCamComp = PC->GetPawn()->FindComponentByClass<UCameraComponent>();
+        }
+
+        if (IsValid(TargetCamComp))
+        {
+            TargetCamComp->PostProcessSettings.bOverride_DepthOfFieldFocalDistance = true;
+            TargetCamComp->PostProcessSettings.DepthOfFieldFocalDistance = DistanceToFocus;
+            TargetCamComp->PostProcessSettings.bOverride_DepthOfFieldFocalRegion = true;
+            TargetCamComp->PostProcessSettings.DepthOfFieldFocalRegion = FMath::Max(250.0f, MeshDepthExtent + 100.0f);
+            TargetCamComp->PostProcessSettings.bOverride_DepthOfFieldFstop = true;
+            TargetCamComp->PostProcessSettings.DepthOfFieldFstop = WorldInPlaceBackgroundBlurFstop;
+            TargetCamComp->PostProcessSettings.bOverride_DepthOfFieldNearBlurSize = true;
+            TargetCamComp->PostProcessSettings.DepthOfFieldNearBlurSize = 0.0f;
+        }
     }
 }
 
