@@ -790,7 +790,11 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
         WorldInPlacePitch = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -60.f, 60.f);
 
         // 2. Rotate the actual targeted UStaticMeshComponent around ITS OWN PIVOT!
-        UStaticMeshComponent* TargetComp = IsValid(CurrentFocusedComponent) ? CurrentFocusedComponent : CabinetMesh.Get();
+        UStaticMeshComponent* TargetComp = CabinetMesh.Get();
+        if (IsValid(CurrentFocusedComponent))
+        {
+            TargetComp = CurrentFocusedComponent;
+        }
         if (IsValid(TargetComp))
         {
             TargetComp->SetRelativeRotation(FRotator(WorldInPlacePitch, WorldInPlaceYaw, 0.f));
@@ -887,7 +891,11 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
     // Dynamic focal distance update so model stays 100% pin-sharp!
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
     {
-        UStaticMeshComponent* TargetMeshComp = IsValid(CurrentFocusedComponent) ? CurrentFocusedComponent : CabinetMesh.Get();
+        UStaticMeshComponent* TargetMeshComp = CabinetMesh.Get();
+        if (IsValid(CurrentFocusedComponent))
+        {
+            TargetMeshComp = CurrentFocusedComponent;
+        }
         float DistanceToFocus = 100.0f;
         if (IsValid(TargetMeshComp) && TargetMeshComp->GetVisibleFlag() && TargetMeshComp->GetStaticMesh())
         {
@@ -1228,7 +1236,11 @@ void AFurniturePreviewActor::EnforceLightingSettings()
 
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(Camera))
     {
-        UStaticMeshComponent* TargetMeshComp = IsValid(CurrentFocusedComponent) ? CurrentFocusedComponent : CabinetMesh.Get();
+        UStaticMeshComponent* TargetMeshComp = CabinetMesh.Get();
+        if (IsValid(CurrentFocusedComponent))
+        {
+            TargetMeshComp = CurrentFocusedComponent;
+        }
         float DistanceToFocus = 100.0f;
         float MeshDepthExtent = 200.0f;
 
