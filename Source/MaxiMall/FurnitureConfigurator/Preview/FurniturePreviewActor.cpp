@@ -690,28 +690,20 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 // ─────────────────────────────────────────────────────────────────────────────
 // WorldInPlace View Mode
 //
-// Architecture:
-//   PreviewRoot  — spawns at the booth world location with booth Yaw.
-//   MeshRoot     — child of PreviewRoot. All furniture meshes are children of MeshRoot.
-//                  On activation: RelativeLocation = Zero, RelativeRotation = Zero
-//                  (meshes sit exactly where they are in the real booth).
-//                  During rotation: SetWorldLocationAndRotation() pivots around the
-//                  focused mesh's bounding box center (Bounds.Origin).
-//   SpringArm    — child of PreviewRoot.
-//                  WORLD Location = focused mesh Bounds.Origin.
-//                  WORLD Rotation = computed from character position so camera is
-//                  always on the same side as the standing character.
-//                  TargetArmLength = zoom distance AND DoF focal distance.
-//   Camera       — child of SpringArm socket, faces the pivot naturally.
+// CORE PRINCIPLE:
+//   The CHARACTER'S CAMERA is the reference frame. Everything is expressed relative to it.
 //
-// Rotation:
-//   Left/Right → MeshRoot rotates around WORLD Z axis (always vertical).
-//   Up/Down    → MeshRoot rotates around CAMERA RIGHT vector (horizontal, ⊥ to view).
-//   Both axes pivot on the focused mesh's Bounds.Origin — true self-rotation.
-//   Roll = 0 is guaranteed because Z and CameraRight are always perpendicular.
-//
-// Zoom:   SpringArm.TargetArmLength only. Camera moves strictly along view axis.
-// DoF:    DepthOfFieldFocalDistance = TargetArmLength (exact, always correct).
+//   1. On activation  — capture character camera position + direction once.
+//   2. Preview camera — placed EXACTLY at character cam position / rotation
+//                        (seamless transition via SetViewTargetWithBlend).
+//   3. Model position — MeshRoot moved so mesh BOUNDS CENTER is at
+//                        CharCamLoc + CharCamForward * ViewDist
+//                        (model appears dead-center of the camera view).
+//   4. Rotation       — MeshRoot rotates around its own Bounds.Origin:
+//                        Left/Right → World Z axis (always vertical, zero roll).
+//                        Up/Down    → cached WIP_CameraRight (horizontal, ⊥ to view).
+//   5. Zoom           — MODEL moves along WIP_CameraForward. CAMERA does not move.
+//   6. DoF            — FocalDistance = WIP_CurrentViewDist (exact camera-to-model distance).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Returns the current world-space bounding box center of the focused mesh.
@@ -744,24 +736,21 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        // ── 2. Reset rotation accumulators ───────────────────────────────
+        // ── 2. Reset rotation accumulators ────────────────────────────────
         WorldInPlaceYaw   = 0.f;
         WorldInPlacePitch = 0.f;
 
-        // ── 3. Reset MeshRoot to identity ────────────────────────────────
-        // All meshes return to their real-world booth positions.
+        // ── 3. Reset MeshRoot to identity (booth position, no rotation) ───
         if (IsValid(MeshRoot))
         {
             MeshRoot->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
         }
 
-        // ── 4. Compute SpringArm position and direction ───────────────────
-        // Pivot = world-space bounding box center of the focused mesh.
-        FVector MeshCenter = WIP_GetFocusPivotWorld();
-
-        // Get the character camera's world position to determine
-        // which side the player is standing on.
-        FVector CharCamLoc  = GetActorLocation(); // safe fallback
+        // ── 4. Capture character camera state (done ONCE per focus session) ─
+        //
+        //    These vectors define the reference frame for ALL subsequent operations:
+        //    rotation axes, zoom direction, DoF focal distance.
+        FVector  CharCamLoc = GetActorLocation(); // safe fallback
         FRotator CharCamRot = FRotator::ZeroRotator;
         if (GetWorld())
         {
@@ -770,51 +759,48 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
                 PC->GetPlayerViewPoint(CharCamLoc, CharCamRot);
             }
         }
+        WIP_CameraWorldLoc = CharCamLoc;
+        WIP_CameraForward  = FRotationMatrix(CharCamRot).GetScaledAxis(EAxis::X); // cam forward (unit)
+        WIP_CameraRight    = FRotationMatrix(CharCamRot).GetScaledAxis(EAxis::Y); // cam right   (unit)
 
-        // Horizontal direction FROM mesh center TOWARDS character camera.
-        FVector DirMeshToChar = FVector(CharCamLoc.X - MeshCenter.X,
-                                        CharCamLoc.Y - MeshCenter.Y,
-                                        0.f).GetSafeNormal();
-        if (DirMeshToChar.IsNearlyZero())
-        {
-            // Fallback: opposite of booth forward (player should be facing booth)
-            DirMeshToChar = -GetActorForwardVector();
-            DirMeshToChar.Z = 0.f;
-            DirMeshToChar = DirMeshToChar.GetSafeNormal();
-        }
-
-        // SpringArm math:
-        //   Camera socket = SpringArmPivot + (-ArmLength) * SpringArm.ForwardVector
-        //   We want Camera on the SAME SIDE as the character:
-        //     Camera = MeshCenter + DirMeshToChar * ArmLength
-        //   Solving: SpringArm.ForwardVector = -DirMeshToChar
-        //   SpringArmWorldYaw = Yaw(-DirMeshToChar) = DirMeshToChar.Yaw + 180°
-        float CharDirYaw = FMath::RadiansToDegrees(FMath::Atan2(DirMeshToChar.Y, DirMeshToChar.X));
-        float SpringArmWorldYaw = FRotator::NormalizeAxis(CharDirYaw + 180.f);
-
-        // ── 5. Set arm length based on component type ─────────────────────
-        float ArmLength = 180.0f;
+        // ── 5. Choose initial viewing distance by component type ────────────
+        float ViewDist = 180.0f;
         switch (TargetType)
         {
-        case EFurnitureComponentType::Faucet:     ArmLength =  80.0f; break;
-        case EFurnitureComponentType::Sink:        ArmLength = 120.0f; break;
-        case EFurnitureComponentType::Mirror:      ArmLength = 140.0f; break;
-        case EFurnitureComponentType::Countertop:  ArmLength = 160.0f; break;
-        default:                                   ArmLength = 180.0f; break;
+        case EFurnitureComponentType::Faucet:     ViewDist =  80.0f; break;
+        case EFurnitureComponentType::Sink:        ViewDist = 120.0f; break;
+        case EFurnitureComponentType::Mirror:      ViewDist = 140.0f; break;
+        case EFurnitureComponentType::Countertop:  ViewDist = 160.0f; break;
+        default:                                   ViewDist = 180.0f; break;
         }
-        CurrentZoomLength = ArmLength;
+        WIP_CurrentViewDist = ViewDist;
+        WIP_InitialViewDist = ViewDist;
+        CurrentZoomLength   = ViewDist; // kept for compatibility
 
-        // ── 6. Place the SpringArm in world space ─────────────────────────
+        // ── 6. Move MeshRoot so mesh bounds center appears dead-center of camera ─
+        //
+        //    DesiredMeshCenter = CharCamLoc + CharCamForward * ViewDist
+        //    This places the model exactly in the center of the camera view,
+        //    at ViewDist centimetres in front of the character's camera.
+        FVector CurrentMeshCenter = WIP_GetFocusPivotWorld(); // booth position (before move)
+        FVector DesiredMeshCenter = CharCamLoc + WIP_CameraForward * ViewDist;
+        if (IsValid(MeshRoot))
+        {
+            MeshRoot->AddWorldOffset(DesiredMeshCenter - CurrentMeshCenter);
+        }
+
+        // ── 7. Place preview camera at character's camera position / rotation ─
+        //
+        //    Spring arm at CharCamLoc, arm length = 0 → camera socket IS at CharCamLoc.
+        //    When SetViewTargetWithBlend switches to this actor, the transition is
+        //    seamless because preview camera is identical to character camera.
         if (IsValid(SpringArm))
         {
-            SpringArm->SetWorldLocation(MeshCenter);
-            SpringArm->SetWorldRotation(FRotator(0.f, SpringArmWorldYaw, 0.f));
-            SpringArm->TargetArmLength = CurrentZoomLength;
+            SpringArm->bDoCollisionTest     = false;
+            SpringArm->bUsePawnControlRotation = false;
+            SpringArm->SetWorldLocationAndRotation(CharCamLoc, CharCamRot);
+            SpringArm->TargetArmLength = 0.f; // camera sits exactly at CharCamLoc
         }
-
-        // ── 7. Store initial state so ResetRotation can restore ───────────
-        WIP_InitialSpringArmWorldLoc = MeshCenter;
-        WIP_InitialSpringArmWorldRot = FRotator(0.f, SpringArmWorldYaw, 0.f);
 
         // ── 8. Apply Depth of Field ───────────────────────────────────────
         WIP_ApplyDoF();
@@ -842,23 +828,22 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     EnforceLightingSettings();
 }
 
-// ── WorldInPlace: Apply Depth of Field using SpringArm arm length as focal distance. ──
-// The camera IS the SpringArm camera — arm length = exact distance from lens to pivot = model center.
-// So focal distance = arm length always keeps the model pin-sharp.
+// DoF: focal distance = WIP_CurrentViewDist = exact camera-to-model-center distance.
+// This is always correct because zoom moves the model by exactly DeltaZoom,
+// updating WIP_CurrentViewDist by the same amount.
 void AFurniturePreviewActor::WIP_ApplyDoF()
 {
     if (!IsValid(Camera)) return;
 
-    // focal distance = SpringArm length (distance from camera to model center)
-    float FocalDist = IsValid(SpringArm) ? SpringArm->TargetArmLength : 150.0f;
+    float FocalDist = FMath::Max(10.f, WIP_CurrentViewDist);
 
-    // focal region = depth of the mesh bounding box so the whole model stays sharp
     float FocalRegion = 300.0f;
-    UStaticMeshComponent* TargetComp = IsValid(CurrentFocusedComponent) ? CurrentFocusedComponent.Get() : CabinetMesh.Get();
-    if (IsValid(TargetComp) && TargetComp->GetVisibleFlag() && TargetComp->GetStaticMesh())
+    UStaticMeshComponent* FC = IsValid(CurrentFocusedComponent)
+                                ? CurrentFocusedComponent.Get()
+                                : CabinetMesh.Get();
+    if (IsValid(FC) && FC->GetVisibleFlag() && FC->GetStaticMesh())
     {
-        // Full diagonal extent of the bounding box
-        FocalRegion = FMath::Max(150.0f, TargetComp->Bounds.BoxExtent.Size() * 2.0f + 50.0f);
+        FocalRegion = FMath::Max(120.0f, FC->Bounds.BoxExtent.Size() * 2.0f + 50.0f);
     }
 
     FPostProcessSettings& PP = Camera->PostProcessSettings;
@@ -871,7 +856,7 @@ void AFurniturePreviewActor::WIP_ApplyDoF()
     PP.bOverride_DepthOfFieldSensorWidth    = true;
     PP.DepthOfFieldSensorWidth              = 35.0f;
     PP.bOverride_DepthOfFieldNearBlurSize   = true;
-    PP.DepthOfFieldNearBlurSize             = 0.0f; // ZERO near blur — model is 100% sharp!
+    PP.DepthOfFieldNearBlurSize             = 0.0f; // model is always 100% sharp
 }
 
 void AFurniturePreviewActor::SetViewportMode(EPreviewViewportMode NewMode)
@@ -906,19 +891,16 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(MeshRoot))
     {
-        // ── Clamp pitch to ±45° ───────────────────────────────────────────
-        float NewPitch  = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -45.f, 45.f);
-        float ActualDP  = NewPitch - WorldInPlacePitch;
+        // ── Clamp pitch accumulator ───────────────────────────────────────────
+        float NewPitch   = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -45.f, 45.f);
+        float ActualDP   = NewPitch - WorldInPlacePitch;
         WorldInPlacePitch = NewPitch;
         WorldInPlaceYaw  += (-DeltaYaw);
 
-        // ── Rotation pivot = bounding box center of the focused mesh ──────
-        // (Updates dynamically as MeshRoot moves, giving true self-rotation.)
+        // ── Pivot = bounding box center of the focused mesh (always current) ──
         FVector Pivot = WIP_GetFocusPivotWorld();
 
-        // ── Left / Right: rotate around WORLD Z axis (always vertical) ────
-        // Left input → model turns left. Right input → model turns right.
-        // Roll = 0 always because we rotate around the straight-up world axis.
+        // ── Left / Right: rotate around WORLD Z axis (always straight vertical) ─
         if (!FMath::IsNearlyZero(DeltaYaw))
         {
             FQuat YawQ(FVector::UpVector, FMath::DegreesToRadians(-DeltaYaw));
@@ -926,19 +908,14 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
             MeshRoot->SetWorldLocationAndRotation(NewLoc, YawQ * MeshRoot->GetComponentQuat());
         }
 
-        // ── Up / Down: rotate around CAMERA RIGHT vector ──────────────────
-        // Camera right = SpringArm's world-space Y axis.
-        // This is always horizontal and perpendicular to the camera view direction,
-        // so "up" drag always tilts the top of the model towards the camera,
-        // regardless of which direction the character is facing.
-        if (!FMath::IsNearlyZero(ActualDP) && IsValid(SpringArm))
+        // ── Up / Down: rotate around CACHED camera right vector ───────────────
+        if (!FMath::IsNearlyZero(ActualDP))
         {
-            FVector CameraRight = FRotationMatrix(SpringArm->GetComponentRotation()).GetScaledAxis(EAxis::Y);
-            FQuat PitchQ(CameraRight, FMath::DegreesToRadians(-ActualDP));
+            FQuat PitchQ(WIP_CameraRight, FMath::DegreesToRadians(-ActualDP));
             FVector NewLoc = Pivot + PitchQ.RotateVector(MeshRoot->GetComponentLocation() - Pivot);
             MeshRoot->SetWorldLocationAndRotation(NewLoc, PitchQ * MeshRoot->GetComponentQuat());
         }
-        // SpringArm and Camera are NEVER touched — camera stays perpendicular.
+        // SpringArm and Camera are NEVER touched — camera stays fixed.
     }
     else
     {
@@ -958,18 +935,19 @@ void AFurniturePreviewActor::ResetRotation()
         WorldInPlaceYaw   = 0.f;
         WorldInPlacePitch = 0.f;
 
-        // Restore MeshRoot to identity — meshes return to real booth positions.
+        // Restore MeshRoot to identity, then reposition model in front of camera.
         if (IsValid(MeshRoot))
         {
             MeshRoot->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
         }
 
-        // Restore SpringArm to the state captured at SetFocusComponent time.
-        if (IsValid(SpringArm))
+        // Move model back to initial position (center of camera view at initial distance).
+        WIP_CurrentViewDist = WIP_InitialViewDist;
+        FVector CurrentMeshCenter = WIP_GetFocusPivotWorld();
+        FVector DesiredMeshCenter = WIP_CameraWorldLoc + WIP_CameraForward * WIP_CurrentViewDist;
+        if (IsValid(MeshRoot))
         {
-            SpringArm->SetWorldLocation(WIP_InitialSpringArmWorldLoc);
-            SpringArm->SetWorldRotation(WIP_InitialSpringArmWorldRot);
-            SpringArm->TargetArmLength = CurrentZoomLength;
+            MeshRoot->AddWorldOffset(DesiredMeshCenter - CurrentMeshCenter);
         }
 
         WIP_ApplyDoF();

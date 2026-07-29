@@ -370,9 +370,18 @@ private:
     float SavedDirectionalLightIntensity = -1.f;
     float WorldInPlaceYaw   = 0.f;
     float WorldInPlacePitch = 0.f;
-    float WorldInPlaceZoomOffset = 0.f;
+    float WorldInPlaceZoomOffset = 0.f;  // kept for ABI compatibility, unused
 
-    // Stored at SetFocusComponent time so ResetRotation can restore the exact camera state.
+    // ── WorldInPlace: captured once at SetFocusComponent, used by Rotate / Zoom / DoF ──
+    // The CHARACTER's camera position and direction at the moment view mode was activated.
+    // These never change during a session — only the MODEL moves / rotates.
+    FVector  WIP_CameraWorldLoc  = FVector::ZeroVector;    // character cam world position
+    FVector  WIP_CameraForward   = FVector(1.f, 0.f, 0.f); // character cam forward vector (unit)
+    FVector  WIP_CameraRight     = FVector(0.f, 1.f, 0.f); // character cam right vector (unit)
+    float    WIP_CurrentViewDist = 180.f;  // distance from camera to model center (changes on zoom)
+    float    WIP_InitialViewDist = 180.f;  // initial distance (used by ResetRotation)
+
+    // Kept for ABI / ResetRotation restore
     FVector  WIP_InitialSpringArmWorldLoc = FVector::ZeroVector;
     FRotator WIP_InitialSpringArmWorldRot = FRotator::ZeroRotator;
 
@@ -382,3 +391,4 @@ private:
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
 };
+
