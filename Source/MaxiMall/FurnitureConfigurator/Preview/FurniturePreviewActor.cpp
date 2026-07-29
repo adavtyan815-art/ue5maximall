@@ -1231,7 +1231,10 @@ void AFurniturePreviewActor::ApplyDirectionalLightScale()
         ADirectionalLight* DirLight = *It;
         if (IsValid(DirLight) && IsValid(DirLight->GetLightComponent()))
         {
-            SavedDirectionalLightIntensity = DirLight->GetLightComponent()->Intensity;
+            if (SavedDirectionalLightIntensity < 0.f)
+            {
+                SavedDirectionalLightIntensity = DirLight->GetLightComponent()->Intensity;
+            }
             DirLight->GetLightComponent()->SetIntensity(SavedDirectionalLightIntensity * ActiveConfig.DirectionalLightScale);
             CachedDirectionalLight = DirLight;
             break;
