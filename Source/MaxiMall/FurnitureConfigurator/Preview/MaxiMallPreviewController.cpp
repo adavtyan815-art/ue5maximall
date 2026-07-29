@@ -441,15 +441,24 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
 
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
+    FVector SpawnLocation = PreviewStagingLocation;
     FRotator SpawnRotation = FRotator::ZeroRotator;
     if (TargetBooth)
     {
         SpawnRotation.Yaw = TargetBooth->GetActorRotation().Yaw;
     }
 
+    AFurniturePreviewActor* DefaultActorCDO = SpawnClass ? Cast<AFurniturePreviewActor>(SpawnClass->GetDefaultObject()) : nullptr;
+    const EPreviewViewportMode EffectiveMode = DefaultActorCDO ? DefaultActorCDO->ViewportMode : EPreviewViewportMode::IsolatedStudio;
+
+    if (EffectiveMode == EPreviewViewportMode::WorldInPlace && TargetBooth)
+    {
+        SpawnLocation = TargetBooth->GetActorLocation();
+    }
+
     ActivePreviewActor = World->SpawnActor<AFurniturePreviewActor>(
         SpawnClass,
-        PreviewStagingLocation,
+        SpawnLocation,
         SpawnRotation,
         SpawnParams);
 
@@ -460,12 +469,15 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     }
 
     HiddenActors.Empty();
-    for (TActorIterator<AActor> It(World); It; ++It)
+    if (ActivePreviewActor->ViewportMode == EPreviewViewportMode::IsolatedStudio)
     {
-        AActor* Actor = *It;
-        if (Actor && Actor != this && Actor != GetPawn() && Actor != ActivePreviewActor)
+        for (TActorIterator<AActor> It(World); It; ++It)
         {
-            HiddenActors.Add(Actor);
+            AActor* Actor = *It;
+            if (Actor && Actor != this && Actor != GetPawn() && Actor != ActivePreviewActor)
+            {
+                HiddenActors.Add(Actor);
+            }
         }
     }
 
