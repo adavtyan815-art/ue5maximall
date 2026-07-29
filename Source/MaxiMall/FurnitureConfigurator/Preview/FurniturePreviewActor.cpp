@@ -1206,7 +1206,6 @@ void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLighting
         Camera->FieldOfView = Config.CameraFOV;
     }
 
-    PreviewDirectionalLightIntensityScale = Config.DirectionalLightScale;
     ApplyDirectionalLightScale();
 }
 
@@ -1223,7 +1222,7 @@ void AFurniturePreviewActor::ApplyDirectionalLightScale()
         if (IsValid(DirLight) && IsValid(DirLight->GetLightComponent()))
         {
             SavedDirectionalLightIntensity = DirLight->GetLightComponent()->Intensity;
-            DirLight->GetLightComponent()->SetIntensity(SavedDirectionalLightIntensity * PreviewDirectionalLightIntensityScale);
+            DirLight->GetLightComponent()->SetIntensity(SavedDirectionalLightIntensity * ActiveConfig.DirectionalLightScale);
             CachedDirectionalLight = DirLight;
             break;
         }
