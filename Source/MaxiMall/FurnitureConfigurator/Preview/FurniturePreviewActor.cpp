@@ -687,47 +687,19 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     EnforceLightingSettings();
 }
 
-void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType ComponentType)
+void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetType)
 {
     UStaticMeshComponent* TargetComponent = nullptr;
-
-    switch (ComponentType)
+    switch (TargetType)
     {
-    case EFurnitureComponentType::Cabinet:
-        TargetComponent = CabinetMesh.Get();
-        ActiveConfig = CabinetLighting;
-        break;
-    case EFurnitureComponentType::Closet:
-        TargetComponent = ClosetMesh.Get();
-        ActiveConfig = ClosetLighting;
-        break;
-    case EFurnitureComponentType::Doors:
-        TargetComponent = DoorMeshSlot0.Get();
-        ActiveConfig = CabinetLighting;
-        break;
-    case EFurnitureComponentType::Countertop:
-        TargetComponent = CountertopMesh.Get();
-        ActiveConfig = CountertopLighting;
-        break;
-    case EFurnitureComponentType::Sink:
-        TargetComponent = SinkMesh.Get();
-        ActiveConfig = SinkLighting;
-        break;
-    case EFurnitureComponentType::Faucet:
-        TargetComponent = FaucetMesh.Get();
-        ActiveConfig = FaucetLighting;
-        break;
-    case EFurnitureComponentType::Mirror:
-        TargetComponent = MirrorMesh.Get();
-        ActiveConfig = MirrorLighting;
-        break;
-    case EFurnitureComponentType::None:
-    default:
-        ActiveConfig = CabinetLighting;
-        break;
+    case EFurnitureComponentType::Cabinet:     TargetComponent = CabinetMesh.Get(); break;
+    case EFurnitureComponentType::Closet:      TargetComponent = ClosetMesh.Get(); break;
+    case EFurnitureComponentType::Countertop:  TargetComponent = CountertopMesh.Get(); break;
+    case EFurnitureComponentType::Sink:        TargetComponent = SinkMesh.Get(); break;
+    case EFurnitureComponentType::Faucet:      TargetComponent = FaucetMesh.Get(); break;
+    case EFurnitureComponentType::Mirror:      TargetComponent = MirrorMesh.Get(); break;
+    default: break;
     }
-
-    ApplyLightingConfig(ActiveConfig);
 
     CurrentFocusedComponent = TargetComponent;
 
@@ -738,31 +710,53 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType Component
         LocalFocusLoc = GetActorTransform().InverseTransformPosition(WorldLoc);
     }
 
-    if (IsValid(MeshRoot))
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
-    }
+        WorldInPlaceYaw = 0.f;
+        WorldInPlacePitch = 0.f;
 
-    if (IsValid(SpringArm))
-    {
-        SpringArm->SetRelativeRotation(FRotator(ActiveConfig.Pitch, ActiveConfig.Yaw, 0.f));
-        if (IsValid(TargetComponent) && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
+        if (IsValid(MeshRoot))
+        {
+            MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
+            MeshRoot->SetRelativeLocation(FVector(WorldInPlaceForwardOffset, 0.f, 0.f));
+        }
+
+        if (IsValid(SpringArm))
         {
             SpringArm->SetRelativeLocation(LocalFocusLoc);
-            SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
-            CurrentZoomLength = ActiveConfig.FocusDistance;
+            SpringArm->SetRelativeRotation(FRotator::ZeroRotator); // 100% perpendicular view to booth!
+
+            float IdealFocusDist = 180.0f;
+            if (TargetType == EFurnitureComponentType::Faucet) IdealFocusDist = 80.0f;
+            else if (TargetType == EFurnitureComponentType::Sink) IdealFocusDist = 120.0f;
+            else if (TargetType == EFurnitureComponentType::Mirror) IdealFocusDist = 140.0f;
+
+            CurrentZoomLength = IdealFocusDist;
+            SpringArm->TargetArmLength = CurrentZoomLength;
         }
-        else
+    }
+    else
+    {
+        if (IsValid(SpringArm))
         {
-            SpringArm->SetRelativeLocation(FVector::ZeroVector);
-            SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
-            CurrentZoomLength = ActiveConfig.FocusDistance;
+            SpringArm->SetRelativeRotation(FRotator(ActiveConfig.Pitch, ActiveConfig.Yaw, 0.f));
+            if (IsValid(TargetComponent) && TargetComponent->GetVisibleFlag() && TargetComponent->GetStaticMesh())
+            {
+                SpringArm->SetRelativeLocation(LocalFocusLoc);
+                SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
+                CurrentZoomLength = ActiveConfig.FocusDistance;
+            }
+            else
+            {
+                SpringArm->SetRelativeLocation(FVector::ZeroVector);
+                SpringArm->TargetArmLength = ActiveConfig.FocusDistance;
+                CurrentZoomLength = ActiveConfig.FocusDistance;
+            }
+            UpdateLightIntensityForZoom();
         }
-        UpdateLightIntensityForZoom();
     }
 
-    UpdateWorldInPlaceModelPosition();
-    UpdateWorldInPlaceDOF();
+    EnforceLightingSettings();
 }
 
 void AFurniturePreviewActor::SetViewportMode(EPreviewViewportMode NewMode)
@@ -878,25 +872,10 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
         WorldInPlaceYaw += (-DeltaYaw);
         WorldInPlacePitch = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -45.f, 45.f);
 
-        UStaticMeshComponent* TargetComp = CabinetMesh.Get();
-        if (IsValid(CurrentFocusedComponent))
+        // Rotate MeshRoot cleanly with STRICT 0.0f ROLL (zero side tilting!):
+        if (IsValid(MeshRoot))
         {
-            TargetComp = CurrentFocusedComponent;
-        }
-
-        if (IsValid(TargetComp) && GetWorld())
-        {
-            APlayerController* PC = GetWorld()->GetFirstPlayerController();
-            FRotator CamRot = GetActorRotation();
-            if (PC)
-            {
-                FVector CamLoc;
-                PC->GetPlayerViewPoint(CamLoc, CamRot);
-            }
-
-            // Facing the camera with STRICT 0.0f ROLL (zero side tilting!):
-            FRotator CleanRotator(WorldInPlacePitch, CamRot.Yaw + 180.f + WorldInPlaceYaw, 0.f);
-            TargetComp->SetWorldRotation(CleanRotator);
+            MeshRoot->SetRelativeRotation(FRotator(WorldInPlacePitch, WorldInPlaceYaw, 0.f));
         }
     }
     else
