@@ -341,6 +341,7 @@ private:
     void ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config);
     void ApplyDirectionalLightScale();
     void RestoreDirectionalLight();
+    void ApplyWorldPostProcessSettings();
 
     float SavedDirectionalLightIntensity = -1.f;
 

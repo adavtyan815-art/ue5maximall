@@ -159,15 +159,15 @@ void UConfiguratorMainWidget::RefreshSelections()
                                 FButtonStyle CustomStyle = NewBtn->GetStyle();
                                 if (i == ActiveSizeIdx)
                                 {
-                                    CustomStyle.Normal.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.3f));
-                                    CustomStyle.Hovered.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.45f));
-                                    CustomStyle.Pressed.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.6f));
+                                    CustomStyle.Normal.TintColor = ActiveSizeButtonNormalColor;
+                                    CustomStyle.Hovered.TintColor = ActiveSizeButtonHoveredColor;
+                                    CustomStyle.Pressed.TintColor = ActiveSizeButtonPressedColor;
                                 }
                                 else
                                 {
-                                    CustomStyle.Normal.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.05f));
-                                    CustomStyle.Hovered.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.15f));
-                                    CustomStyle.Pressed.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.25f));
+                                    CustomStyle.Normal.TintColor = SizeButtonNormalColor;
+                                    CustomStyle.Hovered.TintColor = SizeButtonHoveredColor;
+                                    CustomStyle.Pressed.TintColor = SizeButtonPressedColor;
                                 }
                                 NewBtn->SetStyle(CustomStyle);
 
@@ -185,6 +185,21 @@ void UConfiguratorMainWidget::RefreshSelections()
                                         SizeText = FText::Format(FText::FromString(TEXT("Size {0}")), FText::AsNumber(i + 1));
                                     }
                                     BtnText->SetText(SizeText);
+
+                                    if (i == ActiveSizeIdx)
+                                    {
+                                        BtnText->SetColorAndOpacity(ActiveSizeTextColor);
+                                    }
+                                    else
+                                    {
+                                        BtnText->SetColorAndOpacity(SizeTextColor);
+                                    }
+
+                                    if (SizeTextFont.HasValidFont())
+                                    {
+                                        BtnText->SetFont(SizeTextFont);
+                                    }
+
                                     NewBtn->AddChild(BtnText);
                                 }
 
@@ -284,6 +299,18 @@ void UConfiguratorMainWidget::RefreshSelections()
                                         FButtonStyle CustomStyle = NewBtn->GetStyle();
                                         CustomStyle.NormalPadding = SizeButtonPadding;
                                         CustomStyle.PressedPadding = SizeButtonPadding;
+                                        if (i == ActiveSizeIdx)
+                                        {
+                                            CustomStyle.Normal.TintColor = ActiveSizeButtonNormalColor;
+                                            CustomStyle.Hovered.TintColor = ActiveSizeButtonHoveredColor;
+                                            CustomStyle.Pressed.TintColor = ActiveSizeButtonPressedColor;
+                                        }
+                                        else
+                                        {
+                                            CustomStyle.Normal.TintColor = SizeButtonNormalColor;
+                                            CustomStyle.Hovered.TintColor = SizeButtonHoveredColor;
+                                            CustomStyle.Pressed.TintColor = SizeButtonPressedColor;
+                                        }
                                         NewBtn->SetStyle(CustomStyle);
 
                                         UScaleBox* ScaleBox = WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass());
@@ -342,11 +369,14 @@ void UConfiguratorMainWidget::RefreshSelections()
                                 ScrollBox->AddChild(GridPanel);
                             }
 
-                            // Wrap ScrollBox inside a SizeBox with a maximum height limit of 255.0f
+                            // Wrap ScrollBox inside a SizeBox with height limit controlled by SizeContainerHeight
                             USizeBox* ScrollLimitBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
                             if (ScrollLimitBox)
                             {
-                                ScrollLimitBox->SetMaxDesiredHeight(255.f);
+                                if (SizeContainerHeight > 0.f)
+                                {
+                                    ScrollLimitBox->SetMaxDesiredHeight(SizeContainerHeight);
+                                }
                                 ScrollLimitBox->AddChild(ScrollBox);
                                 Size_Container->AddChild(ScrollLimitBox);
                             }
@@ -487,15 +517,15 @@ void UConfiguratorMainWidget::RefreshSelections()
                                     CustomStyle.PressedPadding = ColorButtonPadding;
                                     if (i == ActiveColorIdx)
                                     {
-                                        CustomStyle.Normal.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.3f));
-                                        CustomStyle.Hovered.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.45f));
-                                        CustomStyle.Pressed.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.6f));
+                                        CustomStyle.Normal.TintColor = ActiveColorButtonNormalColor;
+                                        CustomStyle.Hovered.TintColor = ActiveColorButtonHoveredColor;
+                                        CustomStyle.Pressed.TintColor = ActiveColorButtonPressedColor;
                                     }
                                     else
                                     {
-                                        CustomStyle.Normal.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.05f));
-                                        CustomStyle.Hovered.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.15f));
-                                        CustomStyle.Pressed.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.25f));
+                                        CustomStyle.Normal.TintColor = ColorButtonNormalColor;
+                                        CustomStyle.Hovered.TintColor = ColorButtonHoveredColor;
+                                        CustomStyle.Pressed.TintColor = ColorButtonPressedColor;
                                     }
                                     NewBtn->SetStyle(CustomStyle);
 
@@ -555,11 +585,14 @@ void UConfiguratorMainWidget::RefreshSelections()
                             ColorScrollBox->AddChild(ColorGridPanel);
                         }
 
-                        // Wrap ScrollBox inside a SizeBox with a maximum height limit of 255.0f
+                        // Wrap ScrollBox inside a SizeBox with height limit controlled by ColorContainerHeight
                         USizeBox* ColorScrollLimitBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
                         if (ColorScrollLimitBox)
                         {
-                            ColorScrollLimitBox->SetMaxDesiredHeight(255.f);
+                            if (ColorContainerHeight > 0.f)
+                            {
+                                ColorScrollLimitBox->SetMaxDesiredHeight(ColorContainerHeight);
+                            }
                             ColorScrollLimitBox->AddChild(ColorScrollBox);
                             Color_Container->AddChild(ColorScrollLimitBox);
                         }

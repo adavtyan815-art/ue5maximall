@@ -14,6 +14,7 @@
 #include "Components/SkyLightComponent.h"
 #include "Engine/DirectionalLight.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Engine/PostProcessVolume.h"
 #include "EngineUtils.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,18 +149,9 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
     Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
 
-    // ── Instant Exposure Settings (Eliminates gradual light adaptation delay) ──
-    Camera->PostProcessSettings.bOverride_AutoExposureMinBrightness = true;
-    Camera->PostProcessSettings.AutoExposureMinBrightness = 1.0f;
-
-    Camera->PostProcessSettings.bOverride_AutoExposureMaxBrightness = true;
-    Camera->PostProcessSettings.AutoExposureMaxBrightness = 1.0f;
-
-    Camera->PostProcessSettings.bOverride_AutoExposureSpeedUp = true;
-    Camera->PostProcessSettings.AutoExposureSpeedUp = 100.0f;
-
-    Camera->PostProcessSettings.bOverride_AutoExposureSpeedDown = true;
-    Camera->PostProcessSettings.AutoExposureSpeedDown = 100.0f;
+    // ── PostProcess Settings (Inherits tone-mapping and color grading from world) ──
+    Camera->PostProcessSettings.bOverride_AutoExposureMinBrightness = false;
+    Camera->PostProcessSettings.bOverride_AutoExposureMaxBrightness = false;
 
     // ── Studio Backdrop ───────────────────────────────────────────────────
     BackdropMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BackdropMesh"));
@@ -254,6 +246,7 @@ void AFurniturePreviewActor::BeginPlay()
     UpdateLightIntensityForZoom();
     EnforceLightingSettings();
     ApplyDirectionalLightScale();
+    ApplyWorldPostProcessSettings();
 }
 
 void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -1223,6 +1216,7 @@ void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLighting
     }
 
     ApplyDirectionalLightScale();
+    ApplyWorldPostProcessSettings();
 }
 
 void AFurniturePreviewActor::ApplyDirectionalLightScale()
@@ -1256,4 +1250,22 @@ void AFurniturePreviewActor::RestoreDirectionalLight()
     }
     SavedDirectionalLightIntensity = -1.f;
     CachedDirectionalLight = nullptr;
+}
+
+void AFurniturePreviewActor::ApplyWorldPostProcessSettings()
+{
+    if (!GetWorld() || !IsValid(Camera))
+    {
+        return;
+    }
+
+    for (TActorIterator<APostProcessVolume> It(GetWorld()); It; ++It)
+    {
+        APostProcessVolume* PPVolume = *It;
+        if (IsValid(PPVolume) && (PPVolume->bUnbound || PPVolume->EncompassesPoint(GetActorLocation())))
+        {
+            Camera->PostProcessSettings = PPVolume->Settings;
+            break;
+        }
+    }
 }

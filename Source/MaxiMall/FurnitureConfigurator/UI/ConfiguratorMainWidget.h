@@ -127,6 +127,36 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
     int32 SizeColumns = 2;
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    float SizeContainerHeight = 255.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FSlateColor SizeButtonNormalColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.05f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FSlateColor SizeButtonHoveredColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.15f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FSlateColor SizeButtonPressedColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.25f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FSlateColor ActiveSizeButtonNormalColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.3f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FSlateColor ActiveSizeButtonHoveredColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.45f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FSlateColor ActiveSizeButtonPressedColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.6f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FSlateColor SizeTextColor = FSlateColor(FLinearColor::White);
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FSlateColor ActiveSizeTextColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 1.0f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
+    FSlateFontInfo SizeTextFont;
+
     // ── COLOR CONTAINER CONFIGURATION ────────────────────────────────────────
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
     float ColorButtonWidth = 100.f;
@@ -145,6 +175,27 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
     int32 ColorColumns = 2;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    float ColorContainerHeight = 255.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    FSlateColor ColorButtonNormalColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.05f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    FSlateColor ColorButtonHoveredColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.15f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    FSlateColor ColorButtonPressedColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.25f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    FSlateColor ActiveColorButtonNormalColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.3f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    FSlateColor ActiveColorButtonHoveredColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.45f));
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
+    FSlateColor ActiveColorButtonPressedColor = FSlateColor(FLinearColor(0.2f, 0.6f, 1.0f, 0.6f));
 
 private:
     UPROPERTY()
