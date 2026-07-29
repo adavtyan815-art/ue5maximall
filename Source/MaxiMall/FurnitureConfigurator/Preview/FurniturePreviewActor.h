@@ -29,6 +29,7 @@ class USpringArmComponent;
 class UCameraComponent;
 class USpotLightComponent;
 class UPointLightComponent;
+class USkyLightComponent;
 
 USTRUCT(BlueprintType)
 struct FFurniturePreviewLightingConfig
@@ -95,11 +96,15 @@ struct FFurniturePreviewLightingConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities")
     float RimLightIntensity = 30000.f;
 
+    /** Sky light (ambient environment reflection) intensity for metals/gold/chrome. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities")
+    float SkyLightIntensity = 1.0f;
+
     /** Sun light (Directional Light) scale for this component section. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities", meta = (ClampMin = "0.0", ClampMax = "10.0"))
     float DirectionalLightScale = 1.0f;
 
-    /** Master global intensity scale applied to all 3 preview lights simultaneously for this section. */
+    /** Master global intensity scale applied to all preview lights simultaneously for this section. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities", meta = (ClampMin = "0.0", ClampMax = "10.0"))
     float MasterLightIntensityScale = 1.0f;
 
@@ -114,6 +119,10 @@ struct FFurniturePreviewLightingConfig
     /** Color of the rim light for this component section. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
     FLinearColor RimLightColor = FLinearColor::White;
+
+    /** Color of the sky light ambient reflection for this component section. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
+    FLinearColor SkyLightColor = FLinearColor::White;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
     FVector KeyLightLocation = FVector(-300.f, -300.f, 300.f);
@@ -221,6 +230,10 @@ public:
     /** Rim / Back Light spotlight (placed behind model to separate from backdrop). */
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USpotLightComponent> RimLight;
+
+    /** Studio Sky Light component to provide rich HDRI ambient reflections for metals (gold, chrome, brass). */
+    UPROPERTY(BlueprintReadOnly, Category = "Components")
+    TObjectPtr<USkyLightComponent> SkyLight;
 
     // ─────────────────────────────────────────────────────────────────────
     // SECTION PROFILES (Fully encapsulated settings per model/section)

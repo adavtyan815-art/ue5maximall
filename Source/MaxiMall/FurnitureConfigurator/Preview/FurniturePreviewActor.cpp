@@ -11,6 +11,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Components/SpotLightComponent.h"
 #include "Components/PointLightComponent.h"
+#include "Components/SkyLightComponent.h"
 #include "Engine/DirectionalLight.h"
 #include "Components/DirectionalLightComponent.h"
 #include "EngineUtils.h"
@@ -215,6 +216,18 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     RimLight->SetIntensity(30000.f);
     RimLight->SetCastShadows(false);
     RimLight->LightingChannels.bChannel0 = true;
+
+    // ── Sky Light (Studio Ambient HDRI Reflections for Gold/Chrome/Metals) ──
+    SkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("SkyLight"));
+    SkyLight->SetupAttachment(PreviewRoot);
+    SkyLight->SetMobility(EComponentMobility::Movable);
+    SkyLight->SourceType = ESkyLightSourceType::SLS_CapturedScene;
+    SkyLight->bRealtimeCapture = true;
+    SkyLight->Intensity = ActiveConfig.SkyLightIntensity;
+    SkyLight->LightColor = ActiveConfig.SkyLightColor;
+    SkyLight->LightingChannels.bChannel0 = true;
+    SkyLight->LightingChannels.bChannel1 = false;
+    SkyLight->LightingChannels.bChannel2 = false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1199,6 +1212,13 @@ void AFurniturePreviewActor::ApplyLightingConfig(const FFurniturePreviewLighting
         RimLight->SetVisibility(Config.bEnableRimLight);
         RimLight->SetIntensity(Config.RimLightIntensity * Config.MasterLightIntensityScale);
         RimLight->SetAttenuationRadius(Config.AttenuationRadius);
+    }
+
+    if (IsValid(SkyLight))
+    {
+        SkyLight->SetLightColor(Config.SkyLightColor);
+        SkyLight->SetIntensity(Config.SkyLightIntensity * Config.MasterLightIntensityScale);
+        SkyLight->RecaptureSky();
     }
 
     if (IsValid(Camera))
