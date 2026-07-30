@@ -718,40 +718,51 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 //   6. DoF            — FocalDistance = WIP_CurrentViewDist (exact camera-to-model distance).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Returns the current world-space bounding box center of the focused mesh.
-FVector AFurniturePreviewActor::WIP_GetFocusPivotWorld() const
+// Computes the aggregate bounding box of all visible furniture static meshes in MeshRoot local space.
+FVector AFurniturePreviewActor::WIP_GetLocalGroupCenter() const
 {
-    // Compute the AGGREGATE world-space bounding box of ALL furniture meshes.
-    // Using just the focused component's bounds gives the closet/sink center,
-    // which appears as rotation from the "left corner" when the closet is leftmost.
-    // We ALWAYS want the center of the ENTIRE visible furniture assembly.
-    FBox AggregateBounds(EForceInit::ForceInitToZero);
+    FBox AggregateBox(EForceInit::ForceInitToZero);
     bool bHasAny = false;
 
-    auto AddMesh = [&](const UStaticMeshComponent* Comp)
+    auto AddComponentLocalBounds = [&](const UStaticMeshComponent* Comp)
     {
-        if (IsValid(Comp) && Comp->GetStaticMesh())
+        if (IsValid(Comp) && Comp->GetVisibleFlag() && IsValid(Comp->GetStaticMesh()))
         {
-            FBox MeshBox = Comp->Bounds.GetBox();
-            if (bHasAny) AggregateBounds += MeshBox;
-            else         { AggregateBounds = MeshBox; bHasAny = true; }
+            FBox LocalMeshBox = Comp->GetStaticMesh()->GetBoundingBox();
+            FTransform RelXform = Comp->GetRelativeTransform();
+            FBox BoxInRootSpace = LocalMeshBox.TransformBy(RelXform);
+
+            if (bHasAny) AggregateBox += BoxInRootSpace;
+            else         { AggregateBox = BoxInRootSpace; bHasAny = true; }
         }
     };
 
-    // Add every visible furniture piece — do NOT skip any, so pivot is truly centred.
-    AddMesh(CabinetMesh.Get());
-    AddMesh(DoorMeshSlot0.Get());
-    AddMesh(DoorMeshSlot1.Get());
-    AddMesh(CountertopMesh.Get());
-    AddMesh(SinkMesh.Get());
-    AddMesh(FaucetMesh.Get());
-    AddMesh(MirrorMesh.Get());
-    AddMesh(ClosetMesh.Get());
-    AddMesh(ClosetDoorMeshSlot0.Get());
-    AddMesh(ClosetDoorMeshSlot1.Get());
+    AddComponentLocalBounds(CabinetMesh.Get());
+    AddComponentLocalBounds(DoorMeshSlot0.Get());
+    AddComponentLocalBounds(DoorMeshSlot1.Get());
+    AddComponentLocalBounds(CountertopMesh.Get());
+    AddComponentLocalBounds(SinkMesh.Get());
+    AddComponentLocalBounds(FaucetMesh.Get());
+    AddComponentLocalBounds(MirrorMesh.Get());
+    AddComponentLocalBounds(ClosetMesh.Get());
+    AddComponentLocalBounds(ClosetDoorMeshSlot0.Get());
+    AddComponentLocalBounds(ClosetDoorMeshSlot1.Get());
 
-    if (bHasAny)        return AggregateBounds.GetCenter();
-    if (IsValid(MeshRoot)) return MeshRoot->GetComponentLocation();
+    if (bHasAny)
+    {
+        return AggregateBox.GetCenter();
+    }
+    return FVector::ZeroVector;
+}
+
+// Returns the current world-space bounding box center of the entire furniture group.
+FVector AFurniturePreviewActor::WIP_GetFocusPivotWorld() const
+{
+    FVector LocalCenter = WIP_GetLocalGroupCenter();
+    if (IsValid(MeshRoot))
+    {
+        return MeshRoot->GetComponentTransform().TransformPosition(LocalCenter);
+    }
     return GetActorLocation();
 }
 
@@ -822,25 +833,25 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         WIP_InitialViewDist = ViewDist;
         CurrentZoomLength   = ViewDist; // kept for compatibility
 
-        // ── 6. Move MeshRoot so mesh bounds center appears dead-center of camera ─
+        // ── 6. Move MeshRoot so mesh group bounds center appears dead-center of camera ─
         //
         //    DesiredMeshCenter = CharCamLoc + CharCamForward * ViewDist
-        //    This places the model exactly in the center of the camera view,
-        //    at ViewDist centimetres in front of the character's camera.
-        FVector CurrentMeshCenter = WIP_GetFocusPivotWorld(); // booth position (before move)
-        FVector DesiredMeshCenter = CharCamLoc + WIP_CameraForward * ViewDist;
+        //    This places the aggregate center of all furniture pieces dead-center of camera.
+        FVector LocalGroupCenter = WIP_GetLocalGroupCenter();
+        FVector CurrentWorldGroupCenter = IsValid(MeshRoot)
+            ? MeshRoot->GetComponentTransform().TransformPosition(LocalGroupCenter)
+            : GetActorLocation();
+        FVector DesiredWorldGroupCenter = CharCamLoc + WIP_CameraForward * ViewDist;
         if (IsValid(MeshRoot))
         {
-            MeshRoot->AddWorldOffset(DesiredMeshCenter - CurrentMeshCenter);
+            MeshRoot->AddWorldOffset(DesiredWorldGroupCenter - CurrentWorldGroupCenter);
         }
 
         // ── 7. Store "zero rotation" reference state for WIP_ApplyCurrentRotation() ─
-        //    IMPORTANT: call WIP_GetFocusPivotWorld() AFTER AddWorldOffset so we get
-        //    the ACTUAL bounds center of the moved mesh, not the camera-projection point.
-        //    These two points differ when MeshRoot's origin ≠ mesh visual center.
-        WIP_MeshRootLocAtReset  = IsValid(MeshRoot) ? MeshRoot->GetComponentLocation() : DesiredMeshCenter;
+        //    MeshRoot origin + rotation and the exact world group center after position shift.
+        WIP_MeshRootLocAtReset  = IsValid(MeshRoot) ? MeshRoot->GetComponentLocation() : DesiredWorldGroupCenter;
         WIP_InitialMeshRootQuat = IsValid(MeshRoot) ? MeshRoot->GetComponentQuat() : FQuat::Identity;
-        WIP_MeshPivotWorld      = WIP_GetFocusPivotWorld(); // REAL aggregate bounds center after move
+        WIP_MeshPivotWorld      = DesiredWorldGroupCenter; // exact visual center of all furniture
         WIP_InitialMeshRootLoc  = WIP_MeshRootLocAtReset;
         WIP_InitialMeshPivot    = WIP_MeshPivotWorld;
 

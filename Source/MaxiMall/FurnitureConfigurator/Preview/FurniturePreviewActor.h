@@ -367,6 +367,7 @@ private:
     void UpdateWorldInPlaceModelPosition();
     void UpdateWorldInPlaceDOF();
     void WIP_ApplyDoF();            // focal distance = WIP_CurrentViewDist
+    FVector WIP_GetLocalGroupCenter() const; // aggregate bounds center in MeshRoot local space
     FVector WIP_GetFocusPivotWorld() const; // world-space bounding box center of focused mesh
     void WIP_ApplyCurrentRotation(); // reconstruct MeshRoot pose from accumulated Yaw/Pitch
 
