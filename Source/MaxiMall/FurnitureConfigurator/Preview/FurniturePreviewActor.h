@@ -30,6 +30,8 @@ class UCameraComponent;
 class USpotLightComponent;
 class UPointLightComponent;
 class USkyLightComponent;
+class ACharacter;
+class USkeletalMeshComponent;
 
 USTRUCT(BlueprintType)
 struct FFurniturePreviewLightingConfig
@@ -364,8 +366,9 @@ private:
     void ApplyWorldPostProcessSettings();
     void UpdateWorldInPlaceModelPosition();
     void UpdateWorldInPlaceDOF();
-    void WIP_ApplyDoF();            // focal distance = SpringArm arm length
+    void WIP_ApplyDoF();            // focal distance = WIP_CurrentViewDist
     FVector WIP_GetFocusPivotWorld() const; // world-space bounding box center of focused mesh
+    void WIP_ApplyCurrentRotation(); // reconstruct MeshRoot pose from accumulated Yaw/Pitch
 
     float SavedDirectionalLightIntensity = -1.f;
     float WorldInPlaceYaw   = 0.f;
@@ -373,17 +376,27 @@ private:
     float WorldInPlaceZoomOffset = 0.f;  // kept for ABI compatibility, unused
 
     // ── WorldInPlace: captured once at SetFocusComponent, used by Rotate / Zoom / DoF ──
-    // The CHARACTER's camera position and direction at the moment view mode was activated.
-    // These never change during a session — only the MODEL moves / rotates.
-    FVector  WIP_CameraWorldLoc  = FVector::ZeroVector;    // character cam world position
-    FVector  WIP_CameraForward   = FVector(1.f, 0.f, 0.f); // character cam forward vector (unit)
-    FVector  WIP_CameraRight     = FVector(0.f, 1.f, 0.f); // character cam right vector (unit)
-    float    WIP_CurrentViewDist = 180.f;  // distance from camera to model center (changes on zoom)
-    float    WIP_InitialViewDist = 180.f;  // initial distance (used by ResetRotation)
+    FVector  WIP_CameraWorldLoc  = FVector::ZeroVector;
+    FVector  WIP_CameraForward   = FVector(1.f, 0.f, 0.f);
+    FVector  WIP_CameraRight     = FVector(0.f, 1.f, 0.f);
+    float    WIP_CurrentViewDist = 180.f;
+    float    WIP_InitialViewDist = 180.f;
 
-    // Kept for ABI / ResetRotation restore
+    // ── WorldInPlace "zero rotation" reference state ────────────────────────
+    // MeshRoot location and model center at zero Yaw/Pitch (may shift with zoom).
+    // WIP_ApplyCurrentRotation() always rotates FROM these — no drift possible.
+    FVector WIP_MeshPivotWorld     = FVector::ZeroVector; // model bounds center at zero rot
+    FVector WIP_MeshRootLocAtReset = FVector::ZeroVector; // MeshRoot origin at zero rot
+    FVector WIP_InitialMeshPivot   = FVector::ZeroVector; // pivot at SetFocusComponent time
+    FVector WIP_InitialMeshRootLoc = FVector::ZeroVector; // root loc at SetFocusComponent time
+
+    // Kept for ABI
     FVector  WIP_InitialSpringArmWorldLoc = FVector::ZeroVector;
     FRotator WIP_InitialSpringArmWorldRot = FRotator::ZeroRotator;
+
+    // Character whose mesh we hid on entry — restored in EndPlay.
+    UPROPERTY()
+    TWeakObjectPtr<ACharacter> WIP_CachedCharacter;
 
     UPROPERTY()
     TWeakObjectPtr<class ADirectionalLight> CachedDirectionalLight;

@@ -19,6 +19,8 @@
 #include "EngineUtils.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/Character.h"
+#include "Components/SkeletalMeshComponent.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -254,6 +256,16 @@ void AFurniturePreviewActor::BeginPlay()
 
 void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    // Restore character mesh visibility if we hid it during WorldInPlace mode.
+    if (WIP_CachedCharacter.IsValid())
+    {
+        if (USkeletalMeshComponent* Mesh = WIP_CachedCharacter->GetMesh())
+        {
+            Mesh->SetVisibility(true);
+        }
+        WIP_CachedCharacter.Reset();
+    }
+
     Super::EndPlay(EndPlayReason);
     RestoreDirectionalLight();
 }
@@ -797,7 +809,15 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
             MeshRoot->AddWorldOffset(DesiredMeshCenter - CurrentMeshCenter);
         }
 
-        // ── 7. Place preview camera at character's camera position / rotation ─
+        // ── 7. Store "zero rotation" reference state for WIP_ApplyCurrentRotation() ─
+        //    After repositioning, capture MeshRoot loc and the model center.
+        //    Rotation is reconstructed from this state every frame — NO incremental drift.
+        WIP_MeshRootLocAtReset = IsValid(MeshRoot) ? MeshRoot->GetComponentLocation() : DesiredMeshCenter;
+        WIP_MeshPivotWorld     = DesiredMeshCenter; // pivot = model bounds center at zero rotation
+        WIP_InitialMeshRootLoc = WIP_MeshRootLocAtReset;
+        WIP_InitialMeshPivot   = DesiredMeshCenter;
+
+        // ── 8. Place preview camera at character's camera position / rotation ─
         //
         //    Spring arm at CharCamLoc, arm length = 0 → camera socket IS at CharCamLoc.
         //    When SetViewTargetWithBlend switches to this actor, the transition is
@@ -810,7 +830,23 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
             SpringArm->TargetArmLength = 0.f; // camera sits exactly at CharCamLoc
         }
 
-        // ── 8. Apply Depth of Field ───────────────────────────────────────
+        // ── 9. Hide character mesh so it is not visible through the preview camera ─
+        if (GetWorld())
+        {
+            if (APlayerController* PC2 = GetWorld()->GetFirstPlayerController())
+            {
+                if (ACharacter* Char = Cast<ACharacter>(PC2->GetPawn()))
+                {
+                    if (USkeletalMeshComponent* CharMesh = Char->GetMesh())
+                    {
+                        CharMesh->SetVisibility(false);
+                        WIP_CachedCharacter = Char;
+                    }
+                }
+            }
+        }
+
+        // ── 10. Apply Depth of Field ───────────────────────────────────────
         WIP_ApplyDoF();
     }
     else
@@ -867,6 +903,32 @@ void AFurniturePreviewActor::WIP_ApplyDoF()
     PP.DepthOfFieldNearBlurSize             = 0.0f; // model is always 100% sharp
 }
 
+// Reconstructs MeshRoot world location + rotation from accumulated Yaw/Pitch.
+// Called from RotatePreview, ZoomPreview, ResetRotation.
+// NEVER uses incremental quaternion multiplication — always rebuilds from the
+// "zero rotation" reference state (WIP_MeshRootLocAtReset, WIP_MeshPivotWorld).
+// This guarantees zero drift and perfectly clean axes regardless of how many
+// times or in what order the user drags.
+void AFurniturePreviewActor::WIP_ApplyCurrentRotation()
+{
+    if (!IsValid(MeshRoot)) return;
+
+    // Yaw:   always around WORLD Z (vertical axis). Pure horizontal spin.
+    // Pitch: always around WIP_CameraRight (horizontal vector captured at activation).
+    //        Z component is stripped — guaranteed to never introduce roll.
+    // Order: first pitch, then yaw (YawQ * PitchQ in right-to-left notation).
+    FQuat YawQ   = FQuat(FVector::UpVector, FMath::DegreesToRadians(WorldInPlaceYaw));
+    FQuat PitchQ = FQuat(WIP_CameraRight,   FMath::DegreesToRadians(WorldInPlacePitch));
+    FQuat TotalQ = YawQ * PitchQ; // = "pitch first, then yaw" in world space
+
+    // Rotate MeshRoot origin around WIP_MeshPivotWorld using the combined quaternion.
+    // WIP_MeshRootLocAtReset is MeshRoot's location at zero rotation (booth pos shifted
+    // in front of camera). This is the reference; we always rotate FROM here, not
+    // FROM the current (already rotated) location — that's what prevents drift.
+    FVector NewLoc = WIP_MeshPivotWorld + TotalQ.RotateVector(WIP_MeshRootLocAtReset - WIP_MeshPivotWorld);
+    MeshRoot->SetWorldLocationAndRotation(NewLoc, TotalQ);
+}
+
 void AFurniturePreviewActor::SetViewportMode(EPreviewViewportMode NewMode)
 {
     ViewportMode = NewMode;
@@ -899,31 +961,16 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(MeshRoot))
     {
-        // ── Clamp pitch accumulator ───────────────────────────────────────────
-        float NewPitch   = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -45.f, 45.f);
-        float ActualDP   = NewPitch - WorldInPlacePitch;
-        WorldInPlacePitch = NewPitch;
+        // Accumulate angles (not incremental quaternions — those drift!).
         WorldInPlaceYaw  += (-DeltaYaw);
+        WorldInPlacePitch = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -45.f, 45.f);
 
-        // ── Pivot = bounding box center of the focused mesh (always current) ──
-        FVector Pivot = WIP_GetFocusPivotWorld();
-
-        // ── Left / Right: rotate around WORLD Z axis (always straight vertical) ─
-        if (!FMath::IsNearlyZero(DeltaYaw))
-        {
-            FQuat YawQ(FVector::UpVector, FMath::DegreesToRadians(-DeltaYaw));
-            FVector NewLoc = Pivot + YawQ.RotateVector(MeshRoot->GetComponentLocation() - Pivot);
-            MeshRoot->SetWorldLocationAndRotation(NewLoc, YawQ * MeshRoot->GetComponentQuat());
-        }
-
-        // ── Up / Down: rotate around CACHED camera right vector ───────────────
-        if (!FMath::IsNearlyZero(ActualDP))
-        {
-            FQuat PitchQ(WIP_CameraRight, FMath::DegreesToRadians(-ActualDP));
-            FVector NewLoc = Pivot + PitchQ.RotateVector(MeshRoot->GetComponentLocation() - Pivot);
-            MeshRoot->SetWorldLocationAndRotation(NewLoc, PitchQ * MeshRoot->GetComponentQuat());
-        }
-        // SpringArm and Camera are NEVER touched — camera stays fixed.
+        // Reconstruct the FULL rotation from scratch every call.
+        // This is the ONLY way to guarantee:
+        //   • Right drag = pure World Z spin, ALWAYS, regardless of current pitch.
+        //   • Up drag   = pure horizontal tilt, ALWAYS, regardless of current yaw.
+        //   • No diagonal drift accumulating over many frames.
+        WIP_ApplyCurrentRotation();
     }
     else
     {
@@ -942,22 +989,14 @@ void AFurniturePreviewActor::ResetRotation()
     {
         WorldInPlaceYaw   = 0.f;
         WorldInPlacePitch = 0.f;
-
-        // Restore MeshRoot to identity, then reposition model in front of camera.
-        if (IsValid(MeshRoot))
-        {
-            MeshRoot->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
-        }
-
-        // Move model back to initial position (center of camera view at initial distance).
         WIP_CurrentViewDist = WIP_InitialViewDist;
-        FVector CurrentMeshCenter = WIP_GetFocusPivotWorld();
-        FVector DesiredMeshCenter = WIP_CameraWorldLoc + WIP_CameraForward * WIP_CurrentViewDist;
-        if (IsValid(MeshRoot))
-        {
-            MeshRoot->AddWorldOffset(DesiredMeshCenter - CurrentMeshCenter);
-        }
 
+        // Restore the "zero rotation" reference to initial state.
+        WIP_MeshPivotWorld     = WIP_InitialMeshPivot;
+        WIP_MeshRootLocAtReset = WIP_InitialMeshRootLoc;
+
+        // Reconstruct (= reset to identity = original position in front of camera).
+        WIP_ApplyCurrentRotation();
         WIP_ApplyDoF();
     }
     else
@@ -1003,16 +1042,28 @@ void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
 
 void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 {
-    if (ViewportMode == EPreviewViewportMode::WorldInPlace)
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(MeshRoot))
     {
-        // Zoom = change arm length.
-        // Min = 30 cm (before clipping into mesh), Max = 400 cm.
-        CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, 30.0f, 400.0f);
-        if (IsValid(SpringArm))
-        {
-            SpringArm->TargetArmLength = CurrentZoomLength;
-        }
-        // Update DoF so focus tracks the new distance
+        // ZOOM MOVES THE MODEL — the camera NEVER moves.
+        //
+        // Step 1: update view distance clamp.
+        float NewViewDist = FMath::Clamp(WIP_CurrentViewDist + DeltaZoom, 30.0f, 400.0f);
+        float DeltaDist   = NewViewDist - WIP_CurrentViewDist;
+        WIP_CurrentViewDist = NewViewDist;
+        CurrentZoomLength   = NewViewDist; // compatibility
+
+        // Step 2: shift the zero-rotation reference positions along camera forward.
+        // WIP_CameraForward is the direction from the camera toward where the model was placed.
+        // Moving the model CLOSER to camera = negative delta along forward vector.
+        // (DeltaZoom > 0 from caller means "zoom out" = model moves further away.)
+        WIP_MeshPivotWorld     += WIP_CameraForward * DeltaDist;
+        WIP_MeshRootLocAtReset += WIP_CameraForward * DeltaDist;
+
+        // Step 3: re-apply current rotation from the updated reference.
+        // This moves the model along the camera axis while preserving exact rotation.
+        WIP_ApplyCurrentRotation();
+
+        // Step 4: DoF focal distance = camera-to-model distance = WIP_CurrentViewDist.
         WIP_ApplyDoF();
     }
     else
