@@ -810,12 +810,13 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         }
 
         // ── 7. Store "zero rotation" reference state for WIP_ApplyCurrentRotation() ─
-        //    After repositioning, capture MeshRoot loc and the model center.
-        //    Rotation is reconstructed from this state every frame — NO incremental drift.
+        //    IMPORTANT: call WIP_GetFocusPivotWorld() AFTER AddWorldOffset so we get
+        //    the ACTUAL bounds center of the moved mesh, not the camera-projection point.
+        //    These two points differ when MeshRoot's origin ≠ mesh visual center.
         WIP_MeshRootLocAtReset = IsValid(MeshRoot) ? MeshRoot->GetComponentLocation() : DesiredMeshCenter;
-        WIP_MeshPivotWorld     = DesiredMeshCenter; // pivot = model bounds center at zero rotation
+        WIP_MeshPivotWorld     = WIP_GetFocusPivotWorld(); // REAL bounds center after move
         WIP_InitialMeshRootLoc = WIP_MeshRootLocAtReset;
-        WIP_InitialMeshPivot   = DesiredMeshCenter;
+        WIP_InitialMeshPivot   = WIP_MeshPivotWorld;
 
         // ── 8. Place preview camera at character's camera position / rotation ─
         //
@@ -831,17 +832,16 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         }
 
         // ── 9. Hide character mesh so it is not visible through the preview camera ─
-        if (GetWorld())
+        //    Use GetPlayerCharacter (not GetPawn) so this works in BOTH first-person
+        //    and third-person mode without any camera-mode dependency.
         {
-            if (APlayerController* PC2 = GetWorld()->GetFirstPlayerController())
+            ACharacter* Char = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
+            if (IsValid(Char))
             {
-                if (ACharacter* Char = Cast<ACharacter>(PC2->GetPawn()))
+                if (USkeletalMeshComponent* CharMesh = Char->GetMesh())
                 {
-                    if (USkeletalMeshComponent* CharMesh = Char->GetMesh())
-                    {
-                        CharMesh->SetVisibility(false);
-                        WIP_CachedCharacter = Char;
-                    }
+                    CharMesh->SetVisibility(false);
+                    WIP_CachedCharacter = Char;
                 }
             }
         }
