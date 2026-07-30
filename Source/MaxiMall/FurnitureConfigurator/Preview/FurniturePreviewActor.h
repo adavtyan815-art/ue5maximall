@@ -395,10 +395,10 @@ private:
     FRotator WIP_InitialSpringArmWorldRot = FRotator::ZeroRotator;
 
     // Character whose mesh we hid on entry — restored in EndPlay.
-    UPROPERTY()
+    // NOTE: plain TWeakObjectPtr without UPROPERTY is intentional;
+    // UPROPERTY() + TWeakObjectPtr causes a compile error in UE5.
     TWeakObjectPtr<ACharacter> WIP_CachedCharacter;
 
-    UPROPERTY()
     TWeakObjectPtr<class ADirectionalLight> CachedDirectionalLight;
 
     UPROPERTY()

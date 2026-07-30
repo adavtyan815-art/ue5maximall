@@ -916,10 +916,12 @@ void AFurniturePreviewActor::WIP_ApplyCurrentRotation()
     // Yaw:   always around WORLD Z (vertical axis). Pure horizontal spin.
     // Pitch: always around WIP_CameraRight (horizontal vector captured at activation).
     //        Z component is stripped — guaranteed to never introduce roll.
-    // Order: first pitch, then yaw (YawQ * PitchQ in right-to-left notation).
+    // Order: "PitchQ * YawQ" in UE5 quaternion notation means
+    //        "first apply YawQ, then apply PitchQ" in world space.
+    //        This gives correct turntable: spin model left/right, THEN tilt forward/back.
     FQuat YawQ   = FQuat(FVector::UpVector, FMath::DegreesToRadians(WorldInPlaceYaw));
     FQuat PitchQ = FQuat(WIP_CameraRight,   FMath::DegreesToRadians(WorldInPlacePitch));
-    FQuat TotalQ = YawQ * PitchQ; // = "pitch first, then yaw" in world space
+    FQuat TotalQ = PitchQ * YawQ; // world-space: first yaw, then pitch
 
     // Rotate MeshRoot origin around WIP_MeshPivotWorld using the combined quaternion.
     // WIP_MeshRootLocAtReset is MeshRoot's location at zero rotation (booth pos shifted
