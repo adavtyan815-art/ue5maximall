@@ -721,12 +721,37 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 // Returns the current world-space bounding box center of the focused mesh.
 FVector AFurniturePreviewActor::WIP_GetFocusPivotWorld() const
 {
-    if (IsValid(CurrentFocusedComponent) && CurrentFocusedComponent->GetStaticMesh())
-        return CurrentFocusedComponent->Bounds.Origin;
-    if (IsValid(CabinetMesh) && CabinetMesh->GetStaticMesh())
-        return CabinetMesh->Bounds.Origin;
-    if (IsValid(MeshRoot))
-        return MeshRoot->GetComponentLocation();
+    // Compute the AGGREGATE world-space bounding box of ALL furniture meshes.
+    // Using just the focused component's bounds gives the closet/sink center,
+    // which appears as rotation from the "left corner" when the closet is leftmost.
+    // We ALWAYS want the center of the ENTIRE visible furniture assembly.
+    FBox AggregateBounds(EForceInit::ForceInitToZero);
+    bool bHasAny = false;
+
+    auto AddMesh = [&](const UStaticMeshComponent* Comp)
+    {
+        if (IsValid(Comp) && Comp->GetStaticMesh())
+        {
+            FBox MeshBox = Comp->Bounds.GetBox();
+            if (bHasAny) AggregateBounds += MeshBox;
+            else         { AggregateBounds = MeshBox; bHasAny = true; }
+        }
+    };
+
+    // Add every visible furniture piece — do NOT skip any, so pivot is truly centred.
+    AddMesh(CabinetMesh.Get());
+    AddMesh(DoorMeshSlot0.Get());
+    AddMesh(DoorMeshSlot1.Get());
+    AddMesh(CountertopMesh.Get());
+    AddMesh(SinkMesh.Get());
+    AddMesh(FaucetMesh.Get());
+    AddMesh(MirrorMesh.Get());
+    AddMesh(ClosetMesh.Get());
+    AddMesh(ClosetDoorMeshSlot0.Get());
+    AddMesh(ClosetDoorMeshSlot1.Get());
+
+    if (bHasAny)        return AggregateBounds.GetCenter();
+    if (IsValid(MeshRoot)) return MeshRoot->GetComponentLocation();
     return GetActorLocation();
 }
 
@@ -913,15 +938,14 @@ void AFurniturePreviewActor::WIP_ApplyCurrentRotation()
 {
     if (!IsValid(MeshRoot)) return;
 
-    // Yaw:   always around WORLD Z (vertical axis). Pure horizontal spin.
-    // Pitch: always around WIP_CameraRight (horizontal vector captured at activation).
-    //        Z component is stripped — guaranteed to never introduce roll.
-    // Order: "PitchQ * YawQ" in UE5 quaternion notation means
-    //        "first apply YawQ, then apply PitchQ" in world space.
-    //        This gives correct turntable: spin model left/right, THEN tilt forward/back.
-    FQuat YawQ   = FQuat(FVector::UpVector, FMath::DegreesToRadians(WorldInPlaceYaw));
-    FQuat PitchQ = FQuat(WIP_CameraRight,   FMath::DegreesToRadians(WorldInPlacePitch));
-    FQuat TotalQ = PitchQ * YawQ; // world-space: first yaw, then pitch
+    // ── Rotation axes ────────────────────────────────────────────────────────
+    // Yaw  (left/right drag) → WORLD Z (0,0,1) = vertical axis. Pure horizontal spin.
+    // Pitch (up/down drag)   → WORLD X (1,0,0) = forward axis. Pure up/down tilt.
+    // Both are ABSOLUTE world axes, independent of camera direction.
+    // This ensures the model ALWAYS rotates on its own axes, as shown in the X/Z diagram.
+    FQuat YawQ   = FQuat(FVector::UpVector,      FMath::DegreesToRadians(WorldInPlaceYaw));
+    FQuat PitchQ = FQuat(FVector::ForwardVector,  FMath::DegreesToRadians(WorldInPlacePitch));
+    FQuat TotalQ = PitchQ * YawQ; // world-space: first yaw (Z), then pitch (X)
 
     // Rotate MeshRoot origin around WIP_MeshPivotWorld using the combined quaternion.
     // WIP_MeshRootLocAtReset is MeshRoot's location at zero rotation (booth pos shifted
