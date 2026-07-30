@@ -718,50 +718,20 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 //   6. DoF            — FocalDistance = WIP_CurrentViewDist (exact camera-to-model distance).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Computes the aggregate bounding box of all visible furniture static meshes in MeshRoot local space.
-FVector AFurniturePreviewActor::WIP_GetLocalGroupCenter() const
-{
-    FBox AggregateBox(EForceInit::ForceInitToZero);
-    bool bHasAny = false;
-
-    auto AddComponentLocalBounds = [&](const UStaticMeshComponent* Comp)
-    {
-        if (IsValid(Comp) && Comp->GetVisibleFlag() && IsValid(Comp->GetStaticMesh()))
-        {
-            FBox LocalMeshBox = Comp->GetStaticMesh()->GetBoundingBox();
-            FTransform RelXform = Comp->GetRelativeTransform();
-            FBox BoxInRootSpace = LocalMeshBox.TransformBy(RelXform);
-
-            if (bHasAny) AggregateBox += BoxInRootSpace;
-            else         { AggregateBox = BoxInRootSpace; bHasAny = true; }
-        }
-    };
-
-    AddComponentLocalBounds(CabinetMesh.Get());
-    AddComponentLocalBounds(DoorMeshSlot0.Get());
-    AddComponentLocalBounds(DoorMeshSlot1.Get());
-    AddComponentLocalBounds(CountertopMesh.Get());
-    AddComponentLocalBounds(SinkMesh.Get());
-    AddComponentLocalBounds(FaucetMesh.Get());
-    AddComponentLocalBounds(MirrorMesh.Get());
-    AddComponentLocalBounds(ClosetMesh.Get());
-    AddComponentLocalBounds(ClosetDoorMeshSlot0.Get());
-    AddComponentLocalBounds(ClosetDoorMeshSlot1.Get());
-
-    if (bHasAny)
-    {
-        return AggregateBox.GetCenter();
-    }
-    return FVector::ZeroVector;
-}
-
-// Returns the current world-space bounding box center of the entire furniture group.
+// Returns the exact world-space pivot location (GetComponentLocation) of the target static mesh component.
 FVector AFurniturePreviewActor::WIP_GetFocusPivotWorld() const
 {
-    FVector LocalCenter = WIP_GetLocalGroupCenter();
+    if (IsValid(CurrentFocusedComponent))
+    {
+        return CurrentFocusedComponent->GetComponentLocation();
+    }
+    if (IsValid(CabinetMesh))
+    {
+        return CabinetMesh->GetComponentLocation();
+    }
     if (IsValid(MeshRoot))
     {
-        return MeshRoot->GetComponentTransform().TransformPosition(LocalCenter);
+        return MeshRoot->GetComponentLocation();
     }
     return GetActorLocation();
 }
@@ -833,25 +803,22 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         WIP_InitialViewDist = ViewDist;
         CurrentZoomLength   = ViewDist; // kept for compatibility
 
-        // ── 6. Move MeshRoot so mesh group bounds center appears dead-center of camera ─
+        // ── 6. Move MeshRoot so the target static mesh pivot appears dead-center of camera ─
         //
-        //    DesiredMeshCenter = CharCamLoc + CharCamForward * ViewDist
-        //    This places the aggregate center of all furniture pieces dead-center of camera.
-        FVector LocalGroupCenter = WIP_GetLocalGroupCenter();
-        FVector CurrentWorldGroupCenter = IsValid(MeshRoot)
-            ? MeshRoot->GetComponentTransform().TransformPosition(LocalGroupCenter)
-            : GetActorLocation();
-        FVector DesiredWorldGroupCenter = CharCamLoc + WIP_CameraForward * ViewDist;
+        //    DesiredMeshPivot = CharCamLoc + CharCamForward * ViewDist
+        //    This places the exact static mesh pivot point in front of the camera.
+        FVector CurrentMeshPivot = WIP_GetFocusPivotWorld(); // target static mesh pivot in booth
+        FVector DesiredMeshPivot = CharCamLoc + WIP_CameraForward * ViewDist;
         if (IsValid(MeshRoot))
         {
-            MeshRoot->AddWorldOffset(DesiredWorldGroupCenter - CurrentWorldGroupCenter);
+            MeshRoot->AddWorldOffset(DesiredMeshPivot - CurrentMeshPivot);
         }
 
         // ── 7. Store "zero rotation" reference state for WIP_ApplyCurrentRotation() ─
-        //    MeshRoot origin + rotation and the exact world group center after position shift.
-        WIP_MeshRootLocAtReset  = IsValid(MeshRoot) ? MeshRoot->GetComponentLocation() : DesiredWorldGroupCenter;
+        //    MeshRoot origin + rotation and the exact static mesh pivot point in world space.
+        WIP_MeshRootLocAtReset  = IsValid(MeshRoot) ? MeshRoot->GetComponentLocation() : DesiredMeshPivot;
         WIP_InitialMeshRootQuat = IsValid(MeshRoot) ? MeshRoot->GetComponentQuat() : FQuat::Identity;
-        WIP_MeshPivotWorld      = DesiredWorldGroupCenter; // exact visual center of all furniture
+        WIP_MeshPivotWorld      = DesiredMeshPivot; // exact pivot point of target static mesh
         WIP_InitialMeshRootLoc  = WIP_MeshRootLocAtReset;
         WIP_InitialMeshPivot    = WIP_MeshPivotWorld;
 
