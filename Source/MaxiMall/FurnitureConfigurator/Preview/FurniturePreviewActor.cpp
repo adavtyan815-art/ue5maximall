@@ -838,10 +838,11 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         //    IMPORTANT: call WIP_GetFocusPivotWorld() AFTER AddWorldOffset so we get
         //    the ACTUAL bounds center of the moved mesh, not the camera-projection point.
         //    These two points differ when MeshRoot's origin ≠ mesh visual center.
-        WIP_MeshRootLocAtReset = IsValid(MeshRoot) ? MeshRoot->GetComponentLocation() : DesiredMeshCenter;
-        WIP_MeshPivotWorld     = WIP_GetFocusPivotWorld(); // REAL bounds center after move
-        WIP_InitialMeshRootLoc = WIP_MeshRootLocAtReset;
-        WIP_InitialMeshPivot   = WIP_MeshPivotWorld;
+        WIP_MeshRootLocAtReset  = IsValid(MeshRoot) ? MeshRoot->GetComponentLocation() : DesiredMeshCenter;
+        WIP_InitialMeshRootQuat = IsValid(MeshRoot) ? MeshRoot->GetComponentQuat() : FQuat::Identity;
+        WIP_MeshPivotWorld      = WIP_GetFocusPivotWorld(); // REAL aggregate bounds center after move
+        WIP_InitialMeshRootLoc  = WIP_MeshRootLocAtReset;
+        WIP_InitialMeshPivot    = WIP_MeshPivotWorld;
 
         // ── 8. Place preview camera at character's camera position / rotation ─
         //
@@ -940,19 +941,19 @@ void AFurniturePreviewActor::WIP_ApplyCurrentRotation()
 
     // ── Rotation axes ────────────────────────────────────────────────────────
     // Yaw  (left/right drag) → WORLD Z (0,0,1) = vertical axis. Pure horizontal spin.
-    // Pitch (up/down drag)   → WORLD X (1,0,0) = forward axis. Pure up/down tilt.
-    // Both are ABSOLUTE world axes, independent of camera direction.
-    // This ensures the model ALWAYS rotates on its own axes, as shown in the X/Z diagram.
-    FQuat YawQ   = FQuat(FVector::UpVector,      FMath::DegreesToRadians(WorldInPlaceYaw));
-    FQuat PitchQ = FQuat(FVector::ForwardVector,  FMath::DegreesToRadians(WorldInPlacePitch));
-    FQuat TotalQ = PitchQ * YawQ; // world-space: first yaw (Z), then pitch (X)
+    // Pitch (up/down drag)   → WIP_CameraRight = horizontal camera-screen axis (Z=0).
+    //                          Guaranteed to tilt strictly up/down without side-roll.
+    // Order: PitchQ * YawQ applies YawQ first (around World Z), then PitchQ.
+    FQuat YawQ   = FQuat(FVector::UpVector, FMath::DegreesToRadians(WorldInPlaceYaw));
+    FQuat PitchQ = FQuat(WIP_CameraRight,   FMath::DegreesToRadians(WorldInPlacePitch));
+    FQuat TotalDeltaQ = PitchQ * YawQ;
 
-    // Rotate MeshRoot origin around WIP_MeshPivotWorld using the combined quaternion.
-    // WIP_MeshRootLocAtReset is MeshRoot's location at zero rotation (booth pos shifted
-    // in front of camera). This is the reference; we always rotate FROM here, not
-    // FROM the current (already rotated) location — that's what prevents drift.
-    FVector NewLoc = WIP_MeshPivotWorld + TotalQ.RotateVector(WIP_MeshRootLocAtReset - WIP_MeshPivotWorld);
-    MeshRoot->SetWorldLocationAndRotation(NewLoc, TotalQ);
+    // Combine delta rotation with the initial MeshRoot rotation in the booth
+    FQuat NewQuat = TotalDeltaQ * WIP_InitialMeshRootQuat;
+
+    // Rotate MeshRoot origin around WIP_MeshPivotWorld (aggregate bounds center of all furniture)
+    FVector NewLoc = WIP_MeshPivotWorld + TotalDeltaQ.RotateVector(WIP_MeshRootLocAtReset - WIP_MeshPivotWorld);
+    MeshRoot->SetWorldLocationAndRotation(NewLoc, NewQuat);
 }
 
 void AFurniturePreviewActor::SetViewportMode(EPreviewViewportMode NewMode)

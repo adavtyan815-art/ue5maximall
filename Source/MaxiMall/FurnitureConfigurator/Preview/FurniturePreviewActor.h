@@ -383,10 +383,11 @@ private:
     float    WIP_InitialViewDist = 180.f;
 
     // ── WorldInPlace "zero rotation" reference state ────────────────────────
-    // MeshRoot location and model center at zero Yaw/Pitch (may shift with zoom).
+    // MeshRoot location, rotation and model center at zero Yaw/Pitch (may shift with zoom).
     // WIP_ApplyCurrentRotation() always rotates FROM these — no drift possible.
-    FVector WIP_MeshPivotWorld     = FVector::ZeroVector; // model bounds center at zero rot
+    FVector WIP_MeshPivotWorld     = FVector::ZeroVector; // model aggregate bounds center at zero rot
     FVector WIP_MeshRootLocAtReset = FVector::ZeroVector; // MeshRoot origin at zero rot
+    FQuat   WIP_InitialMeshRootQuat = FQuat::Identity;    // MeshRoot world rotation at activation
     FVector WIP_InitialMeshPivot   = FVector::ZeroVector; // pivot at SetFocusComponent time
     FVector WIP_InitialMeshRootLoc = FVector::ZeroVector; // root loc at SetFocusComponent time
 
