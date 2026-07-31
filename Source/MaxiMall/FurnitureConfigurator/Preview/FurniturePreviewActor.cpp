@@ -31,7 +31,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // ── CRITICAL: This actor must NEVER replicate ─────────────────────────
     bReplicates          = false;
     bAlwaysRelevant      = false;
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
 
     // ── Root ──────────────────────────────────────────────────────────────
     PreviewRoot = CreateDefaultSubobject<USceneComponent>(TEXT("PreviewRoot"));
@@ -254,8 +254,27 @@ void AFurniturePreviewActor::BeginPlay()
     ApplyWorldPostProcessSettings();
 }
 
+void AFurniturePreviewActor::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace)
+    {
+        WIP_ApplyDoF();
+        WIP_UpdateWallOcclusion();
+    }
+}
+
 void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    // Remove PostProcess Material blendable from Camera
+    if (IsValid(Camera))
+    {
+        Camera->PostProcessSettings.WeightedBlendables.Array.RemoveAll([this](const FWeightedBlendable& Blendable) {
+            return Blendable.Object == StencilIsolationMID || Blendable.Object == StencilIsolationMaterialParent;
+        });
+    }
+
     // Restore character mesh visibility if we hid it during WorldInPlace mode.
     if (WIP_CachedCharacter.IsValid())
     {
@@ -265,6 +284,35 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
         }
         WIP_CachedCharacter.Reset();
     }
+
+    // Restore hidden wall components
+    for (const TWeakObjectPtr<UPrimitiveComponent>& CompPtr : WIP_CachedHiddenWallComponents)
+    {
+        if (CompPtr.IsValid())
+        {
+            CompPtr->SetVisibility(true);
+        }
+    }
+    WIP_CachedHiddenWallComponents.Empty();
+
+    // Disable custom depth on all components
+    auto DisableCustomDepth = [](UStaticMeshComponent* Comp)
+    {
+        if (IsValid(Comp))
+        {
+            Comp->SetRenderCustomDepth(false);
+        }
+    };
+    DisableCustomDepth(CabinetMesh.Get());
+    DisableCustomDepth(ClosetMesh.Get());
+    DisableCustomDepth(CountertopMesh.Get());
+    DisableCustomDepth(SinkMesh.Get());
+    DisableCustomDepth(FaucetMesh.Get());
+    DisableCustomDepth(MirrorMesh.Get());
+    DisableCustomDepth(DoorMeshSlot0.Get());
+    DisableCustomDepth(DoorMeshSlot1.Get());
+    DisableCustomDepth(ClosetDoorMeshSlot0.Get());
+    DisableCustomDepth(ClosetDoorMeshSlot1.Get());
 
     Super::EndPlay(EndPlayReason);
     RestoreDirectionalLight();
@@ -718,16 +766,12 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 //   6. DoF            — FocalDistance = WIP_CurrentViewDist (exact camera-to-model distance).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Returns the exact world-space pivot location (GetComponentLocation) of the target static mesh component.
+// Returns the world-space bounding box center (Bounds.Origin) of the focused static mesh component.
 FVector AFurniturePreviewActor::WIP_GetFocusPivotWorld() const
 {
-    if (IsValid(CurrentFocusedComponent))
+    if (IsValid(CurrentFocusedComponent) && CurrentFocusedComponent->GetStaticMesh())
     {
-        return CurrentFocusedComponent->GetComponentLocation();
-    }
-    if (IsValid(CabinetMesh))
-    {
-        return CabinetMesh->GetComponentLocation();
+        return CurrentFocusedComponent->Bounds.Origin;
     }
     if (IsValid(MeshRoot))
     {
@@ -752,23 +796,83 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     }
     CurrentFocusedComponent = TargetComp;
 
+    // ── Custom Depth Stencil Isolation ───────────────────────────────────────
+    auto SetCustomDepth = [](UStaticMeshComponent* Comp, bool bEnable, int32 StencilVal = 250)
+    {
+        if (IsValid(Comp) && Comp->GetVisibleFlag() && IsValid(Comp->GetStaticMesh()))
+        {
+            Comp->SetRenderCustomDepth(bEnable);
+            if (bEnable)
+            {
+                Comp->SetCustomDepthStencilValue(StencilVal);
+            }
+        }
+    };
+
+    // Reset Custom Depth on all meshes
+    SetCustomDepth(CabinetMesh.Get(), false);
+    SetCustomDepth(ClosetMesh.Get(), false);
+    SetCustomDepth(CountertopMesh.Get(), false);
+    SetCustomDepth(SinkMesh.Get(), false);
+    SetCustomDepth(FaucetMesh.Get(), false);
+    SetCustomDepth(MirrorMesh.Get(), false);
+    SetCustomDepth(DoorMeshSlot0.Get(), false);
+    SetCustomDepth(DoorMeshSlot1.Get(), false);
+    SetCustomDepth(ClosetDoorMeshSlot0.Get(), false);
+    SetCustomDepth(ClosetDoorMeshSlot1.Get(), false);
+
+    // Enable Custom Depth (Stencil 250) on focused product
+    if (IsValid(TargetComp))
+    {
+        SetCustomDepth(TargetComp, true, 250);
+
+        if (TargetType == EFurnitureComponentType::Cabinet)
+        {
+            SetCustomDepth(DoorMeshSlot0.Get(), true, 250);
+            SetCustomDepth(DoorMeshSlot1.Get(), true, 250);
+            SetCustomDepth(CountertopMesh.Get(), true, 250);
+            SetCustomDepth(SinkMesh.Get(), true, 250);
+            SetCustomDepth(FaucetMesh.Get(), true, 250);
+        }
+        else if (TargetType == EFurnitureComponentType::Closet)
+        {
+            SetCustomDepth(ClosetDoorMeshSlot0.Get(), true, 250);
+            SetCustomDepth(ClosetDoorMeshSlot1.Get(), true, 250);
+        }
+    }
+
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
         // ── 2. Reset rotation accumulators ────────────────────────────────
         WorldInPlaceYaw   = 0.f;
         WorldInPlacePitch = 0.f;
 
-        // ── 3. Reset MeshRoot to identity (booth position, no rotation) ───
+        // ── 3. Keep MeshRoot static in its real-world room/booth placement ─
+        //    The furniture model stays fixed in place so lighting and shadows are 100% natural.
         if (IsValid(MeshRoot))
         {
             MeshRoot->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
         }
 
-        // ── 4. Capture character camera state (done ONCE per focus session) ─
-        //
-        //    These vectors define the reference frame for ALL subsequent operations:
-        //    rotation axes, zoom direction, DoF focal distance.
-        FVector  CharCamLoc = GetActorLocation(); // safe fallback
+        // ── 4. Target Component Bounds & Adaptive Initial Distance ────────
+        FVector FocusPivot = WIP_GetFocusPivotWorld();
+        float MeshRadius = 80.0f;
+        if (IsValid(TargetComp) && TargetComp->GetStaticMesh())
+        {
+            MeshRadius = TargetComp->Bounds.SphereRadius;
+        }
+        MeshRadius = FMath::Max(15.0f, MeshRadius);
+        WIP_MeshBoundsRadius = MeshRadius;
+        WIP_FocusPivotWorld  = FocusPivot;
+
+        // Adaptive Initial Distance = MeshBoundsRadius * 2.5
+        float AdaptiveDist = FMath::Clamp(MeshRadius * 2.5f, 40.0f, 500.0f);
+        WIP_CurrentViewDist = AdaptiveDist;
+        WIP_InitialViewDist = AdaptiveDist;
+        CurrentZoomLength   = AdaptiveDist;
+
+        // ── 5. Capture character camera state & construct orbit rotation ───
+        FVector  CharCamLoc = GetActorLocation();
         FRotator CharCamRot = FRotator::ZeroRotator;
         if (GetWorld())
         {
@@ -777,67 +881,25 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
                 PC->GetPlayerViewPoint(CharCamLoc, CharCamRot);
             }
         }
-        WIP_CameraWorldLoc = CharCamLoc;
-        WIP_CameraForward  = FRotationMatrix(CharCamRot).GetScaledAxis(EAxis::X); // cam forward (unit)
-        // CameraRight MUST be perfectly horizontal (Z = 0) so that up/down rotation
-        // is always around a pure horizontal axis — regardless of the camera's pitch.
-        // If the camera has pitch (looking up/down), the raw Y axis would be tilted,
-        // which would cause diagonal rotation. Stripping Z gives a clean horizontal axis.
-        {
-            FVector RawRight = FRotationMatrix(CharCamRot).GetScaledAxis(EAxis::Y);
-            FVector HorizRight = FVector(RawRight.X, RawRight.Y, 0.f).GetSafeNormal();
-            WIP_CameraRight = HorizRight.IsNearlyZero() ? FVector(0.f, 1.f, 0.f) : HorizRight;
-        }
 
-        // ── 5. Choose initial viewing distance by component type ────────────
-        float ViewDist = 180.0f;
-        switch (TargetType)
-        {
-        case EFurnitureComponentType::Faucet:     ViewDist =  80.0f; break;
-        case EFurnitureComponentType::Sink:        ViewDist = 120.0f; break;
-        case EFurnitureComponentType::Mirror:      ViewDist = 140.0f; break;
-        case EFurnitureComponentType::Countertop:  ViewDist = 160.0f; break;
-        default:                                   ViewDist = 180.0f; break;
-        }
-        WIP_CurrentViewDist = ViewDist;
-        WIP_InitialViewDist = ViewDist;
-        CurrentZoomLength   = ViewDist; // kept for compatibility
+        // Orbit rotation: direction looking FROM character location IN THE ROOM TOWARDS the furniture FocusPivot
+        // This ensures the camera spawns in front of the object in the room, facing the cabinet.
+        FVector RoomCamToPivot = (FocusPivot - CharCamLoc).GetSafeNormal();
+        FRotator OrbitRot = RoomCamToPivot.IsNearlyZero() ? CharCamRot : RoomCamToPivot.Rotation();
+        WIP_InitialOrbitRot = OrbitRot;
 
-        // ── 6. Move MeshRoot so the target static mesh pivot appears dead-center of camera ─
-        //
-        //    DesiredMeshPivot = CharCamLoc + CharCamForward * ViewDist
-        //    This places the exact static mesh pivot point in front of the camera.
-        FVector CurrentMeshPivot = WIP_GetFocusPivotWorld(); // target static mesh pivot in booth
-        FVector DesiredMeshPivot = CharCamLoc + WIP_CameraForward * ViewDist;
-        if (IsValid(MeshRoot))
-        {
-            MeshRoot->AddWorldOffset(DesiredMeshPivot - CurrentMeshPivot);
-        }
-
-        // ── 7. Store "zero rotation" reference state for WIP_ApplyCurrentRotation() ─
-        //    MeshRoot origin + rotation and the exact static mesh pivot point in world space.
-        WIP_MeshRootLocAtReset  = IsValid(MeshRoot) ? MeshRoot->GetComponentLocation() : DesiredMeshPivot;
-        WIP_InitialMeshRootQuat = IsValid(MeshRoot) ? MeshRoot->GetComponentQuat() : FQuat::Identity;
-        WIP_MeshPivotWorld      = DesiredMeshPivot; // exact pivot point of target static mesh
-        WIP_InitialMeshRootLoc  = WIP_MeshRootLocAtReset;
-        WIP_InitialMeshPivot    = WIP_MeshPivotWorld;
-
-        // ── 8. Place preview camera at character's camera position / rotation ─
-        //
-        //    Spring arm at CharCamLoc, arm length = 0 → camera socket IS at CharCamLoc.
-        //    When SetViewTargetWithBlend switches to this actor, the transition is
-        //    seamless because preview camera is identical to character camera.
+        // ── 6. Setup SpringArm for Camera Orbit around static Bounds.Origin ─
         if (IsValid(SpringArm))
         {
-            SpringArm->bDoCollisionTest     = false;
+            SpringArm->bDoCollisionTest        = false; // disable probe collision
             SpringArm->bUsePawnControlRotation = false;
-            SpringArm->SetWorldLocationAndRotation(CharCamLoc, CharCamRot);
-            SpringArm->TargetArmLength = 0.f; // camera sits exactly at CharCamLoc
+            SpringArm->SetWorldLocation(FocusPivot);
+            SpringArm->SetWorldRotation(OrbitRot);
+            SpringArm->TargetArmLength         = AdaptiveDist;
+            SpringArm->UpdateChildTransforms(); // Force immediate transform update on child Camera component
         }
 
-        // ── 9. Hide character mesh so it is not visible through the preview camera ─
-        //    Use GetPlayerCharacter (not GetPawn) so this works in BOTH first-person
-        //    and third-person mode without any camera-mode dependency.
+        // ── 7. Hide character mesh so it is not visible during camera orbit ──
         {
             ACharacter* Char = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
             if (IsValid(Char))
@@ -850,8 +912,9 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
             }
         }
 
-        // ── 10. Apply Depth of Field ───────────────────────────────────────
+        // ── 8. Apply Depth of Field, Reflections & Wall Occlusion ─────────
         WIP_ApplyDoF();
+        WIP_UpdateWallOcclusion();
     }
     else
     {
@@ -876,62 +939,101 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     EnforceLightingSettings();
 }
 
-// DoF: focal distance = WIP_CurrentViewDist = exact camera-to-model-center distance.
-// This is always correct because zoom moves the model by exactly DeltaZoom,
-// updating WIP_CurrentViewDist by the same amount.
+// Disables physical camera DoF lens blur so target mesh is 100% crystal sharp; binds dynamic Post Process Material for Stencil 250 background isolation.
 void AFurniturePreviewActor::WIP_ApplyDoF()
 {
     if (!IsValid(Camera)) return;
 
-    float FocalDist = FMath::Max(10.f, WIP_CurrentViewDist);
+    FPostProcessSettings& PP = Camera->PostProcessSettings;
 
-    float FocalRegion = 300.0f;
-    UStaticMeshComponent* FC = IsValid(CurrentFocusedComponent)
-                                ? CurrentFocusedComponent.Get()
-                                : CabinetMesh.Get();
-    if (IsValid(FC) && FC->GetVisibleFlag() && FC->GetStaticMesh())
+    // DISABLE physical camera Depth of Field lens blur — target mesh MUST remain 100% crisp and sharp
+    PP.bOverride_DepthOfFieldFocalDistance  = false;
+    PP.bOverride_DepthOfFieldFocalRegion    = false;
+    PP.bOverride_DepthOfFieldFstop          = false;
+    PP.bOverride_DepthOfFieldSensorWidth    = false;
+    PP.bOverride_DepthOfFieldNearBlurSize   = false;
+    PP.bOverride_DepthOfFieldFarBlurSize    = false;
+
+    // Soft environment isolation vignette (~80% soft backdrop fade)
+    PP.bOverride_VignetteIntensity          = true;
+    PP.VignetteIntensity                    = 0.8f;
+
+    // Metallic / Chrome material reflection enhancement
+    PP.bOverride_ReflectionMethod           = true;
+    PP.bOverride_LumenReflectionQuality     = true;
+    PP.LumenReflectionQuality               = 2.0f;
+
+    // Dynamically create MID for Stencil 250 background isolation if template material is assigned
+    if (IsValid(StencilIsolationMaterialParent) && !IsValid(StencilIsolationMID))
     {
-        FocalRegion = FMath::Max(120.0f, FC->Bounds.BoxExtent.Size() * 2.0f + 50.0f);
+        StencilIsolationMID = UMaterialInstanceDynamic::Create(StencilIsolationMaterialParent, this);
     }
 
-    FPostProcessSettings& PP = Camera->PostProcessSettings;
-    PP.bOverride_DepthOfFieldFocalDistance  = true;
-    PP.DepthOfFieldFocalDistance            = FocalDist;
-    PP.bOverride_DepthOfFieldFocalRegion    = true;
-    PP.DepthOfFieldFocalRegion              = FocalRegion;
-    PP.bOverride_DepthOfFieldFstop          = true;
-    PP.DepthOfFieldFstop                    = WorldInPlaceBackgroundBlurFstop;
-    PP.bOverride_DepthOfFieldSensorWidth    = true;
-    PP.DepthOfFieldSensorWidth              = 35.0f;
-    PP.bOverride_DepthOfFieldNearBlurSize   = true;
-    PP.DepthOfFieldNearBlurSize             = 0.0f; // model is always 100% sharp
+    if (IsValid(StencilIsolationMID))
+    {
+        StencilIsolationMID->SetScalarParameterValue(TEXT("IsolationFade"), 0.8f);
+        StencilIsolationMID->SetScalarParameterValue(TEXT("TargetStencil"), 250.0f);
+    }
+
+    // Add Dynamic Post Process Material to Camera's WeightedBlendables
+    UObject* MatToBind = IsValid(StencilIsolationMID) ? (UObject*)StencilIsolationMID : (UObject*)StencilIsolationMaterialParent;
+    if (IsValid(MatToBind))
+    {
+        PP.WeightedBlendables.Array.RemoveAll([MatToBind, this](const FWeightedBlendable& Blendable) {
+            return Blendable.Object == MatToBind || Blendable.Object == StencilIsolationMID || Blendable.Object == StencilIsolationMaterialParent;
+        });
+
+        if (ViewportMode == EPreviewViewportMode::WorldInPlace)
+        {
+            PP.WeightedBlendables.Array.Add(FWeightedBlendable(1.0f, MatToBind));
+        }
+    }
 }
 
-// Reconstructs MeshRoot world location + rotation from accumulated Yaw/Pitch.
-// Called from RotatePreview, ZoomPreview, ResetRotation.
-// NEVER uses incremental quaternion multiplication — always rebuilds from the
-// "zero rotation" reference state (WIP_MeshRootLocAtReset, WIP_MeshPivotWorld).
-// This guarantees zero drift and perfectly clean axes regardless of how many
-// times or in what order the user drags.
+// 100cm radius sphere sweep trace dynamically hides room wall components blocking camera view while keeping CastHiddenShadow=true.
+void AFurniturePreviewActor::WIP_UpdateWallOcclusion()
+{
+    if (!GetWorld() || !IsValid(Camera)) return;
+
+    if (IsValid(BackdropMesh))
+    {
+        BackdropMesh->SetCastHiddenShadow(true);
+        BackdropMesh->SetVisibility(false);
+        WIP_CachedHiddenWallComponents.AddUnique(BackdropMesh);
+    }
+
+    FVector StartLoc = WIP_FocusPivotWorld;
+    FVector EndLoc   = Camera->GetComponentLocation();
+
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(100.0f); // 100cm radius sphere sweep
+    TArray<FHitResult> Hits;
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this);
+
+    if (GetWorld()->SweepMultiByChannel(Hits, StartLoc, EndLoc, FQuat::Identity, ECC_WorldStatic, SphereShape, Params))
+    {
+        for (const FHitResult& Hit : Hits)
+        {
+            if (UPrimitiveComponent* HitComp = Hit.GetComponent())
+            {
+                if (HitComp != CabinetMesh.Get() && HitComp != ClosetMesh.Get() &&
+                    HitComp != CountertopMesh.Get() && HitComp != SinkMesh.Get() &&
+                    HitComp != FaucetMesh.Get() && HitComp != MirrorMesh.Get() &&
+                    HitComp != DoorMeshSlot0.Get() && HitComp != DoorMeshSlot1.Get() &&
+                    HitComp != ClosetDoorMeshSlot0.Get() && HitComp != ClosetDoorMeshSlot1.Get())
+                {
+                    HitComp->SetCastHiddenShadow(true);
+                    HitComp->SetVisibility(false);
+                    WIP_CachedHiddenWallComponents.AddUnique(HitComp);
+                }
+            }
+        }
+    }
+}
+
 void AFurniturePreviewActor::WIP_ApplyCurrentRotation()
 {
-    if (!IsValid(MeshRoot)) return;
-
-    // ── Rotation axes ────────────────────────────────────────────────────────
-    // Yaw  (left/right drag) → WORLD Z (0,0,1) = vertical axis. Pure horizontal spin.
-    // Pitch (up/down drag)   → WIP_CameraRight = horizontal camera-screen axis (Z=0).
-    //                          Guaranteed to tilt strictly up/down without side-roll.
-    // Order: PitchQ * YawQ applies YawQ first (around World Z), then PitchQ.
-    FQuat YawQ   = FQuat(FVector::UpVector, FMath::DegreesToRadians(WorldInPlaceYaw));
-    FQuat PitchQ = FQuat(WIP_CameraRight,   FMath::DegreesToRadians(WorldInPlacePitch));
-    FQuat TotalDeltaQ = PitchQ * YawQ;
-
-    // Combine delta rotation with the initial MeshRoot rotation in the booth
-    FQuat NewQuat = TotalDeltaQ * WIP_InitialMeshRootQuat;
-
-    // Rotate MeshRoot origin around WIP_MeshPivotWorld (aggregate bounds center of all furniture)
-    FVector NewLoc = WIP_MeshPivotWorld + TotalDeltaQ.RotateVector(WIP_MeshRootLocAtReset - WIP_MeshPivotWorld);
-    MeshRoot->SetWorldLocationAndRotation(NewLoc, NewQuat);
+    // Deprecated — camera orbit is used in WorldInPlace mode instead of model movement.
 }
 
 void AFurniturePreviewActor::SetViewportMode(EPreviewViewportMode NewMode)
@@ -964,18 +1066,21 @@ void AFurniturePreviewActor::UpdateWorldInPlaceDOF()
 
 void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
-    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(MeshRoot))
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(SpringArm))
     {
-        // Accumulate angles (not incremental quaternions — those drift!).
-        WorldInPlaceYaw  += (-DeltaYaw);
-        WorldInPlacePitch = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -45.f, 45.f);
+        // Orbit camera around static model's Bounds.Origin
+        WorldInPlaceYaw   += (-DeltaYaw);
+        WorldInPlacePitch  = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -80.f, 80.f);
 
-        // Reconstruct the FULL rotation from scratch every call.
-        // This is the ONLY way to guarantee:
-        //   • Right drag = pure World Z spin, ALWAYS, regardless of current pitch.
-        //   • Up drag   = pure horizontal tilt, ALWAYS, regardless of current yaw.
-        //   • No diagonal drift accumulating over many frames.
-        WIP_ApplyCurrentRotation();
+        FRotator OrbitRot = WIP_InitialOrbitRot;
+        OrbitRot.Yaw   += WorldInPlaceYaw;
+        OrbitRot.Pitch  = FMath::Clamp(OrbitRot.Pitch + WorldInPlacePitch, -80.f, 80.f);
+        OrbitRot.Roll   = 0.f;
+
+        SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
+        SpringArm->SetWorldRotation(OrbitRot);
+
+        WIP_UpdateWallOcclusion();
     }
     else
     {
@@ -992,16 +1097,17 @@ void AFurniturePreviewActor::ResetRotation()
 {
     if (ViewportMode == EPreviewViewportMode::WorldInPlace)
     {
-        WorldInPlaceYaw   = 0.f;
-        WorldInPlacePitch = 0.f;
+        WorldInPlaceYaw     = 0.f;
+        WorldInPlacePitch   = 0.f;
         WIP_CurrentViewDist = WIP_InitialViewDist;
+        CurrentZoomLength   = WIP_InitialViewDist;
 
-        // Restore the "zero rotation" reference to initial state.
-        WIP_MeshPivotWorld     = WIP_InitialMeshPivot;
-        WIP_MeshRootLocAtReset = WIP_InitialMeshRootLoc;
-
-        // Reconstruct (= reset to identity = original position in front of camera).
-        WIP_ApplyCurrentRotation();
+        if (IsValid(SpringArm))
+        {
+            SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
+            SpringArm->SetWorldRotation(WIP_InitialOrbitRot);
+            SpringArm->TargetArmLength = WIP_InitialViewDist;
+        }
         WIP_ApplyDoF();
     }
     else
@@ -1047,28 +1153,15 @@ void AFurniturePreviewActor::SetInitialRotation(float InYaw, float InPitch)
 
 void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 {
-    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(MeshRoot))
+    if (ViewportMode == EPreviewViewportMode::WorldInPlace && IsValid(SpringArm))
     {
-        // ZOOM MOVES THE MODEL — the camera NEVER moves.
-        //
-        // Step 1: update view distance clamp.
-        float NewViewDist = FMath::Clamp(WIP_CurrentViewDist + DeltaZoom, 30.0f, 400.0f);
-        float DeltaDist   = NewViewDist - WIP_CurrentViewDist;
-        WIP_CurrentViewDist = NewViewDist;
-        CurrentZoomLength   = NewViewDist; // compatibility
+        float MinDist = FMath::Max(30.0f, WIP_MeshBoundsRadius * 0.8f);
+        float MaxDist = FMath::Clamp(WIP_MeshBoundsRadius * 5.0f, 150.0f, 600.0f);
 
-        // Step 2: shift the zero-rotation reference positions along camera forward.
-        // WIP_CameraForward is the direction from the camera toward where the model was placed.
-        // Moving the model CLOSER to camera = negative delta along forward vector.
-        // (DeltaZoom > 0 from caller means "zoom out" = model moves further away.)
-        WIP_MeshPivotWorld     += WIP_CameraForward * DeltaDist;
-        WIP_MeshRootLocAtReset += WIP_CameraForward * DeltaDist;
+        CurrentZoomLength = FMath::Clamp(CurrentZoomLength + DeltaZoom, MinDist, MaxDist);
+        WIP_CurrentViewDist = CurrentZoomLength;
 
-        // Step 3: re-apply current rotation from the updated reference.
-        // This moves the model along the camera axis while preserving exact rotation.
-        WIP_ApplyCurrentRotation();
-
-        // Step 4: DoF focal distance = camera-to-model distance = WIP_CurrentViewDist.
+        SpringArm->TargetArmLength = CurrentZoomLength;
         WIP_ApplyDoF();
     }
     else

@@ -168,6 +168,7 @@ public:
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
     virtual void BeginPlay() override;
+    virtual void Tick(float DeltaTime) override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void PostInitializeComponents() override;
     virtual void OnConstruction(const FTransform& Transform) override;
@@ -266,6 +267,14 @@ public:
     /** Active viewmode mode strategy (Isolated Studio vs World In-Place). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     EPreviewViewportMode ViewportMode = EPreviewViewportMode::IsolatedStudio;
+
+    /** Post process material template for Stencil 250 background isolation/fade. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
+    TObjectPtr<UMaterialInterface> StencilIsolationMaterialParent;
+
+    /** Dynamic material instance used for stencil 250 background isolation. */
+    UPROPERTY()
+    TObjectPtr<UMaterialInstanceDynamic> StencilIsolationMID;
 
     /** In WorldInPlace mode, how far forward (cm towards camera) the focused model shifts from the wall. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | World In-Place")
@@ -367,6 +376,7 @@ private:
     void UpdateWorldInPlaceModelPosition();
     void UpdateWorldInPlaceDOF();
     void WIP_ApplyDoF();            // focal distance = WIP_CurrentViewDist
+    void WIP_UpdateWallOcclusion(); // dynamically hide wall components blocking camera while keeping CastHiddenShadow=true
     FVector WIP_GetFocusPivotWorld() const; // world-space pivot location (GetComponentLocation) of focused mesh
     void WIP_ApplyCurrentRotation(); // reconstruct MeshRoot pose from accumulated Yaw/Pitch
 
@@ -375,30 +385,30 @@ private:
     float WorldInPlacePitch = 0.f;
     float WorldInPlaceZoomOffset = 0.f;  // kept for ABI compatibility, unused
 
-    // ── WorldInPlace: captured once at SetFocusComponent, used by Rotate / Zoom / DoF ──
-    FVector  WIP_CameraWorldLoc  = FVector::ZeroVector;
-    FVector  WIP_CameraForward   = FVector(1.f, 0.f, 0.f);
-    FVector  WIP_CameraRight     = FVector(0.f, 1.f, 0.f);
-    float    WIP_CurrentViewDist = 180.f;
-    float    WIP_InitialViewDist = 180.f;
+    // ── WorldInPlace Camera Orbit State (Camera orbits around static model's Bounds.Origin) ──
+    FVector  WIP_FocusPivotWorld   = FVector::ZeroVector; // TargetComponent->Bounds.Origin
+    FRotator WIP_InitialOrbitRot   = FRotator::ZeroRotator;// Initial camera-to-pivot orbit rotation
+    float    WIP_MeshBoundsRadius  = 100.f;               // TargetComponent->Bounds.SphereRadius
+    float    WIP_CurrentViewDist   = 180.f;               // Current arm length
+    float    WIP_InitialViewDist   = 180.f;               // Initial arm length (Radius * 2.5)
 
-    // ── WorldInPlace "zero rotation" reference state ────────────────────────
-    // MeshRoot location, rotation and model center at zero Yaw/Pitch (may shift with zoom).
-    // WIP_ApplyCurrentRotation() always rotates FROM these — no drift possible.
-    FVector WIP_MeshPivotWorld     = FVector::ZeroVector; // model aggregate bounds center at zero rot
-    FVector WIP_MeshRootLocAtReset = FVector::ZeroVector; // MeshRoot origin at zero rot
-    FQuat   WIP_InitialMeshRootQuat = FQuat::Identity;    // MeshRoot world rotation at activation
-    FVector WIP_InitialMeshPivot   = FVector::ZeroVector; // pivot at SetFocusComponent time
-    FVector WIP_InitialMeshRootLoc = FVector::ZeroVector; // root loc at SetFocusComponent time
-
-    // Kept for ABI
+    // Kept for ABI compatibility
+    FVector  WIP_CameraWorldLoc           = FVector::ZeroVector;
+    FVector  WIP_CameraForward            = FVector(1.f, 0.f, 0.f);
+    FVector  WIP_CameraRight              = FVector(0.f, 1.f, 0.f);
+    FVector  WIP_MeshPivotWorld           = FVector::ZeroVector;
+    FVector  WIP_MeshRootLocAtReset       = FVector::ZeroVector;
+    FQuat    WIP_InitialMeshRootQuat      = FQuat::Identity;
+    FVector  WIP_InitialMeshPivot         = FVector::ZeroVector;
+    FVector  WIP_InitialMeshRootLoc       = FVector::ZeroVector;
     FVector  WIP_InitialSpringArmWorldLoc = FVector::ZeroVector;
     FRotator WIP_InitialSpringArmWorldRot = FRotator::ZeroRotator;
 
     // Character whose mesh we hid on entry — restored in EndPlay.
-    // NOTE: plain TWeakObjectPtr without UPROPERTY is intentional;
-    // UPROPERTY() + TWeakObjectPtr causes a compile error in UE5.
     TWeakObjectPtr<ACharacter> WIP_CachedCharacter;
+
+    // Room wall components hidden during ViewMode — restored in EndPlay.
+    TArray<TWeakObjectPtr<UPrimitiveComponent>> WIP_CachedHiddenWallComponents;
 
     TWeakObjectPtr<class ADirectionalLight> CachedDirectionalLight;
 
