@@ -233,7 +233,8 @@ private:
     float    WIP_InitialViewDist  = 180.f;
 
     // ── Scene restore ──────────────────────────────────────────────────────
-    TWeakObjectPtr<ACharacter>  WIP_CachedCharacter;
+    TWeakObjectPtr<ACharacter>      WIP_CachedCharacter;
+    TWeakObjectPtr<AShowroomBooth>  WIP_CachedSourceBooth;
     TArray<TWeakObjectPtr<UPrimitiveComponent>> WIP_CachedHiddenWallComponents;
 
     UPROPERTY()

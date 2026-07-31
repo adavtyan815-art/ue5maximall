@@ -11,6 +11,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
+#include "Engine/OverlapResult.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -134,12 +135,20 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
         WIP_CachedCharacter.Reset();
     }
 
+    // ── Restore source showroom booth actor in level ───────────────────────
+    if (WIP_CachedSourceBooth.IsValid())
+    {
+        WIP_CachedSourceBooth->SetActorHiddenInGame(false);
+        WIP_CachedSourceBooth.Reset();
+    }
+
     // ── Restore all world components that were hidden during preview ───────
     for (const TWeakObjectPtr<UPrimitiveComponent>& CompPtr : WIP_CachedHiddenWallComponents)
     {
         if (CompPtr.IsValid())
         {
             CompPtr->SetVisibility(true);
+            CompPtr->SetCastShadow(true);
         }
     }
     WIP_CachedHiddenWallComponents.Empty();
@@ -151,6 +160,7 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
         {
             C->SetRenderCustomDepth(false);
             C->SetCastShadow(bDefaultShadow);
+            C->SetCastHiddenShadow(false);
         }
     };
     RestoreState(CabinetMesh.Get(),          CabinetConfig.bCastShadow);
@@ -175,6 +185,12 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
                                                 const FShowroomBoothConfigState& ActiveState,
                                                 AShowroomBooth* SourceBooth)
 {
+    // Hide the real booth actor in the level while preview is active to avoid shadow overlap.
+    if (IsValid(SourceBooth))
+    {
+        WIP_CachedSourceBooth = SourceBooth;
+        SourceBooth->SetActorHiddenInGame(true);
+    }
     if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeTransform(FTransform::Identity);
@@ -357,6 +373,7 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
             const bool bFinalVisibility = bShow && bHasMesh;
             C->SetVisibility(bFinalVisibility);
             C->SetCastShadow(bFinalVisibility ? bCastShadow : false);
+            C->SetCastHiddenShadow(false);
         }
     };
 
@@ -540,8 +557,8 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (!IsValid(SpringArm)) { return; }
 
-    WorldInPlaceYaw   += (-DeltaYaw);
-    WorldInPlacePitch  = FMath::Clamp(WorldInPlacePitch + (-DeltaPitch), -80.f, 80.f);
+    WorldInPlaceYaw   += DeltaYaw;
+    WorldInPlacePitch  = FMath::Clamp(WorldInPlacePitch + DeltaPitch, -80.f, 80.f);
 
     FRotator OrbitRot  = WIP_InitialOrbitRot;
     OrbitRot.Yaw      += WorldInPlaceYaw;
@@ -688,7 +705,8 @@ void AFurniturePreviewActor::WIP_UpdateWallOcclusion()
             continue;
         }
 
-        Comp->SetCastHiddenShadow(true);
+        Comp->SetCastHiddenShadow(false);
+        Comp->SetCastShadow(false);
         Comp->SetVisibility(false);
         WIP_CachedHiddenWallComponents.AddUnique(Comp);
     }
