@@ -1,4 +1,4 @@
-﻿//
+//
 // Created by Siqi Wu on 1/17/25.
 //
 
@@ -111,20 +111,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Actor Class"))
     TSubclassOf<AFurniturePreviewActor> PreviewActorClass;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Staging Location"))
-    FVector PreviewStagingLocation = FVector(0.f, 0.f, 10000.f);
-
-     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Orbit Sensitivity", ClampMin = "0.1", ClampMax = "10.0"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Orbit Sensitivity", ClampMin = "0.1", ClampMax = "10.0"))
     float OrbitSensitivity = 1.f;
 
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Double-Click Threshold (s)", ClampMin = "0.1", ClampMax = "2.0"))
     float DoubleClickThreshold = 0.5f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Backdrop Static Mesh"))
-    TSoftObjectPtr<UStaticMesh> BackdropMeshAsset;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Backdrop Material"))
-    TSoftObjectPtr<UMaterialInterface> BackdropMaterialAsset;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
     TSubclassOf<UUserWidget> MainWidgetClass;

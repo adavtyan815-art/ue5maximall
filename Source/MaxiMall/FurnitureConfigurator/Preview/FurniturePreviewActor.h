@@ -1,19 +1,18 @@
 // Copyright MaxiMall Project. All Rights Reserved.
 // FurniturePreviewActor.h
 //
-// AFurniturePreviewActor — The private, client-local actor used in the
-// isolated 3D furniture preview viewport.
+// AFurniturePreviewActor — Client-local WorldInPlace preview actor.
 //
-// KEY GUARANTEE: This actor is NEVER replicated to the server or other clients.
-// It is spawned exclusively by AMaxiMallPreviewController on the owning client,
-// with bReplicates = false hard-coded in the constructor.
+// KEY GUARANTEE: bReplicates = false hard-coded. Spawned exclusively by
+// AMaxiMallPreviewController on the owning client at the SourceBooth location.
 //
-// Architecture:
-//   - Exposes the same visual mesh components as AShowroomBooth, driven directly
-//     from a local snapshot of FFurnitureProductRow data.
-//   - No Server RPCs exist. All functions are local-only.
-//   - Orbit/inspect rotation is driven by the player controller — the actor
-//     exposes RotatePreview(DeltaYaw, DeltaPitch).
+// Architecture (WorldInPlace only):
+//   - Mirrors the AShowroomBooth mesh layout driven from a local product snapshot.
+//   - Camera ORBITS around the focused mesh via SpringArm.
+//   - Component isolation: only the focused mesh group is visible during preview.
+//   - Stencil-250 CustomDepth isolation dims the background via PP material.
+//   - Wall occlusion: one-shot sphere overlap at SetFocusComponent time hides
+//     all world geometry within the max orbit radius, restoring it on EndPlay.
 //
 // Compatible: UE 5.3 → UE 5.6+
 
@@ -27,137 +26,53 @@
 class UStaticMeshComponent;
 class USpringArmComponent;
 class UCameraComponent;
-class USpotLightComponent;
-class UPointLightComponent;
-class USkyLightComponent;
 class ACharacter;
-class USkeletalMeshComponent;
+class AShowroomBooth;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-Component Preview Configuration
+// Assign one of these per furniture component type in BP_FurniturePreviewActor.
+// ─────────────────────────────────────────────────────────────────────────────
 
 USTRUCT(BlueprintType)
-struct FFurniturePreviewLightingConfig
+struct FPreviewComponentConfig
 {
     GENERATED_BODY()
 
-    /** Focus distance of the camera for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-    float FocusDistance = 250.f;
+    /**
+     * Minimum spring-arm length (cm).
+     * Prevents the camera from clipping through the mesh on close zoom.
+     * Tune per-component based on the mesh's physical depth.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zoom",
+              meta = (DisplayName = "Min Zoom Distance (cm)", ClampMin = "5.0", ClampMax = "300.0", UIMin = "5.0", UIMax = "300.0"))
+    float MinZoomDistance = 40.f;
 
-    /** Field of view of the camera for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-    float CameraFOV = 65.f;
+    /**
+     * Maximum spring-arm length (cm).
+     * Also defines the radius of the one-shot wall-hide sphere:
+     * all world geometry within this distance + 100cm from the mesh pivot
+     * will be hidden for the entire duration of the preview.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zoom",
+              meta = (DisplayName = "Max Zoom Distance (cm)", ClampMin = "50.0", ClampMax = "1000.0", UIMin = "50.0", UIMax = "1000.0"))
+    float MaxZoomDistance = 400.f;
 
-    /** Default pitch angle of camera for this component section (negative = looking down). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-    float Pitch = -15.f;
-
-    /** Default yaw angle of camera for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-    float Yaw = 0.f;
-
-    /** Minimum pitch angle limit for camera orbit (in degrees). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-    float PitchMin = -80.f;
-
-    /** Maximum pitch angle limit for camera orbit (in degrees). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-    float PitchMax = 80.f;
-
-    /** Minimum distance the camera can zoom in. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-    float ZoomMin = 100.f;
-
-    /** Maximum distance the camera can zoom out. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-    float ZoomMax = 500.f;
-
-    /** Enable/disable shadow casting for this component mesh. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shadows")
+    /** Whether the focused mesh casts real-time shadows during the preview. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting",
+              meta = (DisplayName = "Cast Shadow"))
     bool bCastShadow = true;
-
-    /** Toggle Key Light on/off for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Toggles")
-    bool bEnableKeyLight = true;
-
-    /** Toggle Fill Light on/off for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Toggles")
-    bool bEnableFillLight = true;
-
-    /** Toggle Rim Light on/off for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Toggles")
-    bool bEnableRimLight = true;
-
-    /** Key light intensity for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities")
-    float KeyLightIntensity = 80000.f;
-
-    /** Fill light intensity for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities")
-    float FillLightIntensity = 10000.f;
-
-    /** Rim light intensity for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities")
-    float RimLightIntensity = 30000.f;
-
-    /** Sky light (ambient environment reflection) intensity for metals/gold/chrome. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities")
-    float SkyLightIntensity = 1.0f;
-
-    /** Sun light (Directional Light) scale for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities", meta = (ClampMin = "0.0", ClampMax = "10.0"))
-    float DirectionalLightScale = 1.0f;
-
-    /** Master global intensity scale applied to all preview lights simultaneously for this section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Intensities", meta = (ClampMin = "0.0", ClampMax = "10.0"))
-    float MasterLightIntensityScale = 1.0f;
-
-    /** Color of the key light for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
-    FLinearColor KeyLightColor = FLinearColor::White;
-
-    /** Color of the fill light for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
-    FLinearColor FillLightColor = FLinearColor::White;
-
-    /** Color of the rim light for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
-    FLinearColor RimLightColor = FLinearColor::White;
-
-    /** Color of the sky light ambient reflection for this component section. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Colors")
-    FLinearColor SkyLightColor = FLinearColor::White;
-
-    /** Optional HDRI Studio Cubemap texture to give metals (gold, chrome, brass) high-contrast reflection highlights. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
-    TSoftObjectPtr<class UTextureCube> StudioCubemap;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
-    FVector KeyLightLocation = FVector(-300.f, -300.f, 300.f);
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
-    float KeyLightInnerConeAngle = 30.f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
-    float KeyLightOuterConeAngle = 50.f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
-    float AttenuationRadius = 1000.f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
-    float ShadowBias = 0.02f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
-    float ShadowSlopeBias = 0.02f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
-    float ContactShadowLength = 0.05f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting Advanced")
-    float KeyLightSourceRadius = 15.f;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AFurniturePreviewActor
+// ─────────────────────────────────────────────────────────────────────────────
+
 UCLASS(Blueprintable, BlueprintType, NotPlaceable,
-       HideCategories = (Rendering, Physics, Collision, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData),
-       meta = (DisplayName = "Furniture Preview Actor (Client Only)"))
+       HideCategories = (Rendering, Physics, Collision, Lighting, HLOD, Navigation, Input,
+                         ActorTick, ComponentTick, LOD, Cooking, Replication, Tags,
+                         TextureStreaming, RayTracing, PathTracing, AssetUserData),
+       meta = (DisplayName = "Furniture Preview Actor (World In-Place)"))
 class MAXIMALL_API AFurniturePreviewActor : public AActor
 {
     GENERATED_BODY()
@@ -166,12 +81,10 @@ public:
 
     AFurniturePreviewActor();
 
-    // ── Lifecycle ─────────────────────────────────────────────────────────
+    // ── Lifecycle ──────────────────────────────────────────────────────────
     virtual void BeginPlay() override;
-    virtual void Tick(float DeltaTime) override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-    virtual void PostInitializeComponents() override;
-    virtual void OnConstruction(const FTransform& Transform) override;
+    // Tick is disabled (PrimaryActorTick.bCanEverTick = false).
 
     // ─────────────────────────────────────────────────────────────────────
     // VISUAL COMPONENTS
@@ -180,7 +93,7 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USceneComponent> PreviewRoot;
 
-    /** Dynamic pivot root component for rotating furniture meshes. */
+    /** Pivot scene root parenting all furniture mesh components. */
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USceneComponent> MeshRoot;
 
@@ -214,142 +127,123 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot1;
 
-    /** SpringArm component to handle orbit distance and rotation. */
+    /** SpringArm driving camera orbit around WIP_FocusPivotWorld. */
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USpringArmComponent> SpringArm;
 
-    /** Camera component to render the high quality viewport. */
+    /** Camera attached to the SpringArm socket. */
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UCameraComponent> Camera;
 
-    /** Backdrop mesh component for the clean studio background. */
-    UPROPERTY(BlueprintReadOnly, Category = "Components")
-    TObjectPtr<UStaticMeshComponent> BackdropMesh;
-
-    /** Key Light spotlight (attached to SpringArm for consistent view-angle lighting). */
-    UPROPERTY(BlueprintReadOnly, Category = "Components")
-    TObjectPtr<USpotLightComponent> KeyLight;
-
-    /** Camera-mounted Fill Light pointlight. */
-    UPROPERTY(BlueprintReadOnly, Category = "Components")
-    TObjectPtr<UPointLightComponent> FillLight;
-
-    /** Rim / Back Light spotlight (placed behind model to separate from backdrop). */
-    UPROPERTY(BlueprintReadOnly, Category = "Components")
-    TObjectPtr<USpotLightComponent> RimLight;
-
-    /** Studio Sky Light component to provide rich HDRI ambient reflections for metals (gold, chrome, brass). */
-    UPROPERTY(BlueprintReadOnly, Category = "Components")
-    TObjectPtr<USkyLightComponent> SkyLight;
-
     // ─────────────────────────────────────────────────────────────────────
-    // SECTION PROFILES (Fully encapsulated settings per model/section)
+    // PREVIEW CONFIG
     // ─────────────────────────────────────────────────────────────────────
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    FFurniturePreviewLightingConfig CabinetLighting;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    FFurniturePreviewLightingConfig ClosetLighting;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    FFurniturePreviewLightingConfig CountertopLighting;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    FFurniturePreviewLightingConfig SinkLighting;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    FFurniturePreviewLightingConfig FaucetLighting;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    FFurniturePreviewLightingConfig MirrorLighting;
-
-    /** Active viewmode mode strategy (Isolated Studio vs World In-Place). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
-    EPreviewViewportMode ViewportMode = EPreviewViewportMode::IsolatedStudio;
-
-    /** Post process material template for Stencil 250 background isolation/fade. */
+    /** Post process material template for Stencil-250 background isolation.
+     *  Assign MI_StencilIsolation in BP_FurniturePreviewActor. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config")
     TObjectPtr<UMaterialInterface> StencilIsolationMaterialParent;
 
-    /** Dynamic material instance used for stencil 250 background isolation. */
+    /** Runtime MID created from StencilIsolationMaterialParent. */
     UPROPERTY()
     TObjectPtr<UMaterialInstanceDynamic> StencilIsolationMID;
 
-    /** In WorldInPlace mode, how far forward (cm towards camera) the focused model shifts from the wall. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | World In-Place")
-    float WorldInPlaceForwardOffset = 40.0f;
+    // ── Per-Component Configuration ────────────────────────────────────────
+    // Set MinZoomDistance / MaxZoomDistance / bCastShadow per component in
+    // the BP_FurniturePreviewActor Details panel.
 
-    /** In WorldInPlace mode, Depth of Field F-Stop for background blur (lower = blurrier background, 1.2 is soft cinematic blur). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | World In-Place")
-    float WorldInPlaceBackgroundBlurFstop = 1.2f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Components",
+              meta = (DisplayName = "Cabinet"))
+    FPreviewComponentConfig CabinetConfig;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Components",
+              meta = (DisplayName = "Closet"))
+    FPreviewComponentConfig ClosetConfig;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Components",
+              meta = (DisplayName = "Countertop"))
+    FPreviewComponentConfig CountertopConfig;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Components",
+              meta = (DisplayName = "Sink"))
+    FPreviewComponentConfig SinkConfig;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Components",
+              meta = (DisplayName = "Faucet"))
+    FPreviewComponentConfig FaucetConfig;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Components",
+              meta = (DisplayName = "Mirror"))
+    FPreviewComponentConfig MirrorConfig;
 
     // ─────────────────────────────────────────────────────────────────────
     // PUBLIC API
     // ─────────────────────────────────────────────────────────────────────
 
-    /** Dynamically switch preview mode strategy at runtime. */
-    UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Viewport Mode"))
-    void SetViewportMode(EPreviewViewportMode NewMode);
-
     /** Applies a product snapshot locally. Rebuilds all mesh components. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Load Product Preview"))
-    void LoadProductPreview(const FFurnitureProductRow& ProductData, const FShowroomBoothConfigState& ActiveState, class AShowroomBooth* SourceBooth);
+    void LoadProductPreview(const FFurnitureProductRow& ProductData,
+                            const FShowroomBoothConfigState& ActiveState,
+                            AShowroomBooth* SourceBooth);
 
-    /** Inspect and focus the camera orbit around a specific model component. */
+    /**
+     * Isolates and focuses on a single component group.
+     * Handles:
+     *   1. Visibility isolation (hides all other mesh groups).
+     *   2. Stencil-250 CustomDepth on the focused group.
+     *   3. SpringArm repositioned to the focused mesh's bounds center.
+     *   4. Per-component zoom limits applied from the matching Config.
+     *   5. One-shot sphere overlap to hide all world geometry in the orbit volume.
+     */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Set Focus Component"))
     void SetFocusComponent(EFurnitureComponentType ComponentType);
 
-    /** Configures the static mesh and material for the studio background. */
-    UFUNCTION(BlueprintCallable, Category = "Preview | Control")
-    void SetupBackdrop(UStaticMesh* InMesh, UMaterialInterface* InMaterial);
-
-    /** Rotates the preview camera around its target. */
+    /** Orbits the camera around the focused mesh. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Rotate Preview"))
     void RotatePreview(float DeltaYaw, float DeltaPitch);
 
-    /** Resets the preview rotation to the default facing angle. */
+    /** Resets camera orbit to the initial facing angle and zoom. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Reset Preview Rotation"))
     void ResetRotation();
 
-    /** Initializes the starting and default rotation for the preview camera. */
-    UFUNCTION(BlueprintCallable, Category = "Preview | Control",
-              meta = (DisplayName = "Set Initial Rotation"))
-    void SetInitialRotation(float InYaw, float InPitch);
-
-    /** Zooms the camera by adjusting the SpringArm TargetArmLength. */
+    /** Adjusts the SpringArm TargetArmLength, clamped by the active component's config. */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Zoom Preview"))
     void ZoomPreview(float DeltaZoom);
 
-    /** Dynamically toggles Key Light for current active profile. */
-    UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Key Light Enabled"))
-    void SetKeyLightEnabled(bool bEnable);
-
-    /** Dynamically toggles Fill Light for current active profile. */
-    UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Fill Light Enabled"))
-    void SetFillLightEnabled(bool bEnable);
-
-    /** Dynamically toggles Rim Light for current active profile. */
-    UFUNCTION(BlueprintCallable, Category = "Preview | Control", meta = (DisplayName = "Set Rim Light Enabled"))
-    void SetRimLightEnabled(bool bEnable);
-
 private:
 
-    FFurniturePreviewLightingConfig ActiveConfig;
+    // ── Active zoom limits (set from the focused component's FPreviewComponentConfig) ──
+    float ActiveMinZoom = 30.f;
+    float ActiveMaxZoom = 400.f;
 
-    float CurrentZoomLength = 250.f;
-    float CurrentYaw   = 0.f;
-    float CurrentPitch = 0.f;
-    float DefaultYaw = 0.f;
-    float DefaultPitch = -15.f;
+    // ── Orbit state ────────────────────────────────────────────────────────
+    float CurrentZoomLength   = 180.f;
+    float WorldInPlaceYaw     = 0.f;
+    float WorldInPlacePitch   = 0.f;
 
-    float ActiveBaseFillIntensity = 10000.f;
-    float ReferenceZoomDistance = 250.f;
+    FVector  WIP_FocusPivotWorld  = FVector::ZeroVector;
+    FRotator WIP_InitialOrbitRot  = FRotator::ZeroRotator;
+    float    WIP_MeshBoundsRadius = 100.f;
+    float    WIP_CurrentViewDist  = 180.f;
+    float    WIP_InitialViewDist  = 180.f;
+
+    // ── Scene restore ──────────────────────────────────────────────────────
+    TWeakObjectPtr<ACharacter>  WIP_CachedCharacter;
+    TArray<TWeakObjectPtr<UPrimitiveComponent>> WIP_CachedHiddenWallComponents;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
+
+    // ── Private helpers ────────────────────────────────────────────────────
+    FVector WIP_GetFocusPivotWorld() const;
+    void    WIP_ApplyStencilIsolation();
+    void    WIP_UpdateWallOcclusion();   // One-shot sphere overlap. Called from SetFocusComponent.
+    void    ConfigureMesh(UStaticMeshComponent* Comp) const;
 
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                         const FFurnitureComponentOptions& Options,
@@ -366,53 +260,4 @@ private:
                                    int32 SizeIndex,
                                    int32 ColorIndex,
                                    int32 SlotIndex);
-
-    void UpdateLightIntensityForZoom();
-    void EnforceLightingSettings();
-    void ApplyLightingConfig(const FFurniturePreviewLightingConfig& Config);
-    void ApplyDirectionalLightScale();
-    void RestoreDirectionalLight();
-    void ApplyWorldPostProcessSettings();
-    void UpdateWorldInPlaceModelPosition();
-    void UpdateWorldInPlaceDOF();
-    void WIP_ApplyDoF();            // focal distance = WIP_CurrentViewDist
-    void WIP_UpdateWallOcclusion(); // dynamically hide wall components blocking camera while keeping CastHiddenShadow=true
-    FVector WIP_GetFocusPivotWorld() const; // world-space pivot location (GetComponentLocation) of focused mesh
-    void WIP_ApplyCurrentRotation(); // reconstruct MeshRoot pose from accumulated Yaw/Pitch
-
-    float SavedDirectionalLightIntensity = -1.f;
-    float WorldInPlaceYaw   = 0.f;
-    float WorldInPlacePitch = 0.f;
-    float WorldInPlaceZoomOffset = 0.f;  // kept for ABI compatibility, unused
-
-    // ── WorldInPlace Camera Orbit State (Camera orbits around static model's Bounds.Origin) ──
-    FVector  WIP_FocusPivotWorld   = FVector::ZeroVector; // TargetComponent->Bounds.Origin
-    FRotator WIP_InitialOrbitRot   = FRotator::ZeroRotator;// Initial camera-to-pivot orbit rotation
-    float    WIP_MeshBoundsRadius  = 100.f;               // TargetComponent->Bounds.SphereRadius
-    float    WIP_CurrentViewDist   = 180.f;               // Current arm length
-    float    WIP_InitialViewDist   = 180.f;               // Initial arm length (Radius * 2.5)
-
-    // Kept for ABI compatibility
-    FVector  WIP_CameraWorldLoc           = FVector::ZeroVector;
-    FVector  WIP_CameraForward            = FVector(1.f, 0.f, 0.f);
-    FVector  WIP_CameraRight              = FVector(0.f, 1.f, 0.f);
-    FVector  WIP_MeshPivotWorld           = FVector::ZeroVector;
-    FVector  WIP_MeshRootLocAtReset       = FVector::ZeroVector;
-    FQuat    WIP_InitialMeshRootQuat      = FQuat::Identity;
-    FVector  WIP_InitialMeshPivot         = FVector::ZeroVector;
-    FVector  WIP_InitialMeshRootLoc       = FVector::ZeroVector;
-    FVector  WIP_InitialSpringArmWorldLoc = FVector::ZeroVector;
-    FRotator WIP_InitialSpringArmWorldRot = FRotator::ZeroRotator;
-
-    // Character whose mesh we hid on entry — restored in EndPlay.
-    TWeakObjectPtr<ACharacter> WIP_CachedCharacter;
-
-    // Room wall components hidden during ViewMode — restored in EndPlay.
-    TArray<TWeakObjectPtr<UPrimitiveComponent>> WIP_CachedHiddenWallComponents;
-
-    TWeakObjectPtr<class ADirectionalLight> CachedDirectionalLight;
-
-    UPROPERTY()
-    TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
 };
-

@@ -47,9 +47,7 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
     MainWidgetInstance = nullptr;
     ViewmodeOverlayInstance = nullptr;
 
-    // Set default fallback asset paths
-    BackdropMeshAsset = FSoftObjectPath(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    BackdropMaterialAsset = FSoftObjectPath(TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+
 
     // Create the Pixel Streaming Input component
     PixelStreamingInput = CreateDefaultSubobject<UPixelStreamingInput>(TEXT("PixelStreamingInputComponent"));
@@ -441,20 +439,13 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
 
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
-    FVector TargetSpawnLocation = PreviewStagingLocation;
+    // Always spawn at the real-world booth location for WorldInPlace orbit.
     FRotator SpawnRotation = FRotator::ZeroRotator;
     if (TargetBooth)
     {
         SpawnRotation.Yaw = TargetBooth->GetActorRotation().Yaw;
     }
-
-    AFurniturePreviewActor* DefaultActorCDO = SpawnClass ? Cast<AFurniturePreviewActor>(SpawnClass->GetDefaultObject()) : nullptr;
-    const EPreviewViewportMode EffectiveMode = DefaultActorCDO ? DefaultActorCDO->ViewportMode : EPreviewViewportMode::IsolatedStudio;
-
-    if (EffectiveMode == EPreviewViewportMode::WorldInPlace && TargetBooth)
-    {
-        TargetSpawnLocation = TargetBooth->GetActorLocation();
-    }
+    const FVector TargetSpawnLocation = TargetBooth ? TargetBooth->GetActorLocation() : FVector::ZeroVector;
 
     ActivePreviewActor = World->SpawnActor<AFurniturePreviewActor>(
         SpawnClass,
@@ -468,115 +459,16 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         return;
     }
 
-    HiddenActors.Empty();
-    if (ActivePreviewActor->ViewportMode == EPreviewViewportMode::IsolatedStudio)
-    {
-        for (TActorIterator<AActor> It(World); It; ++It)
-        {
-            AActor* Actor = *It;
-            if (Actor && Actor != this && Actor != GetPawn() && Actor != ActivePreviewActor)
-            {
-                HiddenActors.Add(Actor);
-            }
-        }
-    }
-
     ActivePreviewActor->LoadProductPreview(ProductSnapshot, TargetBooth->ActiveState, TargetBooth);
 
-    if (CurrentTargetComponent != EFurnitureComponentType::None)
-    {
-        if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
-        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(false);
-        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(false);
-        if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(false);
-        if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(false);
-        if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
-        if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
-        if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
-        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(false);
-        if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(false);
-
-        switch (CurrentTargetComponent)
-        {
-        case EFurnitureComponentType::Cabinet:
-            if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
-            if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
-            {
-                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-            }
-            else if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::TwoDoors)
-            {
-                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
-            }
-            break;
-        case EFurnitureComponentType::Closet:
-            if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
-            if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::OneDoor)
-            {
-                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
-            }
-            else if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::TwoDoors)
-            {
-                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
-                if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(true);
-            }
-            break;
-        case EFurnitureComponentType::Doors:
-            if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
-            {
-                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-            }
-            else if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::TwoDoors)
-            {
-                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
-            }
-            if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::OneDoor)
-            {
-                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
-            }
-            else if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::TwoDoors)
-            {
-                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
-                if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(true);
-            }
-            break;
-        case EFurnitureComponentType::Countertop:
-            if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
-            break;
-        case EFurnitureComponentType::Sink:
-            if (CurrentTargetBooth && CurrentTargetBooth->GetActiveCountertopType() == ECountertopType::SurfaceMounted)
-            {
-                if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
-            }
-            break;
-        case EFurnitureComponentType::Faucet:
-            if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(true);
-            break;
-        case EFurnitureComponentType::Mirror:
-            if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(true);
-            break;
-        default:
-            break;
-        }
-    }
-
+    // Component isolation and camera pivot are handled entirely inside SetFocusComponent.
     if (CurrentTargetComponent != EFurnitureComponentType::None)
     {
         ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);
     }
 
-    float InitialYaw = FRotator::NormalizeAxis(SavedControlRotation.Yaw - SpawnRotation.Yaw);
-    float InitialPitch = FRotator::NormalizeAxis(SavedControlRotation.Pitch);
-    ActivePreviewActor->SetInitialRotation(InitialYaw, InitialPitch);
-
     CurrentTargetBooth = TargetBooth;
     CurrentTargetBooth->OnProductChanged.AddDynamic(this, &AMaxiMallPreviewController::OnTargetBoothProductChanged);
-
-    UStaticMesh* LoadedBackdropMesh = BackdropMeshAsset.LoadSynchronous();
-    UMaterialInterface* LoadedBackdropMat = BackdropMaterialAsset.LoadSynchronous();
-    ActivePreviewActor->SetupBackdrop(LoadedBackdropMesh, LoadedBackdropMat);
 
     SetViewTargetWithBlend(ActivePreviewActor, 0.0f);
 
@@ -986,85 +878,7 @@ void AMaxiMallPreviewController::OnTargetBoothProductChanged(AShowroomBooth* Boo
         {
             ActivePreviewActor->LoadProductPreview(ProductSnapshot, Booth->ActiveState, Booth);
 
-            if (CurrentTargetComponent != EFurnitureComponentType::None)
-            {
-                if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(false);
-                if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(false);
-                if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(false);
-                if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(false);
-                if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(false);
-                if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(false);
-                if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(false);
-                if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(false);
-                if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(false);
-                if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(false);
-
-                switch (CurrentTargetComponent)
-                {
-                case EFurnitureComponentType::Cabinet:
-                    if (ActivePreviewActor->CabinetMesh) ActivePreviewActor->CabinetMesh->SetVisibility(true);
-                    if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
-                    {
-                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-                    }
-                    else if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::TwoDoors)
-                    {
-                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-                        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
-                    }
-                    break;
-                case EFurnitureComponentType::Closet:
-                    if (ActivePreviewActor->ClosetMesh) ActivePreviewActor->ClosetMesh->SetVisibility(true);
-                    if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::OneDoor)
-                    {
-                        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
-                    }
-                    else if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::TwoDoors)
-                    {
-                        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
-                        if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(true);
-                    }
-                    break;
-                case EFurnitureComponentType::Doors:
-                    if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::OneDoor)
-                    {
-                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-                    }
-                    else if (ProductSnapshot.DoorsConfig.CabinetDoors.DoorCount == EDoorCount::TwoDoors)
-                    {
-                        if (ActivePreviewActor->DoorMeshSlot0) ActivePreviewActor->DoorMeshSlot0->SetVisibility(true);
-                        if (ActivePreviewActor->DoorMeshSlot1) ActivePreviewActor->DoorMeshSlot1->SetVisibility(true);
-                    }
-                    if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::OneDoor)
-                    {
-                        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
-                    }
-                    else if (ProductSnapshot.DoorsConfig.ClosetDoors.DoorCount == EDoorCount::TwoDoors)
-                    {
-                        if (ActivePreviewActor->ClosetDoorMeshSlot0) ActivePreviewActor->ClosetDoorMeshSlot0->SetVisibility(true);
-                        if (ActivePreviewActor->ClosetDoorMeshSlot1) ActivePreviewActor->ClosetDoorMeshSlot1->SetVisibility(true);
-                    }
-                    break;
-                case EFurnitureComponentType::Countertop:
-                    if (ActivePreviewActor->CountertopMesh) ActivePreviewActor->CountertopMesh->SetVisibility(true);
-                    break;
-                case EFurnitureComponentType::Sink:
-                    if (CurrentTargetBooth && CurrentTargetBooth->GetActiveCountertopType() == ECountertopType::SurfaceMounted)
-                    {
-                        if (ActivePreviewActor->SinkMesh) ActivePreviewActor->SinkMesh->SetVisibility(true);
-                    }
-                    break;
-                case EFurnitureComponentType::Faucet:
-                    if (ActivePreviewActor->FaucetMesh) ActivePreviewActor->FaucetMesh->SetVisibility(true);
-                    break;
-                case EFurnitureComponentType::Mirror:
-                    if (ActivePreviewActor->MirrorMesh) ActivePreviewActor->MirrorMesh->SetVisibility(true);
-                    break;
-                default:
-                    break;
-                }
-            }
-
+            // Isolation and camera pivot handled inside SetFocusComponent.
             if (CurrentTargetComponent != EFurnitureComponentType::None)
             {
                 ActivePreviewActor->SetFocusComponent(CurrentTargetComponent);

@@ -88,18 +88,7 @@ enum class EFaucetType : uint8
     Integrated    UMETA(DisplayName = "Integrated (Wall/Counter-Integrated)"),
 };
 
-/**
- * Defines the rendering strategy for the 3D Preview Viewport.
- *
- * IsolatedStudio – Teleports model to isolated studio (Location 10000) with studio backdrop & HDRI reflection probes.
- * WorldInPlace   – Keeps model inside room booth (0 distance), rotates MeshRoot instead of camera, applies DOF blur.
- */
-UENUM(BlueprintType)
-enum class EPreviewViewportMode : uint8
-{
-    IsolatedStudio    UMETA(DisplayName = "Isolated Studio (Location 10000)"),
-    WorldInPlace      UMETA(DisplayName = "World In-Place (Room Booth with Model Rotation & Blur)"),
-};
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPPORTING SUB-STRUCTS
