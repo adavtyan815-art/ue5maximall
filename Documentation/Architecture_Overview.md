@@ -83,14 +83,29 @@ When the user enters the isolated inspection environment, the UI and viewport tr
 1. **Entering Viewmode**:
    * **Trigger**: Clicking the "Viewmode" button inside Widget 1.
    * **UI Transition**: Widget 1 is removed from the screen, and **Widget 2 (Viewmode Overlay)** is added. Widget 2 displays only a "Back" button, with no color/size selectors.
-   * **View Isolation**:
+   * **View Isolation (IsolatedStudio)**:
      * Spawns a client-side `AFurniturePreviewActor` at an off-camera staging location (`(0, 0, 10000)`) and copies the active product configuration onto it.
      * Restricts the viewport target to the private preview camera (`SetViewTargetWithBlend`).
      * Hides all other global showroom booths locally for the inspecting client only using `APlayerController::HiddenActors`. This ensures booths remain fully visible for other players in the session.
+   * **View Isolation (WorldInPlace)** *(E-Commerce Camera Orbit Mode)*:
+     * `SpringArm` is repositioned to `TargetComponent->Bounds.Origin` (real-world geometric center of the selected mesh).
+     * `SpringArm->bDoCollisionTest = false` — camera orbits freely 360° without wall collisions.
+     * Initial camera direction: `(FocusPivot - CharCamLoc).GetSafeNormal().Rotation()` so the camera spawns in the room facing the product.
+     * Adaptive initial distance: `MeshBoundsRadius × 2.5` (clamped 40–500 cm).
+     * Physical DoF lens blur is **disabled** (`bOverride_DepthOfField* = false`) so the product is 100% crystal sharp.
+     * Custom Depth Stencil 250 set on the focused product and sub-components (`SetRenderCustomDepth(true)`, `SetCustomDepthStencilValue(250)`).
+     * Dynamic Post-Process Material (`StencilIsolationMID`) bound to `Camera->PostProcessSettings.WeightedBlendables` to fade the background 80% while keeping the target product fully sharp.
+     * 100 cm sphere sweep (`SweepMultiByChannel`, `ECC_WorldStatic`) hides any wall behind the product; `SetCastHiddenShadow(true)` preserves room shadows.
+     * Player character mesh hidden on enter, restored on exit.
 2. **Exiting Viewmode**:
    * **Trigger**: Clicking the "Back" button inside Widget 2.
    * **UI Restoration**: Widget 2 is removed. The player controller restores **Widget 1** to the viewport, and calls `SetupWidget` to re-bind it to the active booth without losing target configuration state.
-   * **Resetting State**:
+   * **Resetting State (WorldInPlace)**:
+     * All hidden wall components restored (`SetVisibility(true)`).
+     * Custom Depth cleared (`SetRenderCustomDepth(false)`) on all furniture meshes.
+     * Post-Process MID removed from `Camera->PostProcessSettings.WeightedBlendables`.
+     * Player character mesh restored.
+   * **Resetting State (IsolatedStudio)**:
      * Restores view target to player pawn.
      * Clears `HiddenActors` to restore visibility of all showroom booths.
      * Restores mouse cursor focus and Game/UI input mode.

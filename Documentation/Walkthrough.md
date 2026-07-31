@@ -483,3 +483,64 @@ We have implemented dynamic category-specific lighting profiles, per-row mirror 
 - Rebuilt the project successfully via `UnrealBuildTool` in development mode:
   - Result: **Successful compilation** (completed with 0 errors/warnings).
 
+---
+
+## Update: E-Commerce Grade WorldInPlace ViewMode (Camera Orbit System)
+
+We implemented a complete, high-quality product inspection camera system for the `WorldInPlace` ViewMode. The selected mesh is displayed **100% crystal sharp** while the environment is dimmed. The model never moves in world space.
+
+### 1. Camera Orbit Around Static Mesh `Bounds.Origin`
+- **[FurniturePreviewActor.h](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/Preview/FurniturePreviewActor.h)** & **[FurniturePreviewActor.cpp](file:///C:/Users/Admin/Desktop/Aleg/UE5C++/MaxiMall/Source/MaxiMall/FurnitureConfigurator/Preview/FurniturePreviewActor.cpp)**:
+  - The furniture model (`MeshRoot`) remains **100% static in its real-world room position** at all times — no world-space movement or rotation.
+  - `SpringArm` is repositioned to `TargetComponent->Bounds.Origin` (the exact geometric center of the selected mesh).
+  - `SpringArm->bDoCollisionTest = false` allows free 360° camera orbit without wall collisions.
+
+### 2. Correct Initial Camera Spawn Direction
+- **Fix**: Initial `OrbitRot` calculated as `(FocusPivot - CharCamLoc).GetSafeNormal().Rotation()` so the camera always spawns **in the room in front of the object**, facing it — never inside the back wall.
+
+### 3. Adaptive Distance & Zoom
+- Initial distance: `MeshBoundsRadius × 2.5` (clamped 40–500 cm).
+- Zoom range: `MeshBoundsRadius × 0.8` (min) to `MeshBoundsRadius × 5.0` (max).
+- `SpringArm->UpdateChildTransforms()` called immediately on entry to force camera position sync.
+
+### 4. Physical DoF Lens Blur — DISABLED
+- All `bOverride_DepthOfField*` overrides explicitly set to `false`.
+- The selected product is **100% crystal sharp** at all times with zero blur.
+
+### 5. Custom Depth Stencil 250 — Target Product Isolation
+- `SetRenderCustomDepth(true)` and `SetCustomDepthStencilValue(250)` set on the focused product and all its sub-components (doors, countertop, sink, faucet for Cabinet; closet doors for Closet).
+- All other meshes have Custom Depth cleared to `false`.
+- Fully restored in `EndPlay()`.
+
+### 6. Dynamic Post-Process Material Binding
+- `StencilIsolationMaterialParent` exposed as `EditAnywhere` property for designers to assign a PPM template.
+- `StencilIsolationMID` created dynamically from parent with scalar params `IsolationFade = 0.8` and `TargetStencil = 250.0`.
+- MID automatically added to `Camera->PostProcessSettings.WeightedBlendables` on enter and removed in `EndPlay()`.
+- **PPM Setup**: Read `CustomStencil`; if `== 250` → pass through original color (100% sharp); if `!= 250` → multiply by 0.2 (80% fade/darken).
+
+### 7. Environment Vignette Fallback
+- `VignetteIntensity = 0.8f` applied as a secondary environment isolation mechanism.
+
+### 8. Wall Hiding — 100 cm Sphere Sweep Trace
+- `SweepMultiByChannel` (100 cm sphere, `ECC_WorldStatic`) sweeps from `FocusPivotWorld` to `Camera->GetComponentLocation()`.
+- Any non-furniture component hit: `SetCastHiddenShadow(true)` + `SetVisibility(false)` → preserves room shadows.
+- All hidden components cached in `WIP_CachedHiddenWallComponents`, restored in `EndPlay()`.
+
+### 9. Per-Frame Tick Updates
+- `PrimaryActorTick.bCanEverTick = true` enabled in constructor.
+- `Tick()` calls `WIP_ApplyDoF()` and `WIP_UpdateWallOcclusion()` every frame in `WorldInPlace` mode.
+
+### 10. Player Character Hiding & Restore
+- Character mesh hidden on enter via `UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)`, restored in `EndPlay()`.
+
+### 11. Lumen Metallic Reflection Enhancement
+- `LumenReflectionQuality = 2.0` overridden for high-quality Chrome/Gold/Brass reflections.
+
+### 12. Compilation Verification
+- Rebuilt the project successfully via `UnrealBuildTool` in development mode:
+  - Result: **Successful compilation** (completed with 0 errors/warnings).
+
+### 13. Git Synchronization
+- Staged, committed, and pushed all updates to `dev` and `main`.
+  - Remote: `https://github.com/adavtyan815-art/ue5maximall.git`
+  - Commit ID: `3617ad8`
