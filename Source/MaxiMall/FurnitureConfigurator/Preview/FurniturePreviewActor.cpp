@@ -295,6 +295,16 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
                                                 const FShowroomBoothConfigState& ActiveState,
                                                 AShowroomBooth* SourceBooth)
 {
+    // ── FIX 1: Studio SkyLight captured FIRST, before anything is hidden ──
+    // The SkyLight must see the full warm room (walls, ceiling, booth rect lights,
+    // world sun) to capture the correct warm ambient IBL that the furniture
+    // experiences in the main world. Capturing after hiding produces a grey void.
+    if (IsValid(PreviewSkyLight))
+    {
+        PreviewSkyLight->SetVisibility(true);
+        PreviewSkyLight->RecaptureSky();
+    }
+
     // Hide the real booth actor in the level while preview is active to avoid shadow overlap.
     if (IsValid(SourceBooth))
     {
@@ -349,17 +359,6 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
                 LightComp->SetIntensity(0.f);
             }
         }
-    }
-
-    // ── Studio SkyLight: one-shot scene capture ──────────────────────────
-    // Called here — AFTER the source booth is hidden (no booth mesh in capture)
-    // but BEFORE WIP_UpdateWallOcclusion (which runs in SetFocusComponent).
-    // This means the capture still sees ceiling/distant walls as ambient bounce
-    // sources, giving a naturalistic ambient rather than a pitch-black capture.
-    if (IsValid(PreviewSkyLight))
-    {
-        PreviewSkyLight->SetVisibility(true);
-        PreviewSkyLight->RecaptureSky();
     }
     if (IsValid(MeshRoot))
     {
@@ -683,18 +682,22 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     WIP_InitialViewDist = AdaptiveDist;
     CurrentZoomLength   = AdaptiveDist;
 
-    // ── 7. Derive initial orbit rotation from player camera ───────────────
-    FVector  CharCamLoc = GetActorLocation();
-    FRotator CharCamRot = FRotator::ZeroRotator;
-    if (GetWorld())
-    {
-        if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
-        {
-            PC->GetPlayerViewPoint(CharCamLoc, CharCamRot);
-        }
-    }
-    const FVector CamToPivot = (FocusPivot - CharCamLoc).GetSafeNormal();
-    WIP_InitialOrbitRot = CamToPivot.IsNearlyZero() ? CharCamRot : CamToPivot.Rotation();
+    // ── 7. FIX 2: Canonical initial orbit rotation (player-position-independent)
+    // Previously derived from the player camera's live world rotation, which caused
+    // the PreviewDirectionalLight (camera-attached) to point in a different world
+    // direction from every player position — producing color shifts and random
+    // shower shadows depending on where the client stood in the room.
+    //
+    // We now force a fixed canonical orientation: the camera always enters preview
+    // facing the mesh from world -Y (Yaw=0, looking toward +Y / "north" in UE coords).
+    // This means:
+    //   • PreviewDirectionalLight world direction = canonical + DLRelRot = identical every time.
+    //   • Color appearance of the cabinet is the same regardless of player position.
+    //   • Shower / room shadows are fully deterministic and can be tuned once.
+    //
+    // The user rotates the MESH (not the camera) during preview, so this fixed
+    // starting angle does not restrict 360° inspection.
+    WIP_InitialOrbitRot = FRotator(0.f, 0.f, 0.f); // Camera looks toward world +Y
 
     // ── 8. Position SpringArm at pivot ───────────────────────────────────
     if (IsValid(SpringArm))
