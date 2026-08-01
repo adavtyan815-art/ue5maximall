@@ -12,6 +12,8 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
 #include "Engine/OverlapResult.h"
+#include "Engine/RectLight.h"
+#include "Components/RectLightComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -98,6 +100,45 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
     Camera->PostProcessSettings.bOverride_AutoExposureMinBrightness = false;
     Camera->PostProcessSettings.bOverride_AutoExposureMaxBrightness = false;
+
+    // ── Preview Lighting Rig ──────────────────────────────────────────────
+    // Key: attached to Camera (orbits 1:1 with camera), local yaw=180° flips
+    //      the light's emission direction so it always faces toward the mesh.
+    PreviewKeyLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewKeyLight"));
+    PreviewKeyLight->SetupAttachment(Camera);
+    PreviewKeyLight->SetRelativeRotation(FRotator(0.f, 180.f, 0.f)); // face toward mesh
+    PreviewKeyLight->SetIntensity(800.f);
+    PreviewKeyLight->SetLightColor(FLinearColor::White);
+    PreviewKeyLight->SourceWidth  = 80.f;
+    PreviewKeyLight->SourceHeight = 100.f;
+    PreviewKeyLight->bUseTemperature = false;
+    PreviewKeyLight->SetCastShadows(false);
+    PreviewKeyLight->SetVisibility(false); // shown only during active preview
+
+    // Fill: attached to SpringArm pivot (local Pitch=+35°, Yaw=170°).
+    // Stays at the focus pivot and rotates as the SpringArm rotates,
+    // so it provides backfill from below/behind the camera orbit.
+    PreviewFillLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewFillLight"));
+    PreviewFillLight->SetupAttachment(SpringArm);
+    PreviewFillLight->SetRelativeRotation(FRotator(35.f, 170.f, 0.f));
+    PreviewFillLight->SetIntensity(320.f);
+    PreviewFillLight->SetLightColor(FLinearColor::White);
+    PreviewFillLight->SourceWidth  = 120.f;
+    PreviewFillLight->SourceHeight = 150.f;
+    PreviewFillLight->SetCastShadows(false);
+    PreviewFillLight->SetVisibility(false);
+
+    // Rim / Top: attached to SpringArm pivot, Pitch=−80° (pointing sharply downward).
+    // Acts as a top-down edge/rim light regardless of camera orbit angle.
+    PreviewRimLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewRimLight"));
+    PreviewRimLight->SetupAttachment(SpringArm);
+    PreviewRimLight->SetRelativeRotation(FRotator(-80.f, 0.f, 0.f));
+    PreviewRimLight->SetIntensity(200.f);
+    PreviewRimLight->SetLightColor(FLinearColor::White);
+    PreviewRimLight->SourceWidth  = 60.f;
+    PreviewRimLight->SourceHeight = 60.f;
+    PreviewRimLight->SetCastShadows(false);
+    PreviewRimLight->SetVisibility(false);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +215,21 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
     RestoreState(ClosetDoorMeshSlot0.Get(),  ClosetConfig.bCastShadow);
     RestoreState(ClosetDoorMeshSlot1.Get(),  ClosetConfig.bCastShadow);
 
+    // ── Hide preview lights ───────────────────────────────────────────────
+    if (IsValid(PreviewKeyLight))  { PreviewKeyLight->SetVisibility(false); }
+    if (IsValid(PreviewFillLight)) { PreviewFillLight->SetVisibility(false); }
+    if (IsValid(PreviewRimLight))  { PreviewRimLight->SetVisibility(false); }
+
+    // ── Restore hidden world Rect Light actors ────────────────────────────
+    for (const TWeakObjectPtr<AActor>& LightPtr : WIP_CachedWorldRectLights)
+    {
+        if (LightPtr.IsValid())
+        {
+            LightPtr->SetActorHiddenInGame(false);
+        }
+    }
+    WIP_CachedWorldRectLights.Empty();
+
     Super::EndPlay(EndPlayReason);
 }
 
@@ -190,6 +246,24 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     {
         WIP_CachedSourceBooth = SourceBooth;
         SourceBooth->SetActorHiddenInGame(true);
+    }
+
+    // ── Hide all world ARectLight actors ──────────────────────────────────
+    // Prevents world Rect Lights from double-lighting or color-contaminating
+    // the focused mesh. Only Rect Lights are toggled; all other light types
+    // (Directional, Point, Spot, Sky) are left completely untouched.
+    WIP_CachedWorldRectLights.Empty();
+    if (UWorld* W = GetWorld())
+    {
+        for (TActorIterator<ARectLight> It(W); It; ++It)
+        {
+            ARectLight* RLActor = *It;
+            if (IsValid(RLActor) && !RLActor->IsHidden())
+            {
+                WIP_CachedWorldRectLights.Add(RLActor);
+                RLActor->SetActorHiddenInGame(true);
+            }
+        }
     }
     if (IsValid(MeshRoot))
     {
@@ -545,7 +619,42 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // Must be called AFTER WIP_FocusPivotWorld and ActiveMaxZoom are set.
     WIP_UpdateWallOcclusion();
 
-    // ── 11. Stencil isolation post-process material ───────────────────────
+    // ── 11. Apply per-component preview lighting config ───────────────────
+    if (IsValid(PreviewKeyLight) && IsValid(PreviewFillLight) && IsValid(PreviewRimLight))
+    {
+        const float KeyIntensity   = Config ? Config->KeyLightIntensity   : 800.f;
+        const float FillRimMult    = Config ? Config->FillRimMultiplier   : 0.4f;
+        const FLinearColor LColor  = Config ? Config->LightColor          : FLinearColor::White;
+        const float SrcW           = Config ? Config->LightSourceWidth    : 80.f;
+        const float SrcH           = Config ? Config->LightSourceHeight   : 100.f;
+        const bool bCastShadows    = Config ? Config->bPreviewLightCastShadows : false;
+
+        // Key Light: camera-attached, user-configured intensity and shadow toggle.
+        PreviewKeyLight->SetIntensity(KeyIntensity);
+        PreviewKeyLight->SetLightColor(LColor);
+        PreviewKeyLight->SourceWidth  = SrcW;
+        PreviewKeyLight->SourceHeight = SrcH;
+        PreviewKeyLight->SetCastShadows(bCastShadows);
+        PreviewKeyLight->SetVisibility(true);
+
+        // Fill Light: 40% of key by default, always shadow-free.
+        PreviewFillLight->SetIntensity(KeyIntensity * FillRimMult);
+        PreviewFillLight->SetLightColor(LColor);
+        PreviewFillLight->SourceWidth  = SrcW * 1.5f;
+        PreviewFillLight->SourceHeight = SrcH * 1.5f;
+        PreviewFillLight->SetCastShadows(false);
+        PreviewFillLight->SetVisibility(true);
+
+        // Rim / Top Light: 25% of key, always shadow-free.
+        PreviewRimLight->SetIntensity(KeyIntensity * FillRimMult * 0.6f);
+        PreviewRimLight->SetLightColor(LColor);
+        PreviewRimLight->SourceWidth  = SrcW * 0.75f;
+        PreviewRimLight->SourceHeight = SrcH * 0.75f;
+        PreviewRimLight->SetCastShadows(false);
+        PreviewRimLight->SetVisibility(true);
+    }
+
+    // ── 12. Stencil isolation post-process material ───────────────────────
     WIP_ApplyStencilIsolation();
 }
 

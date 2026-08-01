@@ -26,8 +26,10 @@
 class UStaticMeshComponent;
 class USpringArmComponent;
 class UCameraComponent;
+class URectLightComponent;
 class ACharacter;
 class AShowroomBooth;
+class ARectLight;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-Component Preview Configuration
@@ -62,6 +64,40 @@ struct FPreviewComponentConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting",
               meta = (DisplayName = "Cast Shadow"))
     bool bCastShadow = true;
+
+    // ── Preview Rect Light Rig ─────────────────────────────────────────────
+    // One Key Light (camera-attached, always front-facing) + Fill + Rim.
+    // Values below apply when this component is the active focus.
+
+    /** Intensity of the Key Light (lux). The Fill and Rim scale off this. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
+              meta = (DisplayName = "Key Light Intensity (lux)", ClampMin = "0.0", ClampMax = "5000.0"))
+    float KeyLightIntensity = 800.f;
+
+    /** Color tint applied to all three preview lights. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
+              meta = (DisplayName = "Light Color"))
+    FLinearColor LightColor = FLinearColor::White;
+
+    /** Fill and Rim intensity as a fraction of KeyLightIntensity (0 = off, 1 = same as key). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
+              meta = (DisplayName = "Fill / Rim Multiplier", ClampMin = "0.0", ClampMax = "1.0"))
+    float FillRimMultiplier = 0.4f;
+
+    /** Width of the Rect Light source (cm). Larger values produce softer shadows. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
+              meta = (DisplayName = "Light Source Width (cm)", ClampMin = "5.0", ClampMax = "300.0"))
+    float LightSourceWidth = 80.f;
+
+    /** Height of the Rect Light source (cm). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
+              meta = (DisplayName = "Light Source Height (cm)", ClampMin = "5.0", ClampMax = "300.0"))
+    float LightSourceHeight = 100.f;
+
+    /** Allow the Key Light to cast real-time shadows onto the focused mesh. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
+              meta = (DisplayName = "Key Light Casts Shadows"))
+    bool bPreviewLightCastShadows = false;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +170,22 @@ public:
     /** Camera attached to the SpringArm socket. */
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UCameraComponent> Camera;
+
+    // ── Preview Lighting Rig ──────────────────────────────────────────────
+    // Three URectLightComponents providing even illumination of the focused mesh.
+    // Key orbits with the camera; Fill and Rim stay at the orbit pivot.
+
+    /** Key light — attached to Camera, always illuminates the mesh face the camera sees. */
+    UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
+    TObjectPtr<URectLightComponent> PreviewKeyLight;
+
+    /** Fill light — at orbit pivot, angled below/behind, provides soft backfill. */
+    UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
+    TObjectPtr<URectLightComponent> PreviewFillLight;
+
+    /** Rim / top light — at orbit pivot, angled from above, provides edge definition. */
+    UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
+    TObjectPtr<URectLightComponent> PreviewRimLight;
 
     // ─────────────────────────────────────────────────────────────────────
     // PREVIEW CONFIG
@@ -236,6 +288,9 @@ private:
     TWeakObjectPtr<ACharacter>      WIP_CachedCharacter;
     TWeakObjectPtr<AShowroomBooth>  WIP_CachedSourceBooth;
     TArray<TWeakObjectPtr<UPrimitiveComponent>> WIP_CachedHiddenWallComponents;
+
+    /** World ARectLight actors that were visible before preview; restored on EndPlay. */
+    TArray<TWeakObjectPtr<AActor>>  WIP_CachedWorldRectLights;
 
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
