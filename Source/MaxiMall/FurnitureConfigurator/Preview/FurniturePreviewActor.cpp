@@ -17,6 +17,7 @@
 #include "Components/RectLightComponent.h"
 #include "Components/SkyLightComponent.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "GameFramework/Character.h"
@@ -181,6 +182,20 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     PreviewDirectionalLight->SetLightColor(FLinearColor(1.f, 0.95f, 0.85f)); // warm sunlight tint
     PreviewDirectionalLight->SetCastShadows(false);
     PreviewDirectionalLight->SetVisibility(false);        // hidden until preview is active
+
+    // ── Soft Camera-Attached Point Fill Light ───────────────────────────────
+    // Attached directly to Camera Component. Provides shadow-free omnidirectional
+    // soft ambient fill from camera origin into recessed cavities (including bottom faces),
+    // guaranteeing 100% surface visibility with zero side-skirt shadow blocking.
+    PreviewCameraPointLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("PreviewCameraPointLight"));
+    PreviewCameraPointLight->SetupAttachment(Camera);
+    PreviewCameraPointLight->SetMobility(EComponentMobility::Movable);
+    PreviewCameraPointLight->SetRelativeLocation(FVector::ZeroVector);
+    PreviewCameraPointLight->AttenuationRadius = 3000.f;
+    PreviewCameraPointLight->SetIntensity(300.f);
+    PreviewCameraPointLight->SetLightColor(FLinearColor(1.f, 0.95f, 0.9f));
+    PreviewCameraPointLight->SetCastShadows(false);
+    PreviewCameraPointLight->SetVisibility(false);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -806,6 +821,22 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         PreviewDirectionalLight->SetLightColor(DLColor);
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
         PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
+
+        // ── 13b. Soft Camera-Attached Shadow-Free Point Fill Light ────────────
+        // Ensures 100% surface visibility for recessed cavities (including bottom faces)
+        if (IsValid(PreviewCameraPointLight))
+        {
+            PreviewCameraPointLight->SetMobility(EComponentMobility::Movable);
+            if (IsValid(Camera))
+            {
+                PreviewCameraPointLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
+                PreviewCameraPointLight->SetRelativeLocation(FVector::ZeroVector);
+            }
+            PreviewCameraPointLight->SetIntensity(350.f);
+            PreviewCameraPointLight->SetLightColor(DLColor);
+            PreviewCameraPointLight->SetCastShadows(false);
+            PreviewCameraPointLight->SetVisibility(true);
+        }
 
         UE_LOG(LogTemp, Warning, TEXT("[PreviewDirLight SETUP] UseWorldDefaults=%d | CachedWorldIntensity=%.2f | ConfigIntensity=%.2f | FinalIntensity=%.2f | CastShadows=%d | RelRot=%s | WorldRot=%s"),
             bUseWorldDefaults ? 1 : 0,
