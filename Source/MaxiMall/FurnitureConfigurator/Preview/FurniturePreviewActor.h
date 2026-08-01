@@ -166,17 +166,15 @@ struct FPreviewComponentConfig
     // ── Directional Key Light ───────────────────────────────────────────────
 
     /**
-     * If true (default), automatically inherits the level's main world sun settings
-     * (its intensity, light color, and relative angle offset calculated from the camera view direction).
-     * Set to false to specify custom DirectionalLightIntensity, DirectionalLightColor,
-     * and DirectionalLightRelativeRotation below.
+     * If true (default), automatically inherits the level's main world sun Intensity and Color.
+     * The light direction remains strictly relative to the Camera view direction.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
               meta = (DisplayName = "Use World Sun Defaults"))
     bool bUseWorldSunDefaults = true;
 
     /**
-     * Intensity of the camera-orbiting Directional Key Light (lux).
+     * Intensity of the camera-headlight Directional Key Light (lux).
      * Used when Use World Sun Defaults is false.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
@@ -192,16 +190,15 @@ struct FPreviewComponentConfig
     FLinearColor DirectionalLightColor = FLinearColor(1.f, 0.95f, 0.85f);
 
     /**
-     * Relative rotation of the key light attached to the SpringArm (camera orbit rig).
-     * Pitch/Yaw/Roll offset relative to the camera view direction.
-     * Pitch = -15° tilts light slightly downwards from above the camera.
-     * Used when Use World Sun Defaults is false.
+     * Strict local rotation offset of the directional key light relative to the Camera view direction.
+     * Pitch = -15° tilts light slightly down from the camera line of sight.
+     * Yaw = +15° angles light slightly from the right to create natural 3D specular highlights.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
               meta = (DisplayName = "Key Light Relative Rotation"))
-    FRotator DirectionalLightRelativeRotation = FRotator(-15.f, 0.f, 0.f);
+    FRotator DirectionalLightRelativeRotation = FRotator(-15.f, 15.f, 0.f);
 
-    /** Whether the orbiting key light casts real-time shadows. */
+    /** Whether the camera key light casts real-time shadows. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
               meta = (DisplayName = "Key Light Casts Shadows"))
     bool bDirectionalLightCastShadows = false;
@@ -304,10 +301,10 @@ public:
     TObjectPtr<USkyLightComponent> PreviewSkyLight;
 
     /**
-     * Studio Directional Key Light.
-     * Attached to PreviewRoot (FIXED world-space rotation, does NOT orbit with camera).
-     * Maintains a constant natural sun angle while orbiting, matching the level's
-     * sun rotation or custom per-component DirectionalLightRotation.
+     * Camera-Headlight Directional Key Light.
+     * Attached directly to CameraComponent with a strict local rotation offset.
+     * Moves and rotates 1:1 with camera view, ensuring whichever face the camera
+     * looks at (horizontal, from above, or from below) is always illuminated.
      */
     UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
     TObjectPtr<UDirectionalLightComponent> PreviewDirectionalLight;
