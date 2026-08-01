@@ -114,6 +114,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // Yaw=180° flips emission toward the mesh (pivot direction).
     PreviewKeyLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewKeyLight"));
     PreviewKeyLight->SetupAttachment(SpringArm);
+    PreviewKeyLight->SetMobility(EComponentMobility::Movable);
     PreviewKeyLight->SetRelativeLocation(FVector(-200.f, 0.f, 0.f)); // 200cm toward camera from pivot
     PreviewKeyLight->SetRelativeRotation(FRotator(0.f, 180.f, 0.f)); // face toward mesh (pivot)
     PreviewKeyLight->SetIntensity(0.f);      // Off by default — Lumen handles lighting.
@@ -130,6 +131,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // so it provides backfill from below/behind the camera orbit.
     PreviewFillLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewFillLight"));
     PreviewFillLight->SetupAttachment(SpringArm);
+    PreviewFillLight->SetMobility(EComponentMobility::Movable);
     PreviewFillLight->SetRelativeRotation(FRotator(35.f, 170.f, 0.f));
     PreviewFillLight->SetIntensity(320.f);
     PreviewFillLight->SetLightColor(FLinearColor::White);
@@ -142,6 +144,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // Acts as a top-down edge/rim light regardless of camera orbit angle.
     PreviewRimLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewRimLight"));
     PreviewRimLight->SetupAttachment(SpringArm);
+    PreviewRimLight->SetMobility(EComponentMobility::Movable);
     PreviewRimLight->SetRelativeRotation(FRotator(-80.f, 0.f, 0.f));
     PreviewRimLight->SetIntensity(200.f);
     PreviewRimLight->SetLightColor(FLinearColor::White);
@@ -157,6 +160,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // Lumen bounce surfaces. bRealTimeCapture=false: zero per-frame overhead.
     PreviewSkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("PreviewSkyLight"));
     PreviewSkyLight->SetupAttachment(PreviewRoot);
+    PreviewSkyLight->SetMobility(EComponentMobility::Movable);
     PreviewSkyLight->SourceType       = ESkyLightSourceType::SLS_CapturedScene;
     PreviewSkyLight->bRealTimeCapture = false;    // single RecaptureSky() at preview start
     PreviewSkyLight->SetIntensity(2.f);
@@ -171,6 +175,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // is always illuminated with rich material highlights.
     PreviewDirectionalLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("PreviewDirectionalLight"));
     PreviewDirectionalLight->SetupAttachment(Camera);
+    PreviewDirectionalLight->SetMobility(EComponentMobility::Movable);
     PreviewDirectionalLight->SetRelativeRotation(FRotator(-15.f, 15.f, 0.f)); // local offset relative to camera forward vector
     PreviewDirectionalLight->SetIntensity(8.f);
     PreviewDirectionalLight->SetLightColor(FLinearColor(1.f, 0.95f, 0.85f)); // warm sunlight tint
@@ -780,6 +785,8 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // ── 13. Studio Directional Key Light per-component config ─────────────
     if (IsValid(PreviewDirectionalLight))
     {
+        PreviewDirectionalLight->SetMobility(EComponentMobility::Movable);
+
         const bool bUseWorldDefaults = Config ? Config->bUseWorldSunDefaults : true;
 
         const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
@@ -799,6 +806,13 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         PreviewDirectionalLight->SetLightColor(DLColor);
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
         PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
+
+        UE_LOG(LogTemp, Warning, TEXT("[PreviewDirLight SETUP] Mobility=%d (Movable=2), Intensity=%.2f, AttachedTo=%s, RelRot=%s, WorldRot=%s"),
+            (int32)PreviewDirectionalLight->Mobility,
+            PreviewDirectionalLight->Intensity,
+            PreviewDirectionalLight->GetAttachParent() ? *PreviewDirectionalLight->GetAttachParent()->GetName() : TEXT("None"),
+            *PreviewDirectionalLight->GetRelativeRotation().ToString(),
+            *PreviewDirectionalLight->GetComponentRotation().ToString());
     }
 
     // ── 14. Stencil isolation post-process material ───────────────────────
@@ -823,6 +837,14 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 
     SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
     SpringArm->SetWorldRotation(OrbitRot);
+
+    if (IsValid(PreviewDirectionalLight) && IsValid(Camera))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[PreviewOrbit TICK] CamWorldRot=%s | LightWorldRot=%s | LightWorldLoc=%s"),
+            *Camera->GetComponentRotation().ToString(),
+            *PreviewDirectionalLight->GetComponentRotation().ToString(),
+            *PreviewDirectionalLight->GetComponentLocation().ToString());
+    }
 }
 
 void AFurniturePreviewActor::ResetRotation()
