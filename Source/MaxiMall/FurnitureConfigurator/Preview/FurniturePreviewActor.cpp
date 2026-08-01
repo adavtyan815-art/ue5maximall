@@ -112,10 +112,11 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     PreviewKeyLight->SetupAttachment(SpringArm);
     PreviewKeyLight->SetRelativeLocation(FVector(-200.f, 0.f, 0.f)); // 200cm toward camera from pivot
     PreviewKeyLight->SetRelativeRotation(FRotator(0.f, 180.f, 0.f)); // face toward mesh (pivot)
-    PreviewKeyLight->SetIntensity(800.f);
+    PreviewKeyLight->SetIntensity(0.f);      // Off by default — Lumen handles lighting.
     PreviewKeyLight->SetLightColor(FLinearColor::White);
     PreviewKeyLight->SourceWidth  = 80.f;
     PreviewKeyLight->SourceHeight = 100.f;
+    PreviewKeyLight->AttenuationRadius = 800.f;
     PreviewKeyLight->bUseTemperature = false;
     PreviewKeyLight->SetCastShadows(false);
     PreviewKeyLight->SetVisibility(false); // shown only during active preview
@@ -627,36 +628,61 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // ── 11. Apply per-component preview lighting config ───────────────────
     if (IsValid(PreviewKeyLight) && IsValid(PreviewFillLight) && IsValid(PreviewRimLight))
     {
-        const float KeyIntensity   = Config ? Config->KeyLightIntensity   : 800.f;
-        const float FillRimMult    = Config ? Config->FillRimMultiplier   : 0.4f;
-        const FLinearColor LColor  = Config ? Config->LightColor          : FLinearColor::White;
-        const float SrcW           = Config ? Config->LightSourceWidth    : 80.f;
-        const float SrcH           = Config ? Config->LightSourceHeight   : 100.f;
-        const bool bCastShadows    = Config ? Config->bPreviewLightCastShadows : false;
+        const float KeyIntensity   = Config ? Config->KeyLightIntensity          : 0.f;
+        const float FillRimMult    = Config ? Config->FillRimMultiplier          : 0.4f;
+        const FLinearColor LColor  = Config ? Config->LightColor                 : FLinearColor::White;
+        const float SrcW           = Config ? Config->LightSourceWidth           : 80.f;
+        const float SrcH           = Config ? Config->LightSourceHeight          : 100.f;
+        const float KeyOffset      = Config ? Config->KeyLightOffset             : 200.f;
+        const float AttenuRadius   = Config ? Config->KeyLightAttenuationRadius  : 800.f;
+        const bool bCastShadows    = Config ? Config->bPreviewLightCastShadows   : false;
 
-        // Key Light: camera-attached, user-configured intensity and shadow toggle.
+        // Key Light: fixed orbit offset + user-configured attenuation radius.
+        PreviewKeyLight->SetRelativeLocation(FVector(-KeyOffset, 0.f, 0.f));
+        PreviewKeyLight->AttenuationRadius = AttenuRadius;
+        PreviewKeyLight->MarkRenderStateDirty();
         PreviewKeyLight->SetIntensity(KeyIntensity);
         PreviewKeyLight->SetLightColor(LColor);
         PreviewKeyLight->SourceWidth  = SrcW;
         PreviewKeyLight->SourceHeight = SrcH;
         PreviewKeyLight->SetCastShadows(bCastShadows);
-        PreviewKeyLight->SetVisibility(true);
+        PreviewKeyLight->SetVisibility(KeyIntensity > 0.f);
 
-        // Fill Light: 40% of key by default, always shadow-free.
+        // Fill Light: scaled fraction of key, always shadow-free.
         PreviewFillLight->SetIntensity(KeyIntensity * FillRimMult);
         PreviewFillLight->SetLightColor(LColor);
         PreviewFillLight->SourceWidth  = SrcW * 1.5f;
         PreviewFillLight->SourceHeight = SrcH * 1.5f;
         PreviewFillLight->SetCastShadows(false);
-        PreviewFillLight->SetVisibility(true);
+        PreviewFillLight->SetVisibility(KeyIntensity > 0.f);
 
-        // Rim / Top Light: 25% of key, always shadow-free.
+        // Rim / Top Light: scaled fraction, always shadow-free.
         PreviewRimLight->SetIntensity(KeyIntensity * FillRimMult * 0.6f);
         PreviewRimLight->SetLightColor(LColor);
         PreviewRimLight->SourceWidth  = SrcW * 0.75f;
         PreviewRimLight->SourceHeight = SrcH * 0.75f;
         PreviewRimLight->SetCastShadows(false);
-        PreviewRimLight->SetVisibility(true);
+        PreviewRimLight->SetVisibility(KeyIntensity > 0.f);
+    }
+
+    // ── 11b. Per-component camera exposure compensation ───────────────────
+    // Non-destructive brightness control: uses existing Lumen GI, preserves
+    // AO and normal map depth. Preferred over Rect Lights for most meshes.
+    if (IsValid(Camera))
+    {
+        const float ExpComp = Config ? Config->ExposureCompensation : 0.f;
+        FPostProcessSettings& PP = Camera->PostProcessSettings;
+        if (FMath::Abs(ExpComp) > KINDA_SMALL_NUMBER)
+        {
+            PP.bOverride_AutoExposureBias = true;
+            PP.AutoExposureBias           = ExpComp;
+        }
+        else
+        {
+            // Restore auto-exposure to level defaults.
+            PP.bOverride_AutoExposureBias = false;
+            PP.AutoExposureBias           = 0.f;
+        }
     }
 
     // ── 12. Stencil isolation post-process material ───────────────────────

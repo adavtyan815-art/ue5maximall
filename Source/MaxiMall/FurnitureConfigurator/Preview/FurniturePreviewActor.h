@@ -66,13 +66,20 @@ struct FPreviewComponentConfig
     bool bCastShadow = true;
 
     // ── Preview Rect Light Rig ─────────────────────────────────────────────
-    // One Key Light (camera-attached, always front-facing) + Fill + Rim.
-    // Values below apply when this component is the active focus.
+    // One Key Light (at a fixed offset from the orbit pivot) + Fill + Rim.
+    // All three default to 0 intensity — Lumen GI provides naturalistic
+    // lighting without flattening AO or normal maps. Enable per component
+    // only when a specific mesh genuinely needs a brightness boost.
 
-    /** Intensity of the Key Light (lux). The Fill and Rim scale off this. */
+    /**
+     * Intensity of the Key Light (lux). Default is 0 (off).
+     * Lumen already provides naturalistic GI; adding direct light at high
+     * intensity washes out AO and flattens normal map depth. Use low values
+     * (100–300 lux) only if a specific mesh is genuinely too dark.
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
               meta = (DisplayName = "Key Light Intensity (lux)", ClampMin = "0.0", ClampMax = "5000.0"))
-    float KeyLightIntensity = 800.f;
+    float KeyLightIntensity = 0.f;
 
     /** Color tint applied to all three preview lights. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
@@ -84,7 +91,7 @@ struct FPreviewComponentConfig
               meta = (DisplayName = "Fill / Rim Multiplier", ClampMin = "0.0", ClampMax = "1.0"))
     float FillRimMultiplier = 0.4f;
 
-    /** Width of the Rect Light source (cm). Larger values produce softer shadows. */
+    /** Width of the Rect Light source (cm). Larger values produce softer, more diffuse light. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
               meta = (DisplayName = "Light Source Width (cm)", ClampMin = "5.0", ClampMax = "300.0"))
     float LightSourceWidth = 80.f;
@@ -94,10 +101,45 @@ struct FPreviewComponentConfig
               meta = (DisplayName = "Light Source Height (cm)", ClampMin = "5.0", ClampMax = "300.0"))
     float LightSourceHeight = 100.f;
 
+    /**
+     * Distance of the Key Light from the focus pivot along the orbit arm (cm).
+     * The light sits at this fixed distance regardless of zoom level, which
+     * prevents the attenuation boundary from crossing the mesh surface.
+     * Increase if you see a hard cutoff line at close zoom distances.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
+              meta = (DisplayName = "Key Light Offset (cm)", ClampMin = "50.0", ClampMax = "800.0"))
+    float KeyLightOffset = 200.f;
+
+    /**
+     * Key Light attenuation radius (cm).
+     * Must always be greater than KeyLightOffset + the mesh bounds radius.
+     * If you still see a hard attenuation line, increase this value.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
+              meta = (DisplayName = "Key Light Attenuation Radius (cm)", ClampMin = "100.0", ClampMax = "3000.0"))
+    float KeyLightAttenuationRadius = 800.f;
+
     /** Allow the Key Light to cast real-time shadows onto the focused mesh. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
               meta = (DisplayName = "Key Light Casts Shadows"))
     bool bPreviewLightCastShadows = false;
+
+    // ── Camera Exposure ──────────────────────────────────────────────────────
+
+    /**
+     * EV100 offset applied to the Camera's AutoExposure during this component's preview.
+     * This is the non-destructive alternative to adding Rect Lights:
+     * it boosts the scene brightness as-seen-by the camera using only the
+     * existing Lumen GI, preserving AO, normal map depth, and material response.
+     *   0.0  = no change (auto-exposure as set by the level)
+     *  +1.0  = one stop brighter (good default if mesh looks dark in preview)
+     *  +2.0  = two stops brighter
+     * Negative values darken the scene.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Exposure",
+              meta = (DisplayName = "Exposure Compensation (EV)", ClampMin = "-8.0", ClampMax = "8.0"))
+    float ExposureCompensation = 0.f;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
