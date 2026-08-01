@@ -783,14 +783,15 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
-        const FRotator DLRelRot     = Config ? Config->DirectionalLightRelativeRotation                         : FRotator(-15.f, 15.f, 0.f);
+        ActiveDirectionalLightRelativeRotation                  = Config ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                             : false;
 
-        PreviewDirectionalLight->SetRelativeRotation(DLRelRot);
         PreviewDirectionalLight->SetIntensity(DLIntensity);
         PreviewDirectionalLight->SetLightColor(DLColor);
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
         PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
+
+        WIP_UpdateDirectionalLightRotation();
     }
 
     // ── 14. Stencil isolation post-process material ───────────────────────
@@ -815,6 +816,9 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 
     SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
     SpringArm->SetWorldRotation(OrbitRot);
+    SpringArm->UpdateChildTransforms();
+
+    WIP_UpdateDirectionalLightRotation();
 }
 
 void AFurniturePreviewActor::ResetRotation()
@@ -829,7 +833,9 @@ void AFurniturePreviewActor::ResetRotation()
         SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
         SpringArm->SetWorldRotation(WIP_InitialOrbitRot);
         SpringArm->TargetArmLength = WIP_InitialViewDist;
+        SpringArm->UpdateChildTransforms();
     }
+    WIP_UpdateDirectionalLightRotation();
     WIP_ApplyStencilIsolation();
 }
 
@@ -841,6 +847,25 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
     CurrentZoomLength   = FMath::Clamp(CurrentZoomLength + DeltaZoom, ActiveMinZoom, ActiveMaxZoom);
     WIP_CurrentViewDist = CurrentZoomLength;
     SpringArm->TargetArmLength = CurrentZoomLength;
+}
+
+void AFurniturePreviewActor::WIP_UpdateDirectionalLightRotation()
+{
+    if (!IsValid(PreviewDirectionalLight) || !PreviewDirectionalLight->IsVisible()) { return; }
+
+    FRotator CamRot = FRotator::ZeroRotator;
+    if (IsValid(Camera))
+    {
+        CamRot = Camera->GetComponentRotation();
+    }
+    else if (IsValid(SpringArm))
+    {
+        CamRot = SpringArm->GetComponentRotation();
+    }
+
+    // Compose local offset (Pitch -15°, Yaw +15°) with camera world rotation
+    const FQuat TargetQuat = FQuat(CamRot) * FQuat(ActiveDirectionalLightRelativeRotation);
+    PreviewDirectionalLight->SetWorldRotation(TargetQuat.Rotator());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
