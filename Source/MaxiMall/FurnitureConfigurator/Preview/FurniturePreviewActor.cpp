@@ -789,17 +789,19 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const bool bUseWorldDefaults = Config ? Config->bUseWorldSunDefaults : true;
 
-        const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity : WIP_CachedWorldSunIntensity;
-        const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor     : WIP_CachedWorldSunColor;
-        const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                      : false;
+        // When bUseWorldSunDefaults is true: inherit ALL settings from the level's main world sun.
+        // When false: use initial world sun values as base, but apply user overrides from Config.
+        const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
+        const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
+        const FRotator DLRelRot     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightRelativeRotation : FRotator::ZeroRotator;
+        const bool bDLShadows       = (Config && !bUseWorldDefaults) ? Config->bDirectionalLightCastShadows     : false;
 
-        // Pure Camera Origin Attachment with Fixed Zero Relative Rotation (0, 0, 0)
-        // Direct camera line of sight headlight that moves and rotates 1:1 with camera view natively
+        // Pure Camera Origin Attachment: Attached to Camera Component with DLRelRot
         if (IsValid(Camera))
         {
             PreviewDirectionalLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
             PreviewDirectionalLight->SetRelativeLocation(FVector::ZeroVector);
-            PreviewDirectionalLight->SetRelativeRotation(FRotator::ZeroRotator);
+            PreviewDirectionalLight->SetRelativeRotation(DLRelRot);
         }
 
         PreviewDirectionalLight->SetIntensity(DLIntensity);
