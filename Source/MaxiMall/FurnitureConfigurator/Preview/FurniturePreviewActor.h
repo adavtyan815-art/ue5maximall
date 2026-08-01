@@ -166,43 +166,42 @@ struct FPreviewComponentConfig
     // ── Directional Key Light ───────────────────────────────────────────────
 
     /**
+     * If true (default), automatically inherits the level's main world sun settings
+     * (its intensity, light color, and relative angle offset calculated from the camera view direction).
+     * Set to false to specify custom DirectionalLightIntensity, DirectionalLightColor,
+     * and DirectionalLightRelativeRotation below.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
+              meta = (DisplayName = "Use World Sun Defaults"))
+    bool bUseWorldSunDefaults = true;
+
+    /**
      * Intensity of the camera-orbiting Directional Key Light (lux).
-     * This is the studio "sun" — always illuminates the camera-facing side of the
-     * mesh regardless of orbit angle or zoom. Default 8.0 lux provides warm,
-     * directional highlights without overpowering the SkyLight ambient fill.
-     * Set to 0 to disable the key light for this component.
+     * Used when Use World Sun Defaults is false.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
               meta = (DisplayName = "Key Light Intensity (lux)", ClampMin = "0.0", ClampMax = "100.0"))
     float DirectionalLightIntensity = 8.f;
 
-    /** Color tint of the directional key light. Slightly warm (e.g. FLinearColor(1, 0.95, 0.85))
-     *  mimics natural sunlight and gives wood/stone materials their richest response. */
+    /**
+     * Color tint of the directional key light.
+     * Used when Use World Sun Defaults is false.
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
               meta = (DisplayName = "Key Light Color"))
     FLinearColor DirectionalLightColor = FLinearColor(1.f, 0.95f, 0.85f);
 
     /**
-     * World rotation of the Directional Key Light during this component's preview.
-     * Unlike camera-attached lights, this light stays at a FIXED world-space angle
-     * as the user orbits around the model, maintaining a natural sun direction
-     * without pitch-black back-face artifacts or day/night shifting.
-     * Default Pitch = -46°, Yaw = -46° matches the level's sun setup.
+     * Relative rotation of the key light attached to the SpringArm (camera orbit rig).
+     * Pitch/Yaw/Roll offset relative to the camera view direction.
+     * Pitch = -15° tilts light slightly downwards from above the camera.
+     * Used when Use World Sun Defaults is false.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Rotation"))
-    FRotator DirectionalLightRotation = FRotator(-46.f, -46.f, 0.f);
+              meta = (DisplayName = "Key Light Relative Rotation"))
+    FRotator DirectionalLightRelativeRotation = FRotator(-15.f, 0.f, 0.f);
 
-    /**
-     * If true (default), automatically inherits the level's active world sun rotation
-     * (cached during LoadProductPreview). Set to false to use custom DirectionalLightRotation above.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Inherit World Sun Rotation"))
-    bool bUseWorldSunRotation = true;
-
-    /** Whether the orbiting key light casts real-time shadows. Enabling adds visual
-     *  depth but requires Lumen to recompute GI; leave false unless specifically needed. */
+    /** Whether the orbiting key light casts real-time shadows. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
               meta = (DisplayName = "Key Light Casts Shadows"))
     bool bDirectionalLightCastShadows = false;
@@ -422,8 +421,10 @@ private:
      *  Intensity is set to 0 during preview and restored on EndPlay. */
     TArray<TPair<TWeakObjectPtr<ADirectionalLight>, float>> WIP_CachedWorldDirLights;
 
-    /** World rotation of the primary ADirectionalLight captured in LoadProductPreview. */
-    FRotator WIP_CachedWorldSunRotation = FRotator(-46.f, -46.f, 0.f);
+    /** World properties of the primary ADirectionalLight captured in LoadProductPreview. */
+    FRotator     WIP_CachedWorldSunRotation  = FRotator(-46.f, -46.f, 0.f);
+    float        WIP_CachedWorldSunIntensity = 8.f;
+    FLinearColor WIP_CachedWorldSunColor     = FLinearColor(1.f, 0.95f, 0.85f);
 
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
