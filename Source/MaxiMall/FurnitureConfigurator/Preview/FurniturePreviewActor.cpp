@@ -781,12 +781,19 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     {
         const bool bUseWorldDefaults = Config ? Config->bUseWorldSunDefaults : true;
 
-        // Relative rotation from initial camera orbit facing (WIP_InitialOrbitRot) to world sun angle (WIP_CachedWorldSunRotation)
-        const FRotator RelativeSunRot = (FQuat(WIP_InitialOrbitRot).Inverse() * FQuat(WIP_CachedWorldSunRotation)).Rotator();
+        // Calculate relative rotation from initial camera orbit facing (WIP_InitialOrbitRot) to world sun angle (WIP_CachedWorldSunRotation)
+        FRotator RelativeSunRot = (FQuat(WIP_InitialOrbitRot).Inverse() * FQuat(WIP_CachedWorldSunRotation)).Rotator();
+
+        // Dynamically clamp relative pitch [-25°, +25°] so that vertical camera orbiting (looking up/down from below)
+        // always maintains a positive illumination angle on camera-facing surfaces (prevents pitch-black bottom faces).
+        RelativeSunRot.Pitch = FMath::Clamp(RelativeSunRot.Pitch, -25.f, 25.f);
+
+        FRotator ConfigRelRot = Config ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 0.f, 0.f);
+        ConfigRelRot.Pitch = FMath::Clamp(ConfigRelRot.Pitch, -30.f, 30.f);
 
         const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity          : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor              : WIP_CachedWorldSunColor;
-        const FRotator DLRelRot     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightRelativeRotation   : RelativeSunRot;
+        const FRotator DLRelRot     = (Config && !bUseWorldDefaults) ? ConfigRelRot                               : RelativeSunRot;
         const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows : false;
 
         PreviewDirectionalLight->SetRelativeRotation(DLRelRot);
