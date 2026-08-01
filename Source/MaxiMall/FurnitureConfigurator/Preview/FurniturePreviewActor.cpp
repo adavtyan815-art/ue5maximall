@@ -791,7 +791,7 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
-        ActiveDirectionalLightRelativeRotation                  = Config ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
+        ActiveDirectionalLightRelativeRotation                  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                             : false;
 
         // Pure Camera Component Attachment: Let Unreal Engine's native transform hierarchy handle 1:1 camera rotation
