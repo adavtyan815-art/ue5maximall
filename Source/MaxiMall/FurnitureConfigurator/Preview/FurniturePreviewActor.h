@@ -44,164 +44,114 @@ struct FPreviewComponentConfig
 {
     GENERATED_BODY()
 
-    /**
-     * Minimum spring-arm length (cm).
-     * Prevents the camera from clipping through the mesh on close zoom.
-     * Tune per-component based on the mesh's physical depth.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zoom",
-              meta = (DisplayName = "Min Zoom Distance (cm)", ClampMin = "5.0", ClampMax = "300.0", UIMin = "5.0", UIMax = "300.0"))
+    // ── Camera & Zoom Controls ───────────────────────────────────────────────
+
+    /** Minimum distance (cm) the camera can zoom in before clamping. Prevents mesh clipping. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera & Zoom",
+              meta = (DisplayName = "Minimum Zoom Distance (cm)", ClampMin = "5.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "300.0"))
     float MinZoomDistance = 40.f;
 
-    /**
-     * Maximum spring-arm length (cm).
-     * Also defines the radius of the one-shot wall-hide sphere:
-     * all world geometry within this distance + 100cm from the mesh pivot
-     * will be hidden for the entire duration of the preview.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zoom",
-              meta = (DisplayName = "Max Zoom Distance (cm)", ClampMin = "50.0", ClampMax = "1000.0", UIMin = "50.0", UIMax = "1000.0"))
+    /** Maximum distance (cm) the camera can zoom out. Also sets the wall-hiding sphere radius. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera & Zoom",
+              meta = (DisplayName = "Maximum Zoom Distance (cm)", ClampMin = "50.0", ClampMax = "1500.0", UIMin = "100.0", UIMax = "1000.0"))
     float MaxZoomDistance = 400.f;
 
-    /** Whether the focused mesh casts real-time shadows during the preview. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting",
-              meta = (DisplayName = "Cast Shadow"))
-    bool bCastShadow = true;
-
-    // ── Preview Rect Light Rig ─────────────────────────────────────────────
-    // One Key Light (at a fixed offset from the orbit pivot) + Fill + Rim.
-    // All three default to 0 intensity — Lumen GI provides naturalistic
-    // lighting without flattening AO or normal maps. Enable per component
-    // only when a specific mesh genuinely needs a brightness boost.
-
-    /**
-     * Intensity of the Key Light (lux). Default is 0 (off).
-     * Lumen already provides naturalistic GI; adding direct light at high
-     * intensity washes out AO and flattens normal map depth. Use low values
-     * (100–300 lux) only if a specific mesh is genuinely too dark.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
-              meta = (DisplayName = "Key Light Intensity (lux)", ClampMin = "0.0", ClampMax = "5000.0"))
-    float KeyLightIntensity = 0.f;
-
-    /** Color tint applied to all three preview lights. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
-              meta = (DisplayName = "Light Color"))
-    FLinearColor LightColor = FLinearColor::White;
-
-    /** Fill and Rim intensity as a fraction of KeyLightIntensity (0 = off, 1 = same as key). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
-              meta = (DisplayName = "Fill / Rim Multiplier", ClampMin = "0.0", ClampMax = "1.0"))
-    float FillRimMultiplier = 0.4f;
-
-    /** Width of the Rect Light source (cm). Larger values produce softer, more diffuse light. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
-              meta = (DisplayName = "Light Source Width (cm)", ClampMin = "5.0", ClampMax = "300.0"))
-    float LightSourceWidth = 80.f;
-
-    /** Height of the Rect Light source (cm). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
-              meta = (DisplayName = "Light Source Height (cm)", ClampMin = "5.0", ClampMax = "300.0"))
-    float LightSourceHeight = 100.f;
-
-    /**
-     * Distance of the Key Light from the focus pivot along the orbit arm (cm).
-     * The light sits at this fixed distance regardless of zoom level, which
-     * prevents the attenuation boundary from crossing the mesh surface.
-     * Increase if you see a hard cutoff line at close zoom distances.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
-              meta = (DisplayName = "Key Light Offset (cm)", ClampMin = "50.0", ClampMax = "800.0"))
-    float KeyLightOffset = 200.f;
-
-    /**
-     * Key Light attenuation radius (cm).
-     * Must always be greater than KeyLightOffset + the mesh bounds radius.
-     * If you still see a hard attenuation line, increase this value.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
-              meta = (DisplayName = "Key Light Attenuation Radius (cm)", ClampMin = "100.0", ClampMax = "3000.0"))
-    float KeyLightAttenuationRadius = 800.f;
-
-    /** Allow the Key Light to cast real-time shadows onto the focused mesh. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Preview Rig",
-              meta = (DisplayName = "Key Light Casts Shadows"))
-    bool bPreviewLightCastShadows = false;
-
-    // ── Camera Exposure ──────────────────────────────────────────────────────
-
-    /**
-     * EV100 offset applied to the Camera's AutoExposure during this component's preview.
-     * This is the non-destructive alternative to adding Rect Lights:
-     * it boosts the scene brightness as-seen-by the camera using only the
-     * existing Lumen GI, preserving AO, normal map depth, and material response.
-     *   0.0  = no change (auto-exposure as set by the level)
-     *  +1.0  = one stop brighter (good default if mesh looks dark in preview)
-     *  +2.0  = two stops brighter
-     * Negative values darken the scene.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Exposure",
-              meta = (DisplayName = "Exposure Compensation (EV)", ClampMin = "-8.0", ClampMax = "8.0"))
+    /** EV100 offset applied to the Camera's AutoExposure (positive values brighten dark meshes). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera & Zoom",
+              meta = (DisplayName = "Camera Exposure Offset (EV)", ClampMin = "-4.0", ClampMax = "4.0", UIMin = "-2.0", UIMax = "2.0"))
     float ExposureCompensation = 0.f;
 
-    // ── Studio SkyLight ─────────────────────────────────────────────────────
+    // ── Mesh Rendering ───────────────────────────────────────────────────────
 
-    /**
-     * Intensity of the studio SkyLight during this component's preview.
-     * A single SkyLightComponent provides true 360° diffuse fill from all
-     * directions simultaneously, eliminating the pitch-black back-side problem
-     * caused by WIP_UpdateWallOcclusion removing Lumen's bounce surfaces.
-     * Default 2.0 gives soft fill without flattening PBR material response.
-     * Set to 0 to disable and rely purely on the world's existing lighting.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Studio SkyLight",
-              meta = (DisplayName = "Studio SkyLight Intensity", ClampMin = "0.0", ClampMax = "20.0"))
+    /** Enables or disables dynamic shadow casting for the focused mesh component during preview. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Rendering",
+              meta = (DisplayName = "Enable Mesh Dynamic Shadows"))
+    bool bCastShadow = true;
+
+    // ── Studio SkyLight Environment ──────────────────────────────────────────
+
+    /** Intensity of the 360° studio SkyLight fill component (0 = rely purely on level ambient). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Environment",
+              meta = (DisplayName = "SkyLight Fill Intensity", ClampMin = "0.0", ClampMax = "20.0", UIMin = "0.0", UIMax = "10.0"))
     float SkyLightIntensity = 2.f;
 
-    /** Color tint of the studio SkyLight. Neutral white preserves material accuracy. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Studio SkyLight",
-              meta = (DisplayName = "SkyLight Color"))
+    /** Color tint for the 360° studio SkyLight ambient fill. Neutral white preserves PBR materials. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Environment",
+              meta = (DisplayName = "SkyLight Ambient Color"))
     FLinearColor SkyLightColor = FLinearColor::White;
 
-    // ── Directional Key Light ───────────────────────────────────────────────
+    // ── Directional Sun Light ────────────────────────────────────────────────
 
     /**
-     * If true (default), automatically inherits the level's main world sun Intensity and Color.
-     * The light direction remains strictly relative to the Camera view direction.
+     * If true, inherits ALL lighting properties (intensity, color, temperature, indirect bounce)
+     * directly from the level's main World Sun light, greyed out in UI.
+     * If false, allows manual override values below.
      */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Use World Sun Defaults"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
+              meta = (DisplayName = "Inherit World Sun Settings"))
     bool bUseWorldSunDefaults = true;
 
-    /**
-     * Intensity of the camera-headlight Directional Key Light (lux).
-     * Used when Use World Sun Defaults is false.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Intensity (lux)", ClampMin = "0.0", ClampMax = "100.0", EditCondition = "!bUseWorldSunDefaults"))
+    /** Manual intensity override for the directional sun light (lux). Active when inherit = false. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
+              meta = (DisplayName = "Sun Light Intensity Override (lux)", ClampMin = "0.0", ClampMax = "100.0", UIMin = "0.0", UIMax = "30.0", EditCondition = "!bUseWorldSunDefaults"))
     float DirectionalLightIntensity = 8.f;
 
-    /**
-     * Color tint of the directional key light.
-     * Used when Use World Sun Defaults is false.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Color", EditCondition = "!bUseWorldSunDefaults"))
+    /** Manual color tint override for the directional sun light. Active when inherit = false. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
+              meta = (DisplayName = "Sun Light Color Override", EditCondition = "!bUseWorldSunDefaults"))
     FLinearColor DirectionalLightColor = FLinearColor(1.f, 0.95f, 0.85f);
 
-    /**
-     * Strict local rotation offset of the directional key light relative to the Camera view direction.
-     * Pitch = -15° tilts light slightly down from the camera line of sight.
-     * Yaw = +15° angles light slightly from the right to create natural 3D specular highlights.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Relative Rotation", EditCondition = "!bUseWorldSunDefaults"))
+    /** Local rotation offset relative to camera view line. Active when inherit = false. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
+              meta = (DisplayName = "Sun Light Relative Rotation", EditCondition = "!bUseWorldSunDefaults"))
     FRotator DirectionalLightRelativeRotation = FRotator(-15.f, 15.f, 0.f);
 
-    /** Whether the camera key light casts real-time shadows. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Casts Shadows", EditCondition = "!bUseWorldSunDefaults"))
+    /** Toggles real-time shadow casting for directional sun light. Active when inherit = false. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
+              meta = (DisplayName = "Sun Light Casts Shadows", EditCondition = "!bUseWorldSunDefaults"))
     bool bDirectionalLightCastShadows = false;
+
+    // ── Preview Rect Lights ──────────────────────────────────────────────────
+
+    /** Intensity of key RectLight component (lux). Default 0 (relying on SkyLight / Sun). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
+              meta = (DisplayName = "Key Rect Intensity (lux)", ClampMin = "0.0", ClampMax = "5000.0", UIMin = "0.0", UIMax = "1000.0"))
+    float KeyLightIntensity = 0.f;
+
+    /** Color tint applied to 3-light RectLight rig. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
+              meta = (DisplayName = "Rect Light Color Tint"))
+    FLinearColor LightColor = FLinearColor::White;
+
+    /** Intensity fraction for Fill & Rim rect lights relative to Key (0 = off, 1 = same). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
+              meta = (DisplayName = "Fill & Rim Intensity Ratio", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+    float FillRimMultiplier = 0.4f;
+
+    /** Source width (cm) for rect light soft shadows. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
+              meta = (DisplayName = "Rect Source Width (cm)", ClampMin = "5.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "300.0"))
+    float LightSourceWidth = 80.f;
+
+    /** Source height (cm) for rect light soft shadows. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
+              meta = (DisplayName = "Rect Source Height (cm)", ClampMin = "5.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "300.0"))
+    float LightSourceHeight = 100.f;
+
+    /** Distance offset of key rect light from pivot along orbit arm (cm). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
+              meta = (DisplayName = "Rect Key Offset Distance (cm)", ClampMin = "50.0", ClampMax = "1000.0", UIMin = "100.0", UIMax = "500.0"))
+    float KeyLightOffset = 200.f;
+
+    /** Falloff attenuation radius (cm) for key rect light. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
+              meta = (DisplayName = "Rect Key Attenuation Radius (cm)", ClampMin = "100.0", ClampMax = "5000.0", UIMin = "200.0", UIMax = "2000.0"))
+    float KeyLightAttenuationRadius = 800.f;
+
+    /** Toggles real-time shadow casting for key rect light. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
+              meta = (DisplayName = "Rect Key Casts Shadows"))
+    bool bPreviewLightCastShadows = false;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -422,6 +372,9 @@ private:
     FRotator     WIP_CachedWorldSunRotation  = FRotator(-46.f, -46.f, 0.f);
     float        WIP_CachedWorldSunIntensity = 8.f;
     FLinearColor WIP_CachedWorldSunColor     = FLinearColor(1.f, 0.95f, 0.85f);
+    bool         WIP_CachedWorldSunUseTemp   = false;
+    float        WIP_CachedWorldSunTemp      = 6500.f;
+    float        WIP_CachedWorldSunIndirect  = 1.0f;
 
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;

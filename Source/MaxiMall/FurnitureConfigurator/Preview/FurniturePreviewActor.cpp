@@ -327,6 +327,9 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     WIP_CachedWorldSunRotation  = FRotator(-46.f, -46.f, 0.f);
     WIP_CachedWorldSunIntensity = 8.f;
     WIP_CachedWorldSunColor     = FLinearColor(1.f, 0.95f, 0.85f);
+    WIP_CachedWorldSunUseTemp   = false;
+    WIP_CachedWorldSunTemp      = 6500.f;
+    WIP_CachedWorldSunIndirect  = 1.0f;
     if (UWorld* W = GetWorld())
     {
         for (TActorIterator<ADirectionalLight> It(W); It; ++It)
@@ -340,6 +343,9 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
                 WIP_CachedWorldSunRotation  = DLActor->GetActorRotation();
                 WIP_CachedWorldSunIntensity = OrigIntensity;
                 WIP_CachedWorldSunColor     = LightComp->GetLightColor();
+                WIP_CachedWorldSunUseTemp   = LightComp->bUseTemperature;
+                WIP_CachedWorldSunTemp      = LightComp->Temperature;
+                WIP_CachedWorldSunIndirect  = LightComp->IndirectLightingIntensity;
                 LightComp->SetIntensity(0.f);
             }
         }
@@ -815,6 +821,12 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         PreviewDirectionalLight->SetIntensity(DLIntensity);
         PreviewDirectionalLight->SetLightColor(DLColor);
+        if (bUseWorldDefaults)
+        {
+            PreviewDirectionalLight->SetUseTemperature(WIP_CachedWorldSunUseTemp);
+            PreviewDirectionalLight->SetTemperature(WIP_CachedWorldSunTemp);
+            PreviewDirectionalLight->SetIndirectLightingIntensity(WIP_CachedWorldSunIndirect);
+        }
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
         PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
 
