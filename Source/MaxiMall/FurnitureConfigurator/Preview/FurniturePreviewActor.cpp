@@ -18,6 +18,7 @@
 #include "Components/SkyLightComponent.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
 
@@ -786,6 +787,13 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         ActiveDirectionalLightRelativeRotation                  = Config ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                             : false;
 
+        // Force runtime attachment to Camera component (overrides any stale Blueprint asset component parent link)
+        if (IsValid(Camera))
+        {
+            PreviewDirectionalLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+            PreviewDirectionalLight->SetRelativeLocation(FVector::ZeroVector);
+        }
+
         PreviewDirectionalLight->SetIntensity(DLIntensity);
         PreviewDirectionalLight->SetLightColor(DLColor);
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
@@ -864,8 +872,11 @@ void AFurniturePreviewActor::WIP_UpdateDirectionalLightRotation()
     }
 
     // Compose local offset (Pitch -15°, Yaw +15°) with camera world rotation
-    const FQuat TargetQuat = FQuat(CamRot) * FQuat(ActiveDirectionalLightRelativeRotation);
-    PreviewDirectionalLight->SetWorldRotation(TargetQuat.Rotator());
+    const FRotator TargetLightRot = UKismetMathLibrary::ComposeRotators(ActiveDirectionalLightRelativeRotation, CamRot);
+    PreviewDirectionalLight->SetWorldRotation(TargetLightRot);
+
+    UE_LOG(LogTemp, Log, TEXT("[PreviewLight] CamRot Pitch=%.2f Yaw=%.2f -> LightWorldRot Pitch=%.2f Yaw=%.2f"),
+        CamRot.Pitch, CamRot.Yaw, TargetLightRot.Pitch, TargetLightRot.Yaw);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
