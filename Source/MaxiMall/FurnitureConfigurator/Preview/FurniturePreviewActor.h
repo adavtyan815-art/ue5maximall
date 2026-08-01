@@ -426,6 +426,11 @@ private:
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
 
+    /** WorldInPlace pivot reference state for exact mesh-centered rotation. */
+    FVector WIP_MeshPivotWorld      = FVector::ZeroVector;
+    FVector WIP_MeshRootLocAtReset  = FVector::ZeroVector;
+    FQuat   WIP_InitialMeshRootQuat = FQuat::Identity;
+
     // ── Private helpers ────────────────────────────────────────────────────
     FVector WIP_GetFocusPivotWorld() const;
     void    WIP_ApplyStencilIsolation();

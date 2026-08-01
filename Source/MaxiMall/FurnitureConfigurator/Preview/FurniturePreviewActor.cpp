@@ -662,6 +662,15 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     WIP_MeshBoundsRadius = MeshRadius;
     WIP_FocusPivotWorld  = FocusPivot;
 
+    // Cache initial MeshRoot state and pivot for exact rotation around bounds center
+    if (IsValid(MeshRoot))
+    {
+        MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
+        WIP_MeshRootLocAtReset  = MeshRoot->GetComponentLocation();
+        WIP_InitialMeshRootQuat = MeshRoot->GetComponentQuat();
+        WIP_MeshPivotWorld      = FocusPivot;
+    }
+
     // Adaptive initial distance: 2.5× the mesh radius, clamped to per-component limits.
     const float AdaptiveDist = FMath::Clamp(MeshRadius * 2.5f, ActiveMinZoom, ActiveMaxZoom);
     WIP_CurrentViewDist = AdaptiveDist;
@@ -852,14 +861,32 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
 void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
-    if (!IsValid(MeshRoot)) { return; }
+    if (!IsValid(MeshRoot) || !IsValid(Camera)) { return; }
 
     WorldInPlaceYaw   += DeltaYaw;
     WorldInPlacePitch  = FMath::Clamp(WorldInPlacePitch + DeltaPitch, -80.f, 80.f);
 
-    // Rotate MeshRoot around focus pivot while keeping Camera and PreviewDirectionalLight 100% static
-    const FRotator MeshRot = FRotator(WorldInPlacePitch, WorldInPlaceYaw, 0.f);
-    MeshRoot->SetRelativeRotation(MeshRot);
+    // Compute Camera Right vector (flattened to Z=0 plane to prevent roll)
+    FVector CamRight = Camera->GetRightVector();
+    CamRight.Z = 0.f;
+    CamRight.Normalize();
+    if (CamRight.IsNearlyZero())
+    {
+        CamRight = FVector::RightVector;
+    }
+
+    // Yaw (left/right drag) around World Z (UpVector)
+    // Pitch (up/down drag) around Camera Right vector
+    FQuat YawQ        = FQuat(FVector::UpVector, FMath::DegreesToRadians(WorldInPlaceYaw));
+    FQuat PitchQ      = FQuat(CamRight,           FMath::DegreesToRadians(WorldInPlacePitch));
+    FQuat TotalDeltaQ = PitchQ * YawQ;
+
+    // Combine delta rotation with initial MeshRoot orientation
+    FQuat NewQuat = TotalDeltaQ * WIP_InitialMeshRootQuat;
+
+    // Rotate MeshRoot location around WIP_MeshPivotWorld (the mesh's actual visual center)
+    FVector NewLoc = WIP_MeshPivotWorld + TotalDeltaQ.RotateVector(WIP_MeshRootLocAtReset - WIP_MeshPivotWorld);
+    MeshRoot->SetWorldLocationAndRotation(NewLoc, NewQuat);
 }
 
 void AFurniturePreviewActor::ResetRotation()
@@ -871,7 +898,7 @@ void AFurniturePreviewActor::ResetRotation()
 
     if (IsValid(MeshRoot))
     {
-        MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
+        MeshRoot->SetWorldLocationAndRotation(WIP_MeshRootLocAtReset, WIP_InitialMeshRootQuat);
     }
 
     if (IsValid(SpringArm))
