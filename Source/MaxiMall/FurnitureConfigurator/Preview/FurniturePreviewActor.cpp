@@ -791,6 +791,7 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
+        ActiveDirectionalLightBaseIntensity                     = DLIntensity;
         ActiveDirectionalLightRelativeRotation                  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                             : false;
 
@@ -874,13 +875,22 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
         AdaptiveRelRot.Pitch     = FMath::Lerp(ActiveDirectionalLightRelativeRotation.Pitch, 0.f, PitchUpAlpha);
         PreviewDirectionalLight->SetRelativeRotation(AdaptiveRelRot);
 
+        // Compensate directional light intensity as camera orbits underneath mesh:
+        // Horizontal (Pitch <= 0°): Base intensity preserves 100% natural aesthetic balance without front-face blowout.
+        // Underneath (Pitch > 0°): Smoothly lerps up to compensated intensity so bottom face receives direct sunlight.
+        const float BaseIntensity      = ActiveDirectionalLightBaseIntensity;
+        const float CompensatedBottom  = FMath::Max(BaseIntensity * 7.5f, 18.f);
+        const float EffectiveIntensity = FMath::Lerp(BaseIntensity, CompensatedBottom, PitchUpAlpha);
+        PreviewDirectionalLight->SetIntensity(EffectiveIntensity);
+
         const FVector CamFwd   = Camera->GetForwardVector();
         const FVector LightDir = PreviewDirectionalLight->GetForwardVector();
         const float Alignment  = FVector::DotProduct(CamFwd, LightDir);
 
-        UE_LOG(LogTemp, Warning, TEXT("[PreviewOrbit TICK] CamWorldRot=%s | LightWorldRot=%s | CamFwd=%s | LightDir=%s | DotAlignment=%.3f"),
+        UE_LOG(LogTemp, Warning, TEXT("[PreviewOrbit TICK] CamWorldRot=%s | LightWorldRot=%s | Intensity=%.2f | CamFwd=%s | LightDir=%s | DotAlignment=%.3f"),
             *Camera->GetComponentRotation().ToString(),
             *PreviewDirectionalLight->GetComponentRotation().ToString(),
+            EffectiveIntensity,
             *CamFwd.ToString(),
             *LightDir.ToString(),
             Alignment);
@@ -904,6 +914,7 @@ void AFurniturePreviewActor::ResetRotation()
     if (IsValid(PreviewDirectionalLight))
     {
         PreviewDirectionalLight->SetRelativeRotation(ActiveDirectionalLightRelativeRotation);
+        PreviewDirectionalLight->SetIntensity(ActiveDirectionalLightBaseIntensity);
     }
 
     WIP_ApplyStencilIsolation();
