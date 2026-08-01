@@ -183,14 +183,23 @@ struct FPreviewComponentConfig
     FLinearColor DirectionalLightColor = FLinearColor(1.f, 0.95f, 0.85f);
 
     /**
-     * Pitch offset of the key light relative to the camera orbit angle (degrees).
-     * Negative = light comes from above the camera → natural downward sun angle.
-     * Default −15° gives a "sun slightly higher than the viewer" look.
-     * Range: −60° (steep top-down) to 0° (exactly at camera level).
+     * World rotation of the Directional Key Light during this component's preview.
+     * Unlike camera-attached lights, this light stays at a FIXED world-space angle
+     * as the user orbits around the model, maintaining a natural sun direction
+     * without pitch-black back-face artifacts or day/night shifting.
+     * Default Pitch = -46°, Yaw = -46° matches the level's sun setup.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Pitch Offset (°)", ClampMin = "-60.0", ClampMax = "30.0"))
-    float DirectionalLightPitchOffset = -15.f;
+              meta = (DisplayName = "Key Light Rotation"))
+    FRotator DirectionalLightRotation = FRotator(-46.f, -46.f, 0.f);
+
+    /**
+     * If true (default), automatically inherits the level's active world sun rotation
+     * (cached during LoadProductPreview). Set to false to use custom DirectionalLightRotation above.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
+              meta = (DisplayName = "Inherit World Sun Rotation"))
+    bool bUseWorldSunRotation = true;
 
     /** Whether the orbiting key light casts real-time shadows. Enabling adds visual
      *  depth but requires Lumen to recompute GI; leave false unless specifically needed. */
@@ -296,11 +305,10 @@ public:
     TObjectPtr<USkyLightComponent> PreviewSkyLight;
 
     /**
-     * Camera-orbiting Directional Key Light.
-     * Attached to SpringArm — rotates 1:1 with camera orbit, always illuminating
-     * the camera-facing face. Has no attenuation radius, so zoom and mesh size
-     * have zero effect on intensity. World ADirectionalLight actors are cached
-     * and set to 0 intensity for the duration of the preview.
+     * Studio Directional Key Light.
+     * Attached to PreviewRoot (FIXED world-space rotation, does NOT orbit with camera).
+     * Maintains a constant natural sun angle while orbiting, matching the level's
+     * sun rotation or custom per-component DirectionalLightRotation.
      */
     UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
     TObjectPtr<UDirectionalLightComponent> PreviewDirectionalLight;
@@ -413,6 +421,9 @@ private:
     /** World ADirectionalLight actors cached with their original intensities.
      *  Intensity is set to 0 during preview and restored on EndPlay. */
     TArray<TPair<TWeakObjectPtr<ADirectionalLight>, float>> WIP_CachedWorldDirLights;
+
+    /** World rotation of the primary ADirectionalLight captured in LoadProductPreview. */
+    FRotator WIP_CachedWorldSunRotation = FRotator(-46.f, -46.f, 0.f);
 
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;

@@ -164,12 +164,13 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     PreviewSkyLight->SetVisibility(false);        // hidden until preview is active
 
     // ── Studio Directional Key Light ────────────────────────────────────────
-    // Orbits 1:1 with SpringArm, keeping direct light always pointing at the
-    // camera-facing side of the mesh. Has zero attenuation radius (infinite projection),
-    // so distance/zoom and mesh bounds have zero effect on intensity or clipping.
+    // Parented to PreviewRoot (NOT SpringArm) so its world-space rotation remains
+    // FIXED during camera orbit, maintaining a constant natural sun angle.
+    // Has zero attenuation radius (infinite projection), so distance/zoom and
+    // mesh bounds have zero effect on intensity or clipping.
     PreviewDirectionalLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("PreviewDirectionalLight"));
-    PreviewDirectionalLight->SetupAttachment(SpringArm);
-    PreviewDirectionalLight->SetRelativeRotation(FRotator(-15.f, 0.f, 0.f)); // light comes slightly from above
+    PreviewDirectionalLight->SetupAttachment(PreviewRoot);
+    PreviewDirectionalLight->SetWorldRotation(FRotator(-46.f, -46.f, 0.f)); // default sun angle matching world sun
     PreviewDirectionalLight->SetIntensity(8.f);
     PreviewDirectionalLight->SetLightColor(FLinearColor(1.f, 0.95f, 0.85f)); // warm sunlight tint
     PreviewDirectionalLight->SetCastShadows(false);
@@ -315,7 +316,9 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 
     // ── Cache world ADirectionalLight actors and zero their intensity ──────
     // Replaces the level's main sun with our studio directional light during preview.
+    // Also captures the world sun's rotation to use as the default preview sun angle.
     WIP_CachedWorldDirLights.Empty();
+    WIP_CachedWorldSunRotation = FRotator(-46.f, -46.f, 0.f);
     if (UWorld* W = GetWorld())
     {
         for (TActorIterator<ADirectionalLight> It(W); It; ++It)
@@ -325,6 +328,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             {
                 float OrigIntensity = DLActor->GetLightComponent()->Intensity;
                 WIP_CachedWorldDirLights.Emplace(DLActor, OrigIntensity);
+                WIP_CachedWorldSunRotation = DLActor->GetActorRotation();
                 DLActor->GetLightComponent()->SetIntensity(0.f);
             }
         }
@@ -770,12 +774,13 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // ── 13. Studio Directional Key Light per-component config ─────────────
     if (IsValid(PreviewDirectionalLight))
     {
-        const float DLIntensity   = Config ? Config->DirectionalLightIntensity   : 8.f;
-        const FLinearColor DLColor = Config ? Config->DirectionalLightColor      : FLinearColor(1.f, 0.95f, 0.85f);
-        const float DLPitch       = Config ? Config->DirectionalLightPitchOffset : -15.f;
-        const bool bDLShadows     = Config ? Config->bDirectionalLightCastShadows : false;
+        const float DLIntensity    = Config ? Config->DirectionalLightIntensity   : 8.f;
+        const FLinearColor DLColor  = Config ? Config->DirectionalLightColor      : FLinearColor(1.f, 0.95f, 0.85f);
+        const bool bInheritSunRot   = Config ? Config->bUseWorldSunRotation       : true;
+        const FRotator DLRot        = (Config && !bInheritSunRot) ? Config->DirectionalLightRotation : WIP_CachedWorldSunRotation;
+        const bool bDLShadows      = Config ? Config->bDirectionalLightCastShadows : false;
 
-        PreviewDirectionalLight->SetRelativeRotation(FRotator(DLPitch, 0.f, 0.f));
+        PreviewDirectionalLight->SetWorldRotation(DLRot);
         PreviewDirectionalLight->SetIntensity(DLIntensity);
         PreviewDirectionalLight->SetLightColor(DLColor);
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
