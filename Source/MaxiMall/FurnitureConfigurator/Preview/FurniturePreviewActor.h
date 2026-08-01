@@ -27,6 +27,7 @@ class UStaticMeshComponent;
 class USpringArmComponent;
 class UCameraComponent;
 class URectLightComponent;
+class USkyLightComponent;
 class ACharacter;
 class AShowroomBooth;
 class ARectLight;
@@ -140,6 +141,25 @@ struct FPreviewComponentConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Exposure",
               meta = (DisplayName = "Exposure Compensation (EV)", ClampMin = "-8.0", ClampMax = "8.0"))
     float ExposureCompensation = 0.f;
+
+    // ── Studio SkyLight ─────────────────────────────────────────────────────
+
+    /**
+     * Intensity of the studio SkyLight during this component's preview.
+     * A single SkyLightComponent provides true 360° diffuse fill from all
+     * directions simultaneously, eliminating the pitch-black back-side problem
+     * caused by WIP_UpdateWallOcclusion removing Lumen's bounce surfaces.
+     * Default 2.0 gives soft fill without flattening PBR material response.
+     * Set to 0 to disable and rely purely on the world's existing lighting.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Studio SkyLight",
+              meta = (DisplayName = "Studio SkyLight Intensity", ClampMin = "0.0", ClampMax = "20.0"))
+    float SkyLightIntensity = 2.f;
+
+    /** Color tint of the studio SkyLight. Neutral white preserves material accuracy. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Studio SkyLight",
+              meta = (DisplayName = "SkyLight Color"))
+    FLinearColor SkyLightColor = FLinearColor::White;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,7 +237,7 @@ public:
     // Three URectLightComponents providing even illumination of the focused mesh.
     // Key orbits with the camera; Fill and Rim stay at the orbit pivot.
 
-    /** Key light — attached to Camera, always illuminates the mesh face the camera sees. */
+    /** Key light — at fixed orbit offset, always illuminates the mesh face the camera sees. */
     UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
     TObjectPtr<URectLightComponent> PreviewKeyLight;
 
@@ -228,6 +248,15 @@ public:
     /** Rim / top light — at orbit pivot, angled from above, provides edge definition. */
     UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
     TObjectPtr<URectLightComponent> PreviewRimLight;
+
+    /**
+     * Studio SkyLight — provides 360° diffuse fill from all directions.
+     * Activated once in LoadProductPreview (RecaptureSky) and configured
+     * per-component in SetFocusComponent via SkyLightIntensity / SkyLightColor.
+     * Eliminates pitch-black back-side artifacts caused by wall occlusion.
+     */
+    UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
+    TObjectPtr<USkyLightComponent> PreviewSkyLight;
 
     // ─────────────────────────────────────────────────────────────────────
     // PREVIEW CONFIG

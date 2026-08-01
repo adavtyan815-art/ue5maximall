@@ -14,6 +14,7 @@
 #include "Engine/OverlapResult.h"
 #include "Engine/RectLight.h"
 #include "Components/RectLightComponent.h"
+#include "Components/SkyLightComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -145,6 +146,20 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     PreviewRimLight->SourceHeight = 60.f;
     PreviewRimLight->SetCastShadows(false);
     PreviewRimLight->SetVisibility(false);
+
+    // ── Studio SkyLight ─────────────────────────────────────────────────────
+    // One-shot captured scene, enabled only during active preview.
+    // Provides true 360° diffuse ambient fill from all directions, solving the
+    // pitch-black back-side artifact caused by WIP_UpdateWallOcclusion removing
+    // Lumen bounce surfaces. bRealTimeCapture=false: zero per-frame overhead.
+    PreviewSkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("PreviewSkyLight"));
+    PreviewSkyLight->SetupAttachment(PreviewRoot);
+    PreviewSkyLight->SourceType       = ESkyLightSourceType::SLS_CapturedScene;
+    PreviewSkyLight->bRealTimeCapture = false;    // single RecaptureSky() at preview start
+    PreviewSkyLight->SetIntensity(2.f);
+    PreviewSkyLight->SetLightColor(FLinearColor::White);
+    PreviewSkyLight->SetCastShadows(false);
+    PreviewSkyLight->SetVisibility(false);        // hidden until preview is active
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,6 +240,7 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
     if (IsValid(PreviewKeyLight))  { PreviewKeyLight->SetVisibility(false); }
     if (IsValid(PreviewFillLight)) { PreviewFillLight->SetVisibility(false); }
     if (IsValid(PreviewRimLight))  { PreviewRimLight->SetVisibility(false); }
+    if (IsValid(PreviewSkyLight))  { PreviewSkyLight->SetVisibility(false); }
 
     // ── Restore hidden world Rect Light actors ────────────────────────────
     for (const TWeakObjectPtr<AActor>& LightPtr : WIP_CachedWorldRectLights)
@@ -270,6 +286,17 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
                 RLActor->SetActorHiddenInGame(true);
             }
         }
+    }
+
+    // ── Studio SkyLight: one-shot scene capture ──────────────────────────
+    // Called here — AFTER the source booth is hidden (no booth mesh in capture)
+    // but BEFORE WIP_UpdateWallOcclusion (which runs in SetFocusComponent).
+    // This means the capture still sees ceiling/distant walls as ambient bounce
+    // sources, giving a naturalistic ambient rather than a pitch-black capture.
+    if (IsValid(PreviewSkyLight))
+    {
+        PreviewSkyLight->SetVisibility(true);
+        PreviewSkyLight->RecaptureSky();
     }
     if (IsValid(MeshRoot))
     {
@@ -685,7 +712,20 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         }
     }
 
-    // ── 12. Stencil isolation post-process material ───────────────────────
+    // ── 12. Studio SkyLight per-component config ──────────────────────────
+    // Intensity and color are set here so each component can tune the ambient
+    // fill independently. The SkyLight was already activated and recaptured in
+    // LoadProductPreview; we only update its parameters now.
+    if (IsValid(PreviewSkyLight))
+    {
+        const float SLIntensity    = Config ? Config->SkyLightIntensity : 2.f;
+        const FLinearColor SLColor = Config ? Config->SkyLightColor     : FLinearColor::White;
+        PreviewSkyLight->SetIntensity(SLIntensity);
+        PreviewSkyLight->SetLightColor(SLColor);
+        PreviewSkyLight->SetVisibility(SLIntensity > 0.f);
+    }
+
+    // ── 13. Stencil isolation post-process material ───────────────────────
     WIP_ApplyStencilIsolation();
 }
 
