@@ -861,20 +861,27 @@ void AFurniturePreviewActor::WIP_UpdateDirectionalLightRotation()
 {
     if (!IsValid(PreviewDirectionalLight) || !PreviewDirectionalLight->IsVisible()) { return; }
 
-    FRotator CamRot = FRotator::ZeroRotator;
+    FTransform CamTransform = FTransform::Identity;
     if (IsValid(Camera))
     {
-        CamRot = Camera->GetComponentRotation();
+        CamTransform = Camera->GetComponentTransform();
     }
     else if (IsValid(SpringArm))
     {
-        CamRot = SpringArm->GetComponentRotation();
+        CamTransform = SpringArm->GetComponentTransform();
     }
 
-    // Compose local offset (Pitch -15°, Yaw +15°) with camera world rotation
-    const FRotator TargetLightRot = UKismetMathLibrary::ComposeRotators(ActiveDirectionalLightRelativeRotation, CamRot);
+    // Convert local relative rotation into a camera-space direction vector
+    const FVector LocalLightDir = ActiveDirectionalLightRelativeRotation.Vector();
+
+    // Transform camera-local direction vector into world space using the camera's full world transform
+    const FVector WorldLightDir = CamTransform.TransformVectorNoScale(LocalLightDir);
+
+    // Compute final world rotation for PreviewDirectionalLight
+    const FRotator TargetLightRot = WorldLightDir.Rotation();
     PreviewDirectionalLight->SetWorldRotation(TargetLightRot);
 
+    const FRotator CamRot = CamTransform.Rotator();
     UE_LOG(LogTemp, Log, TEXT("[PreviewLight] CamRot Pitch=%.2f Yaw=%.2f -> LightWorldRot Pitch=%.2f Yaw=%.2f"),
         CamRot.Pitch, CamRot.Yaw, TargetLightRot.Pitch, TargetLightRot.Yaw);
 }
