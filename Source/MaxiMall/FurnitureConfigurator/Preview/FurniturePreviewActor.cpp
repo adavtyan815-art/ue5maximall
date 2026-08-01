@@ -102,11 +102,16 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     Camera->PostProcessSettings.bOverride_AutoExposureMaxBrightness = false;
 
     // ── Preview Lighting Rig ──────────────────────────────────────────────
-    // Key: attached to Camera (orbits 1:1 with camera), local yaw=180° flips
-    //      the light's emission direction so it always faces toward the mesh.
+    // Key: attached to SpringArm at a FIXED −200cm offset along the arm direction.
+    // This means the light orbits 1:1 with the camera (SpringArm rotation) but
+    // its distance to the mesh pivot stays CONSTANT regardless of zoom level.
+    // Attaching to Camera instead would move the light closer on zoom, causing the
+    // attenuation radius boundary to cross the mesh surface (visible hard line).
+    // Yaw=180° flips emission toward the mesh (pivot direction).
     PreviewKeyLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewKeyLight"));
-    PreviewKeyLight->SetupAttachment(Camera);
-    PreviewKeyLight->SetRelativeRotation(FRotator(0.f, 180.f, 0.f)); // face toward mesh
+    PreviewKeyLight->SetupAttachment(SpringArm);
+    PreviewKeyLight->SetRelativeLocation(FVector(-200.f, 0.f, 0.f)); // 200cm toward camera from pivot
+    PreviewKeyLight->SetRelativeRotation(FRotator(0.f, 180.f, 0.f)); // face toward mesh (pivot)
     PreviewKeyLight->SetIntensity(800.f);
     PreviewKeyLight->SetLightColor(FLinearColor::White);
     PreviewKeyLight->SourceWidth  = 80.f;
