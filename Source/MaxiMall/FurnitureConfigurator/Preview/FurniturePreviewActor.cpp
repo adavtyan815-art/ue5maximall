@@ -852,18 +852,14 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
 void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
-    if (!IsValid(SpringArm)) { return; }
+    if (!IsValid(MeshRoot)) { return; }
 
     WorldInPlaceYaw   += DeltaYaw;
     WorldInPlacePitch  = FMath::Clamp(WorldInPlacePitch + DeltaPitch, -80.f, 80.f);
 
-    FRotator OrbitRot  = WIP_InitialOrbitRot;
-    OrbitRot.Yaw      += WorldInPlaceYaw;
-    OrbitRot.Pitch     = FMath::Clamp(OrbitRot.Pitch + WorldInPlacePitch, -80.f, 80.f);
-    OrbitRot.Roll      = 0.f;
-
-    SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
-    SpringArm->SetWorldRotation(OrbitRot);
+    // Rotate MeshRoot around focus pivot while keeping Camera and PreviewDirectionalLight 100% static
+    const FRotator MeshRot = FRotator(WorldInPlacePitch, WorldInPlaceYaw, 0.f);
+    MeshRoot->SetRelativeRotation(MeshRot);
 }
 
 void AFurniturePreviewActor::ResetRotation()
@@ -872,6 +868,11 @@ void AFurniturePreviewActor::ResetRotation()
     WorldInPlacePitch   = 0.f;
     WIP_CurrentViewDist = WIP_InitialViewDist;
     CurrentZoomLength   = WIP_InitialViewDist;
+
+    if (IsValid(MeshRoot))
+    {
+        MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
+    }
 
     if (IsValid(SpringArm))
     {
