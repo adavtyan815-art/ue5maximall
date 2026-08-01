@@ -789,10 +789,20 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const bool bUseWorldDefaults = Config ? Config->bUseWorldSunDefaults : true;
 
-        const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
+        float DLIntensity           = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
-        const FRotator DLRelRot     = Config ? Config->DirectionalLightRelativeRotation                         : FRotator(-15.f, 15.f, 0.f);
+        FRotator DLRelRot           = Config ? Config->DirectionalLightRelativeRotation                         : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                             : false;
+
+        // Clamp relative pitch to camera headlight range [-20°, +15°]
+        // Prevents legacy -46° world sun pitch from tilting light away from camera line of sight
+        DLRelRot.Pitch = FMath::Clamp(DLRelRot.Pitch, -20.f, 15.f);
+
+        // Ensure minimum effective intensity for studio key light visibility
+        if (DLIntensity > 0.f && DLIntensity < 8.f)
+        {
+            DLIntensity = 8.f;
+        }
 
         // Pure Camera Component Attachment: Let Unreal Engine's native transform hierarchy handle 1:1 camera rotation
         if (IsValid(Camera))
