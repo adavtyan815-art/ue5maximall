@@ -789,20 +789,10 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const bool bUseWorldDefaults = Config ? Config->bUseWorldSunDefaults : true;
 
-        float DLIntensity           = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
+        const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
-        FRotator DLRelRot           = Config ? Config->DirectionalLightRelativeRotation                         : FRotator(-15.f, 15.f, 0.f);
+        const FRotator DLRelRot     = Config ? Config->DirectionalLightRelativeRotation                         : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                             : false;
-
-        // Clamp relative pitch to camera headlight range [-20°, +15°]
-        // Prevents legacy -46° world sun pitch from tilting light away from camera line of sight
-        DLRelRot.Pitch = FMath::Clamp(DLRelRot.Pitch, -20.f, 15.f);
-
-        // Ensure minimum effective intensity for studio key light visibility
-        if (DLIntensity > 0.f && DLIntensity < 8.f)
-        {
-            DLIntensity = 8.f;
-        }
 
         // Pure Camera Component Attachment: Let Unreal Engine's native transform hierarchy handle 1:1 camera rotation
         if (IsValid(Camera))
@@ -817,12 +807,36 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
         PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
 
-        UE_LOG(LogTemp, Warning, TEXT("[PreviewDirLight SETUP] Mobility=%d (Movable=2), Intensity=%.2f, AttachedTo=%s, RelRot=%s, WorldRot=%s"),
-            (int32)PreviewDirectionalLight->Mobility,
-            PreviewDirectionalLight->Intensity,
-            PreviewDirectionalLight->GetAttachParent() ? *PreviewDirectionalLight->GetAttachParent()->GetName() : TEXT("None"),
+        UE_LOG(LogTemp, Warning, TEXT("[PreviewDirLight SETUP] UseWorldDefaults=%d | CachedWorldIntensity=%.2f | ConfigIntensity=%.2f | FinalIntensity=%.2f | CastShadows=%d | RelRot=%s | WorldRot=%s"),
+            bUseWorldDefaults ? 1 : 0,
+            WIP_CachedWorldSunIntensity,
+            Config ? Config->DirectionalLightIntensity : -1.f,
+            DLIntensity,
+            bDLShadows ? 1 : 0,
             *PreviewDirectionalLight->GetRelativeRotation().ToString(),
             *PreviewDirectionalLight->GetComponentRotation().ToString());
+
+        if (IsValid(PreviewSkyLight))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[PreviewSkyLight SETUP] Mobility=%d | Intensity=%.2f | Visibility=%d"),
+                (int32)PreviewSkyLight->Mobility, PreviewSkyLight->Intensity, PreviewSkyLight->IsVisible() ? 1 : 0);
+        }
+
+        if (IsValid(CurrentFocusedComponent) && CurrentFocusedComponent->GetStaticMesh())
+        {
+            UStaticMesh* MeshAsset = CurrentFocusedComponent->GetStaticMesh();
+            UE_LOG(LogTemp, Warning, TEXT("[PreviewMesh DIAG] FocusedMesh=%s | NumMaterials=%d | NumLODs=%d"),
+                *MeshAsset->GetName(), CurrentFocusedComponent->GetNumMaterials(), MeshAsset->GetNumLODs());
+            for (int32 MatIdx = 0; MatIdx < CurrentFocusedComponent->GetNumMaterials(); ++MatIdx)
+            {
+                UMaterialInterface* Mat = CurrentFocusedComponent->GetMaterial(MatIdx);
+                if (Mat)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[PreviewMesh DIAG] Mat[%d]=%s | TwoSided=%d"),
+                        MatIdx, *Mat->GetName(), Mat->IsTwoSided() ? 1 : 0);
+                }
+            }
+        }
     }
 
     // ── 14. Stencil isolation post-process material ───────────────────────
