@@ -426,6 +426,9 @@ private:
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
 
+    /** Base relative rotation offset for the camera key light. */
+    FRotator ActiveDirectionalLightRelativeRotation = FRotator(-15.f, 15.f, 0.f);
+
     // ── Private helpers ────────────────────────────────────────────────────
     FVector WIP_GetFocusPivotWorld() const;
     void    WIP_ApplyStencilIsolation();

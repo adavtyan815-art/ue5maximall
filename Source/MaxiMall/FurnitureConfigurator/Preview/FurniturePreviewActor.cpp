@@ -791,7 +791,7 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
-        const FRotator DLRelRot     = Config ? Config->DirectionalLightRelativeRotation                         : FRotator(-15.f, 15.f, 0.f);
+        ActiveDirectionalLightRelativeRotation                  = Config ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                             : false;
 
         // Pure Camera Component Attachment: Let Unreal Engine's native transform hierarchy handle 1:1 camera rotation
@@ -799,7 +799,7 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         {
             PreviewDirectionalLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
             PreviewDirectionalLight->SetRelativeLocation(FVector::ZeroVector);
-            PreviewDirectionalLight->SetRelativeRotation(DLRelRot);
+            PreviewDirectionalLight->SetRelativeRotation(ActiveDirectionalLightRelativeRotation);
         }
 
         PreviewDirectionalLight->SetIntensity(DLIntensity);
@@ -862,12 +862,16 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
     SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
     SpringArm->SetWorldRotation(OrbitRot);
 
+    // Adaptive Camera-Headlight Alignment:
+    // When looking horizontally or from above (CamRot.Pitch <= 0°), maintains 100% of ActiveDirectionalLightRelativeRotation (-15° Pitch offset).
+    // When orbiting underneath to look UP at bottom face (CamRot.Pitch > 0°), smoothly lerps relative Pitch to 0°,
+    // shining light head-on along camera view line to illuminate recessed bottom cavities without side-skirt shadows.
     if (IsValid(PreviewDirectionalLight) && IsValid(Camera))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[PreviewOrbit TICK] CamWorldRot=%s | LightWorldRot=%s | LightWorldLoc=%s"),
-            *Camera->GetComponentRotation().ToString(),
-            *PreviewDirectionalLight->GetComponentRotation().ToString(),
-            *PreviewDirectionalLight->GetComponentLocation().ToString());
+        const float PitchUpAlpha = FMath::Clamp(Camera->GetComponentRotation().Pitch / 45.f, 0.f, 1.f);
+        FRotator AdaptiveRelRot  = ActiveDirectionalLightRelativeRotation;
+        AdaptiveRelRot.Pitch     = FMath::Lerp(ActiveDirectionalLightRelativeRotation.Pitch, 0.f, PitchUpAlpha);
+        PreviewDirectionalLight->SetRelativeRotation(AdaptiveRelRot);
     }
 }
 
@@ -884,6 +888,12 @@ void AFurniturePreviewActor::ResetRotation()
         SpringArm->SetWorldRotation(WIP_InitialOrbitRot);
         SpringArm->TargetArmLength = WIP_InitialViewDist;
     }
+
+    if (IsValid(PreviewDirectionalLight))
+    {
+        PreviewDirectionalLight->SetRelativeRotation(ActiveDirectionalLightRelativeRotation);
+    }
+
     WIP_ApplyStencilIsolation();
 }
 
