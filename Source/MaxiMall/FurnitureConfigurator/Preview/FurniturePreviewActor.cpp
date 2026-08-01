@@ -13,8 +13,10 @@
 #include "EngineUtils.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/RectLight.h"
+#include "Engine/DirectionalLight.h"
 #include "Components/RectLightComponent.h"
 #include "Components/SkyLightComponent.h"
+#include "Components/DirectionalLightComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -160,6 +162,18 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     PreviewSkyLight->SetLightColor(FLinearColor::White);
     PreviewSkyLight->SetCastShadows(false);
     PreviewSkyLight->SetVisibility(false);        // hidden until preview is active
+
+    // ── Studio Directional Key Light ────────────────────────────────────────
+    // Orbits 1:1 with SpringArm, keeping direct light always pointing at the
+    // camera-facing side of the mesh. Has zero attenuation radius (infinite projection),
+    // so distance/zoom and mesh bounds have zero effect on intensity or clipping.
+    PreviewDirectionalLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("PreviewDirectionalLight"));
+    PreviewDirectionalLight->SetupAttachment(SpringArm);
+    PreviewDirectionalLight->SetRelativeRotation(FRotator(-15.f, 0.f, 0.f)); // light comes slightly from above
+    PreviewDirectionalLight->SetIntensity(8.f);
+    PreviewDirectionalLight->SetLightColor(FLinearColor(1.f, 0.95f, 0.85f)); // warm sunlight tint
+    PreviewDirectionalLight->SetCastShadows(false);
+    PreviewDirectionalLight->SetVisibility(false);        // hidden until preview is active
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -237,10 +251,11 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
     RestoreState(ClosetDoorMeshSlot1.Get(),  ClosetConfig.bCastShadow);
 
     // ── Hide preview lights ───────────────────────────────────────────────
-    if (IsValid(PreviewKeyLight))  { PreviewKeyLight->SetVisibility(false); }
-    if (IsValid(PreviewFillLight)) { PreviewFillLight->SetVisibility(false); }
-    if (IsValid(PreviewRimLight))  { PreviewRimLight->SetVisibility(false); }
-    if (IsValid(PreviewSkyLight))  { PreviewSkyLight->SetVisibility(false); }
+    if (IsValid(PreviewKeyLight))          { PreviewKeyLight->SetVisibility(false); }
+    if (IsValid(PreviewFillLight))         { PreviewFillLight->SetVisibility(false); }
+    if (IsValid(PreviewRimLight))          { PreviewRimLight->SetVisibility(false); }
+    if (IsValid(PreviewSkyLight))          { PreviewSkyLight->SetVisibility(false); }
+    if (IsValid(PreviewDirectionalLight))  { PreviewDirectionalLight->SetVisibility(false); }
 
     // ── Restore hidden world Rect Light actors ────────────────────────────
     for (const TWeakObjectPtr<AActor>& LightPtr : WIP_CachedWorldRectLights)
@@ -251,6 +266,16 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
         }
     }
     WIP_CachedWorldRectLights.Empty();
+
+    // ── Restore world ADirectionalLight intensities ────────────────────────
+    for (const auto& Pair : WIP_CachedWorldDirLights)
+    {
+        if (Pair.Key.IsValid() && Pair.Key->GetLightComponent())
+        {
+            Pair.Key->GetLightComponent()->SetIntensity(Pair.Value);
+        }
+    }
+    WIP_CachedWorldDirLights.Empty();
 
     Super::EndPlay(EndPlayReason);
 }
@@ -284,6 +309,23 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             {
                 WIP_CachedWorldRectLights.Add(RLActor);
                 RLActor->SetActorHiddenInGame(true);
+            }
+        }
+    }
+
+    // ── Cache world ADirectionalLight actors and zero their intensity ──────
+    // Replaces the level's main sun with our studio directional light during preview.
+    WIP_CachedWorldDirLights.Empty();
+    if (UWorld* W = GetWorld())
+    {
+        for (TActorIterator<ADirectionalLight> It(W); It; ++It)
+        {
+            ADirectionalLight* DLActor = *It;
+            if (IsValid(DLActor) && !DLActor->IsHidden() && DLActor->GetLightComponent())
+            {
+                float OrigIntensity = DLActor->GetLightComponent()->Intensity;
+                WIP_CachedWorldDirLights.Emplace(DLActor, OrigIntensity);
+                DLActor->GetLightComponent()->SetIntensity(0.f);
             }
         }
     }
@@ -725,7 +767,22 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         PreviewSkyLight->SetVisibility(SLIntensity > 0.f);
     }
 
-    // ── 13. Stencil isolation post-process material ───────────────────────
+    // ── 13. Studio Directional Key Light per-component config ─────────────
+    if (IsValid(PreviewDirectionalLight))
+    {
+        const float DLIntensity   = Config ? Config->DirectionalLightIntensity   : 8.f;
+        const FLinearColor DLColor = Config ? Config->DirectionalLightColor      : FLinearColor(1.f, 0.95f, 0.85f);
+        const float DLPitch       = Config ? Config->DirectionalLightPitchOffset : -15.f;
+        const bool bDLShadows     = Config ? Config->bDirectionalLightCastShadows : false;
+
+        PreviewDirectionalLight->SetRelativeRotation(FRotator(DLPitch, 0.f, 0.f));
+        PreviewDirectionalLight->SetIntensity(DLIntensity);
+        PreviewDirectionalLight->SetLightColor(DLColor);
+        PreviewDirectionalLight->SetCastShadows(bDLShadows);
+        PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
+    }
+
+    // ── 14. Stencil isolation post-process material ───────────────────────
     WIP_ApplyStencilIsolation();
 }
 

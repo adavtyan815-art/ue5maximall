@@ -28,9 +28,11 @@ class USpringArmComponent;
 class UCameraComponent;
 class URectLightComponent;
 class USkyLightComponent;
+class UDirectionalLightComponent;
 class ACharacter;
 class AShowroomBooth;
 class ARectLight;
+class ADirectionalLight;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-Component Preview Configuration
@@ -160,6 +162,41 @@ struct FPreviewComponentConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Studio SkyLight",
               meta = (DisplayName = "SkyLight Color"))
     FLinearColor SkyLightColor = FLinearColor::White;
+
+    // ── Directional Key Light ───────────────────────────────────────────────
+
+    /**
+     * Intensity of the camera-orbiting Directional Key Light (lux).
+     * This is the studio "sun" — always illuminates the camera-facing side of the
+     * mesh regardless of orbit angle or zoom. Default 8.0 lux provides warm,
+     * directional highlights without overpowering the SkyLight ambient fill.
+     * Set to 0 to disable the key light for this component.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
+              meta = (DisplayName = "Key Light Intensity (lux)", ClampMin = "0.0", ClampMax = "100.0"))
+    float DirectionalLightIntensity = 8.f;
+
+    /** Color tint of the directional key light. Slightly warm (e.g. FLinearColor(1, 0.95, 0.85))
+     *  mimics natural sunlight and gives wood/stone materials their richest response. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
+              meta = (DisplayName = "Key Light Color"))
+    FLinearColor DirectionalLightColor = FLinearColor(1.f, 0.95f, 0.85f);
+
+    /**
+     * Pitch offset of the key light relative to the camera orbit angle (degrees).
+     * Negative = light comes from above the camera → natural downward sun angle.
+     * Default −15° gives a "sun slightly higher than the viewer" look.
+     * Range: −60° (steep top-down) to 0° (exactly at camera level).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
+              meta = (DisplayName = "Key Light Pitch Offset (°)", ClampMin = "-60.0", ClampMax = "30.0"))
+    float DirectionalLightPitchOffset = -15.f;
+
+    /** Whether the orbiting key light casts real-time shadows. Enabling adds visual
+     *  depth but requires Lumen to recompute GI; leave false unless specifically needed. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
+              meta = (DisplayName = "Key Light Casts Shadows"))
+    bool bDirectionalLightCastShadows = false;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -257,6 +294,16 @@ public:
      */
     UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
     TObjectPtr<USkyLightComponent> PreviewSkyLight;
+
+    /**
+     * Camera-orbiting Directional Key Light.
+     * Attached to SpringArm — rotates 1:1 with camera orbit, always illuminating
+     * the camera-facing face. Has no attenuation radius, so zoom and mesh size
+     * have zero effect on intensity. World ADirectionalLight actors are cached
+     * and set to 0 intensity for the duration of the preview.
+     */
+    UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
+    TObjectPtr<UDirectionalLightComponent> PreviewDirectionalLight;
 
     // ─────────────────────────────────────────────────────────────────────
     // PREVIEW CONFIG
@@ -362,6 +409,10 @@ private:
 
     /** World ARectLight actors that were visible before preview; restored on EndPlay. */
     TArray<TWeakObjectPtr<AActor>>  WIP_CachedWorldRectLights;
+
+    /** World ADirectionalLight actors cached with their original intensities.
+     *  Intensity is set to 0 during preview and restored on EndPlay. */
+    TArray<TPair<TWeakObjectPtr<ADirectionalLight>, float>> WIP_CachedWorldDirLights;
 
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
