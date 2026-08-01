@@ -767,6 +767,10 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
             PP.bOverride_AutoExposureBias = false;
             PP.AutoExposureBias           = 0.f;
         }
+
+        // Disable Ambient Occlusion darkening in preview mode so recessed bottom cavities are not darkened to pitch black
+        PP.bOverride_AmbientOcclusionIntensity = true;
+        PP.AmbientOcclusionIntensity           = 0.0f;
     }
 
     // ── 12. Studio SkyLight per-component config ──────────────────────────
@@ -879,7 +883,7 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
         // Horizontal (Pitch <= 0°): Base intensity preserves 100% natural aesthetic balance without front-face blowout.
         // Underneath (Pitch > 0°): Smoothly lerps up to compensated intensity so bottom face receives direct sunlight.
         const float BaseIntensity      = ActiveDirectionalLightBaseIntensity;
-        const float CompensatedBottom  = FMath::Max(BaseIntensity * 7.5f, 18.f);
+        const float CompensatedBottom  = FMath::Max(BaseIntensity * 15.f, 40.f);
         const float EffectiveIntensity = FMath::Lerp(BaseIntensity, CompensatedBottom, PitchUpAlpha);
         PreviewDirectionalLight->SetIntensity(EffectiveIntensity);
 
