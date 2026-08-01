@@ -767,10 +767,6 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
             PP.bOverride_AutoExposureBias = false;
             PP.AutoExposureBias           = 0.f;
         }
-
-        // Disable Ambient Occlusion darkening in preview mode so recessed bottom cavities are not darkened to pitch black
-        PP.bOverride_AmbientOcclusionIntensity = true;
-        PP.AmbientOcclusionIntensity           = 0.0f;
     }
 
     // ── 12. Studio SkyLight per-component config ──────────────────────────
@@ -793,18 +789,17 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const bool bUseWorldDefaults = Config ? Config->bUseWorldSunDefaults : true;
 
-        const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
-        const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
-        ActiveDirectionalLightBaseIntensity                     = DLIntensity;
-        ActiveDirectionalLightRelativeRotation                  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
-        const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                             : false;
+        const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity : WIP_CachedWorldSunIntensity;
+        const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor     : WIP_CachedWorldSunColor;
+        const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                      : false;
 
-        // Pure Camera Component Attachment: Let Unreal Engine's native transform hierarchy handle 1:1 camera rotation
+        // Pure Camera Origin Attachment with Fixed Zero Relative Rotation (0, 0, 0)
+        // Direct camera line of sight headlight that moves and rotates 1:1 with camera view natively
         if (IsValid(Camera))
         {
             PreviewDirectionalLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
             PreviewDirectionalLight->SetRelativeLocation(FVector::ZeroVector);
-            PreviewDirectionalLight->SetRelativeRotation(ActiveDirectionalLightRelativeRotation);
+            PreviewDirectionalLight->SetRelativeRotation(FRotator::ZeroRotator);
         }
 
         PreviewDirectionalLight->SetIntensity(DLIntensity);
@@ -867,38 +862,6 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 
     SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
     SpringArm->SetWorldRotation(OrbitRot);
-
-    // Adaptive Camera-Headlight Alignment:
-    // When looking horizontally or from above (CamRot.Pitch <= 0°), maintains 100% of ActiveDirectionalLightRelativeRotation (-15° Pitch offset).
-    // When orbiting underneath to look UP at bottom face (CamRot.Pitch > 0°), smoothly lerps relative Pitch to 0°,
-    // shining light head-on along camera view line to illuminate recessed bottom cavities without side-skirt shadows.
-    if (IsValid(PreviewDirectionalLight) && IsValid(Camera))
-    {
-        const float PitchUpAlpha = FMath::Clamp(Camera->GetComponentRotation().Pitch / 45.f, 0.f, 1.f);
-        FRotator AdaptiveRelRot  = ActiveDirectionalLightRelativeRotation;
-        AdaptiveRelRot.Pitch     = FMath::Lerp(ActiveDirectionalLightRelativeRotation.Pitch, 0.f, PitchUpAlpha);
-        PreviewDirectionalLight->SetRelativeRotation(AdaptiveRelRot);
-
-        // Compensate directional light intensity as camera orbits underneath mesh:
-        // Horizontal (Pitch <= 0°): Base intensity preserves 100% natural aesthetic balance without front-face blowout.
-        // Underneath (Pitch > 0°): Smoothly lerps up to compensated intensity so bottom face receives direct sunlight.
-        const float BaseIntensity      = ActiveDirectionalLightBaseIntensity;
-        const float CompensatedBottom  = FMath::Max(BaseIntensity * 15.f, 40.f);
-        const float EffectiveIntensity = FMath::Lerp(BaseIntensity, CompensatedBottom, PitchUpAlpha);
-        PreviewDirectionalLight->SetIntensity(EffectiveIntensity);
-
-        const FVector CamFwd   = Camera->GetForwardVector();
-        const FVector LightDir = PreviewDirectionalLight->GetForwardVector();
-        const float Alignment  = FVector::DotProduct(CamFwd, LightDir);
-
-        UE_LOG(LogTemp, Warning, TEXT("[PreviewOrbit TICK] CamWorldRot=%s | LightWorldRot=%s | Intensity=%.2f | CamFwd=%s | LightDir=%s | DotAlignment=%.3f"),
-            *Camera->GetComponentRotation().ToString(),
-            *PreviewDirectionalLight->GetComponentRotation().ToString(),
-            EffectiveIntensity,
-            *CamFwd.ToString(),
-            *LightDir.ToString(),
-            Alignment);
-    }
 }
 
 void AFurniturePreviewActor::ResetRotation()
@@ -913,12 +876,6 @@ void AFurniturePreviewActor::ResetRotation()
         SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
         SpringArm->SetWorldRotation(WIP_InitialOrbitRot);
         SpringArm->TargetArmLength = WIP_InitialViewDist;
-    }
-
-    if (IsValid(PreviewDirectionalLight))
-    {
-        PreviewDirectionalLight->SetRelativeRotation(ActiveDirectionalLightRelativeRotation);
-        PreviewDirectionalLight->SetIntensity(ActiveDirectionalLightBaseIntensity);
     }
 
     WIP_ApplyStencilIsolation();
