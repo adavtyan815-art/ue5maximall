@@ -29,8 +29,6 @@ class UCameraComponent;
 class URectLightComponent;
 class USkyLightComponent;
 class UDirectionalLightComponent;
-class UPointLightComponent;
-class UDirectionalLightComponent;
 class ACharacter;
 class AShowroomBooth;
 class ARectLight;
@@ -310,14 +308,6 @@ public:
      */
     UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
     TObjectPtr<UDirectionalLightComponent> PreviewDirectionalLight;
-
-    /**
-     * Soft Camera-Attached Shadow-Free Point Fill Light.
-     * Emits omnidirectional soft fill directly from the camera position into recessed cavities,
-     * guaranteeing 100% visibility for bottom faces without casting harsh self-shadows.
-     */
-    UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
-    TObjectPtr<UPointLightComponent> PreviewCameraPointLight;
 
     // ─────────────────────────────────────────────────────────────────────
     // PREVIEW CONFIG
