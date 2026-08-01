@@ -178,7 +178,7 @@ struct FPreviewComponentConfig
      * Used when Use World Sun Defaults is false.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Intensity (lux)", ClampMin = "0.0", ClampMax = "100.0"))
+              meta = (DisplayName = "Key Light Intensity (lux)", ClampMin = "0.0", ClampMax = "100.0", EditCondition = "!bUseWorldSunDefaults"))
     float DirectionalLightIntensity = 8.f;
 
     /**
@@ -186,7 +186,7 @@ struct FPreviewComponentConfig
      * Used when Use World Sun Defaults is false.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Color"))
+              meta = (DisplayName = "Key Light Color", EditCondition = "!bUseWorldSunDefaults"))
     FLinearColor DirectionalLightColor = FLinearColor(1.f, 0.95f, 0.85f);
 
     /**
@@ -195,12 +195,12 @@ struct FPreviewComponentConfig
      * Yaw = +15° angles light slightly from the right to create natural 3D specular highlights.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Relative Rotation"))
+              meta = (DisplayName = "Key Light Relative Rotation", EditCondition = "!bUseWorldSunDefaults"))
     FRotator DirectionalLightRelativeRotation = FRotator(-15.f, 15.f, 0.f);
 
     /** Whether the camera key light casts real-time shadows. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting | Directional Key",
-              meta = (DisplayName = "Key Light Casts Shadows"))
+              meta = (DisplayName = "Key Light Casts Shadows", EditCondition = "!bUseWorldSunDefaults"))
     bool bDirectionalLightCastShadows = false;
 };
 
