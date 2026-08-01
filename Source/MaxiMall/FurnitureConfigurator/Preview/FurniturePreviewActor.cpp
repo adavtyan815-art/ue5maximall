@@ -863,7 +863,7 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
     if (!IsValid(MeshRoot) || !IsValid(Camera)) { return; }
 
-    WorldInPlaceYaw   += DeltaYaw;
+    WorldInPlaceYaw   -= DeltaYaw;
     WorldInPlacePitch  = FMath::Clamp(WorldInPlacePitch + DeltaPitch, -80.f, 80.f);
 
     // Compute Camera Right vector (flattened to Z=0 plane to prevent roll)
