@@ -288,34 +288,24 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LoadProductPreview
+// DeferredHideWorldLights
+// Tick N+1 callback scheduled by LoadProductPreview.
+// At this point the GPU has already executed the SkyLight cubemap capture from
+// the fully-lit Tick N scene. Now it is safe to hide world actors / lights.
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& ProductData,
-                                                const FShowroomBoothConfigState& ActiveState,
-                                                AShowroomBooth* SourceBooth)
+void AFurniturePreviewActor::DeferredHideWorldLights()
 {
-    // ── FIX 1: Studio SkyLight captured FIRST, before anything is hidden ──
-    // The SkyLight must see the full warm room (walls, ceiling, booth rect lights,
-    // world sun) to capture the correct warm ambient IBL that the furniture
-    // experiences in the main world. Capturing after hiding produces a grey void.
-    if (IsValid(PreviewSkyLight))
+    // ── Hide SourceBooth (no longer needed visually; preview meshes take its place) ──
+    if (AShowroomBooth* Booth = WIP_DeferredSourceBooth.Get())
     {
-        PreviewSkyLight->SetVisibility(true);
-        PreviewSkyLight->RecaptureSky();
+        WIP_CachedSourceBooth = Booth;
+        Booth->SetActorHiddenInGame(true);
     }
+    WIP_DeferredSourceBooth.Reset();
 
-    // Hide the real booth actor in the level while preview is active to avoid shadow overlap.
-    if (IsValid(SourceBooth))
-    {
-        WIP_CachedSourceBooth = SourceBooth;
-        SourceBooth->SetActorHiddenInGame(true);
-    }
-
-    // ── Hide all world ARectLight actors ──────────────────────────────────
-    // Prevents world Rect Lights from double-lighting or color-contaminating
-    // the focused mesh. Only Rect Lights are toggled; all other light types
-    // (Directional, Point, Spot, Sky) are left completely untouched.
+    // ── Hide all world ARectLight actors ──────────────────────────────────────
+    // Prevents world Rect Lights from double-lighting the focused mesh.
     WIP_CachedWorldRectLights.Empty();
     if (UWorld* W = GetWorld())
     {
@@ -330,9 +320,56 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         }
     }
 
-    // ── Cache world ADirectionalLight actors and zero their intensity ──────
-    // Replaces the level's main sun with our studio directional light during preview.
-    // Captures the world sun's intensity, color, and rotation to use as default.
+    // ── Zero world directional light intensities ──────────────────────────────
+    // Cached properties were already read in LoadProductPreview (Tick N).
+    // We only zero the intensity here so our PreviewDirectionalLight takes over.
+    for (const auto& Pair : WIP_CachedWorldDirLights)
+    {
+        if (Pair.Key.IsValid() && Pair.Key->GetLightComponent())
+        {
+            Pair.Key->GetLightComponent()->SetIntensity(0.f);
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[PreviewActor] DeferredHideWorldLights executed on Tick N+1. "
+        "SkyLight cubemap was captured from warm scene on Tick N."));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LoadProductPreview
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& ProductData,
+                                                const FShowroomBoothConfigState& ActiveState,
+                                                AShowroomBooth* SourceBooth)
+{
+    // ── TWO-TICK SKYLIGHT CAPTURE FIX ──────────────────────────────────────
+    //
+    // RecaptureSky() does NOT capture immediately. It only sets a dirty flag:
+    //     bCaptureDirty = true;  MarkRenderStateDirty();
+    // The actual GPU cubemap generation happens at the END OF THE RENDER PASS,
+    // which runs AFTER all C++ code in this game tick has finished.
+    //
+    // Previous approach (all hiding synchronous): every operation after
+    // RecaptureSky() still ran in the SAME tick, so the GPU always saw a
+    // stripped scene (booth hidden, rect lights off, sun zeroed) — a grey void.
+    //
+    // Correct approach (two ticks):
+    //   Tick N  (this function): RecaptureSky() → GPU captures fully-lit scene
+    //   Tick N+1 (deferred):     Hide booth, disable rect lights, zero world sun
+    //
+    // This guarantees the SkyLight cubemap is built from the warm unmodified
+    // room, then the scene is cleaned up for preview on the following tick.
+
+    // TICK N — Step 1: Position SkyLight at the furniture's world location so it
+    // captures the correct indoor environment (not an unrelated part of the level).
+    if (IsValid(SourceBooth) && IsValid(PreviewSkyLight))
+    {
+        PreviewSkyLight->SetWorldLocation(SourceBooth->GetActorLocation());
+    }
+
+    // TICK N — Step 2: Cache world sun properties NOW (before zeroing on next tick)
+    // so SetFocusComponent() can read them correctly when it runs.
     WIP_CachedWorldDirLights.Empty();
     WIP_CachedWorldSunRotation  = FRotator(-46.f, -46.f, 0.f);
     WIP_CachedWorldSunIntensity = 8.f;
@@ -348,18 +385,35 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
             if (IsValid(DLActor) && !DLActor->IsHidden() && DLActor->GetLightComponent())
             {
                 ULightComponent* LightComp = DLActor->GetLightComponent();
-                float OrigIntensity = LightComp->Intensity;
-                WIP_CachedWorldDirLights.Emplace(DLActor, OrigIntensity);
+                WIP_CachedWorldDirLights.Emplace(DLActor, LightComp->Intensity);
                 WIP_CachedWorldSunRotation  = DLActor->GetActorRotation();
-                WIP_CachedWorldSunIntensity = OrigIntensity;
+                WIP_CachedWorldSunIntensity = LightComp->Intensity;
                 WIP_CachedWorldSunColor     = LightComp->GetLightColor();
                 WIP_CachedWorldSunUseTemp   = LightComp->bUseTemperature;
                 WIP_CachedWorldSunTemp      = LightComp->Temperature;
                 WIP_CachedWorldSunIndirect  = LightComp->IndirectLightingIntensity;
-                LightComp->SetIntensity(0.f);
+                // NOTE: Do NOT zero intensity here — that happens in DeferredHideWorldLights.
             }
         }
     }
+
+    // TICK N — Step 3: Schedule the GPU capture (executes at end of this tick's render pass).
+    if (IsValid(PreviewSkyLight))
+    {
+        PreviewSkyLight->SetVisibility(true);
+        PreviewSkyLight->RecaptureSky(); // GPU captures AFTER this tick ends, BEFORE next tick begins
+    }
+
+    // TICK N — Step 4: Store SourceBooth for DeferredHideWorldLights (runs next tick).
+    WIP_DeferredSourceBooth = SourceBooth;
+    WIP_CachedWorldRectLights.Empty(); // Will be populated in deferred step
+
+    // Schedule all hiding for Tick N+1 so the GPU capture sees the clean scene.
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().SetTimerForNextTick(this, &AFurniturePreviewActor::DeferredHideWorldLights);
+    }
+
     if (IsValid(MeshRoot))
     {
         MeshRoot->SetRelativeTransform(FTransform::Identity);

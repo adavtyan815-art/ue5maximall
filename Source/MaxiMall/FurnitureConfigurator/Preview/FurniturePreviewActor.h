@@ -376,6 +376,13 @@ private:
     float        WIP_CachedWorldSunTemp      = 6500.f;
     float        WIP_CachedWorldSunIndirect  = 1.0f;
 
+    /**
+     * Holds the SourceBooth pointer across the two-tick SkyLight capture split.
+     * Set in LoadProductPreview (Tick N) and consumed in DeferredHideWorldLights (Tick N+1).
+     * Using TWeakObjectPtr so a destroyed booth doesn't cause a stale-pointer crash.
+     */
+    TWeakObjectPtr<AShowroomBooth>  WIP_DeferredSourceBooth;
+
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
 
@@ -389,6 +396,14 @@ private:
     void    WIP_ApplyStencilIsolation();
     void    WIP_UpdateWallOcclusion();   // One-shot sphere overlap. Called from SetFocusComponent.
     void    ConfigureMesh(UStaticMeshComponent* Comp) const;
+
+    /**
+     * Executed on the tick AFTER LoadProductPreview via SetTimerForNextTick.
+     * Hides the SourceBooth and disables world lights so that the SkyLight
+     * scene capture (scheduled by RecaptureSky() on the previous tick) runs
+     * against the fully-lit unmodified scene before anything is hidden.
+     */
+    void DeferredHideWorldLights();
 
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                         const FFurnitureComponentOptions& Options,
