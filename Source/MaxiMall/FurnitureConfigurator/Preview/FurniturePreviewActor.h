@@ -426,14 +426,10 @@ private:
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
 
-    /** Active relative rotation offset for the camera headlight Directional Key Light. */
-    FRotator ActiveDirectionalLightRelativeRotation = FRotator(-15.f, 15.f, 0.f);
-
     // ── Private helpers ────────────────────────────────────────────────────
     FVector WIP_GetFocusPivotWorld() const;
     void    WIP_ApplyStencilIsolation();
     void    WIP_UpdateWallOcclusion();   // One-shot sphere overlap. Called from SetFocusComponent.
-    void    WIP_UpdateDirectionalLightRotation(); // Updates PreviewDirectionalLight world rotation from camera orientation.
     void    ConfigureMesh(UStaticMeshComponent* Comp) const;
 
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,

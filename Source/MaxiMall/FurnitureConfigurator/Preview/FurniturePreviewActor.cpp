@@ -784,22 +784,21 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
-        ActiveDirectionalLightRelativeRotation                  = Config ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
+        const FRotator DLRelRot     = Config ? Config->DirectionalLightRelativeRotation                         : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = Config ? Config->bDirectionalLightCastShadows                             : false;
 
-        // Force runtime attachment to Camera component (overrides any stale Blueprint asset component parent link)
+        // Pure Camera Component Attachment: Let Unreal Engine's native transform hierarchy handle 1:1 camera rotation
         if (IsValid(Camera))
         {
-            PreviewDirectionalLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+            PreviewDirectionalLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
             PreviewDirectionalLight->SetRelativeLocation(FVector::ZeroVector);
+            PreviewDirectionalLight->SetRelativeRotation(DLRelRot);
         }
 
         PreviewDirectionalLight->SetIntensity(DLIntensity);
         PreviewDirectionalLight->SetLightColor(DLColor);
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
         PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
-
-        WIP_UpdateDirectionalLightRotation();
     }
 
     // ── 14. Stencil isolation post-process material ───────────────────────
@@ -824,9 +823,6 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 
     SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
     SpringArm->SetWorldRotation(OrbitRot);
-    SpringArm->UpdateChildTransforms();
-
-    WIP_UpdateDirectionalLightRotation();
 }
 
 void AFurniturePreviewActor::ResetRotation()
@@ -841,9 +837,7 @@ void AFurniturePreviewActor::ResetRotation()
         SpringArm->SetWorldLocation(WIP_FocusPivotWorld);
         SpringArm->SetWorldRotation(WIP_InitialOrbitRot);
         SpringArm->TargetArmLength = WIP_InitialViewDist;
-        SpringArm->UpdateChildTransforms();
     }
-    WIP_UpdateDirectionalLightRotation();
     WIP_ApplyStencilIsolation();
 }
 
@@ -857,34 +851,7 @@ void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
     SpringArm->TargetArmLength = CurrentZoomLength;
 }
 
-void AFurniturePreviewActor::WIP_UpdateDirectionalLightRotation()
-{
-    if (!IsValid(PreviewDirectionalLight) || !PreviewDirectionalLight->IsVisible()) { return; }
 
-    FTransform CamTransform = FTransform::Identity;
-    if (IsValid(Camera))
-    {
-        CamTransform = Camera->GetComponentTransform();
-    }
-    else if (IsValid(SpringArm))
-    {
-        CamTransform = SpringArm->GetComponentTransform();
-    }
-
-    // Convert local relative rotation into a camera-space direction vector
-    const FVector LocalLightDir = ActiveDirectionalLightRelativeRotation.Vector();
-
-    // Transform camera-local direction vector into world space using the camera's full world transform
-    const FVector WorldLightDir = CamTransform.TransformVectorNoScale(LocalLightDir);
-
-    // Compute final world rotation for PreviewDirectionalLight
-    const FRotator TargetLightRot = WorldLightDir.Rotation();
-    PreviewDirectionalLight->SetWorldRotation(TargetLightRot);
-
-    const FRotator CamRot = CamTransform.Rotator();
-    UE_LOG(LogTemp, Log, TEXT("[PreviewLight] CamRot Pitch=%.2f Yaw=%.2f -> LightWorldRot Pitch=%.2f Yaw=%.2f"),
-        CamRot.Pitch, CamRot.Yaw, TargetLightRot.Pitch, TargetLightRot.Yaw);
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Private Helpers
