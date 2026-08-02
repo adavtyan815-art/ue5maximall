@@ -879,20 +879,16 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         PreviewDirectionalLight->SetUseTemperature(false); // Disable Kelvin blackbody distortion
         if (bUseWorldDefaults)
         {
-            PreviewDirectionalLight->SetIndirectLightingIntensity(WIP_CachedWorldSunIndirect);
+            PreviewDirectionalLight->SetIndirectLightingIntensity(0.f); // Step 1 Test: Disable Indirect GI bounce
         }
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
         PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
 
-        UE_LOG(LogTemp, Warning, TEXT("[PreviewDirLight SETUP] UseWorldDefaults=%d | CachedWorldIntensity=%.2f | ConfigIntensity=%.2f | FinalIntensity=%.2f | CastShadows=%d | RelRot=%s | WorldRot=%s | ForwardDir=%s"),
+        UE_LOG(LogTemp, Error, TEXT("[STEP 1 DIAG] UseWorldDefaults=%d | CachedSunColor=(R=%.3f, G=%.3f, B=%.3f) | CachedSunIntensity=%.2f | CachedSunIndirect=%.2f | AppliedIndirect=0.00"),
             bUseWorldDefaults ? 1 : 0,
+            WIP_CachedWorldSunColor.R, WIP_CachedWorldSunColor.G, WIP_CachedWorldSunColor.B,
             WIP_CachedWorldSunIntensity,
-            Config ? Config->DirectionalLightIntensity : -1.f,
-            DLIntensity,
-            bDLShadows ? 1 : 0,
-            *PreviewDirectionalLight->GetRelativeRotation().ToString(),
-            *PreviewDirectionalLight->GetComponentRotation().ToString(),
-            *PreviewDirectionalLight->GetForwardVector().ToString());
+            WIP_CachedWorldSunIndirect);
 
         if (IsValid(PreviewSkyLight))
         {
