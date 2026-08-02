@@ -863,8 +863,11 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         // When false: use initial world sun values as base, but apply user overrides from Config.
         const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
-        const FRotator DLRelRot     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightRelativeRotation : FRotator::ZeroRotator;
+        const FRotator DLRelRot     = Config ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = (Config && !bUseWorldDefaults) ? Config->bDirectionalLightCastShadows     : false;
+
+        // Ensure PreviewDirectionalLight does NOT drive SkyAtmosphere sunset scattering
+        PreviewDirectionalLight->bAtmosphereSunLight = false;
 
         // Pure Camera Origin Attachment: Attached to Camera Component with DLRelRot
         if (IsValid(Camera))
