@@ -842,14 +842,14 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     }
 
     // ── 12. Studio SkyLight per-component config ──────────────────────────
-    // Intensity and color are set here so each component can tune the ambient
-    // fill independently. The SkyLight was already activated and recaptured in
-    // LoadProductPreview; we only update its parameters now.
+    // ── 12. Studio SkyLight per-component config ──────────────────────────
     if (IsValid(PreviewSkyLight))
     {
-        // Temporarily disable PreviewSkyLight to prove that SLS_CapturedScene red sky dome cubemap is the source
-        PreviewSkyLight->SetIntensity(0.f);
-        PreviewSkyLight->SetVisibility(false);
+        const float SLIntensity    = Config ? Config->SkyLightIntensity : 2.f;
+        const FLinearColor SLColor = Config ? Config->SkyLightColor     : FLinearColor::White;
+        PreviewSkyLight->SetIntensity(SLIntensity);
+        PreviewSkyLight->SetLightColor(SLColor);
+        PreviewSkyLight->SetVisibility(SLIntensity > 0.f);
     }
 
     // ── 13. Studio Directional Key Light per-component config ─────────────
@@ -859,14 +859,14 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         const bool bUseWorldDefaults = Config ? Config->bUseWorldSunDefaults : true;
 
-        // When bUseWorldSunDefaults is true: inherit ALL settings from the level's main world sun.
-        // When false: use initial world sun values as base, but apply user overrides from Config.
+        // When bUseWorldSunDefaults is true: inherit live room lighting from the target booth's world environment.
+        // When false: apply per-component designer overrides from Config.
         const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
         const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
         const FRotator DLRelRot     = Config ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
         const bool bDLShadows       = (Config && !bUseWorldDefaults) ? Config->bDirectionalLightCastShadows     : false;
 
-        // Ensure PreviewDirectionalLight does NOT drive SkyAtmosphere sunset scattering
+        // Prevent PreviewDirectionalLight from triggering SkyAtmosphere sunset scattering
         PreviewDirectionalLight->bAtmosphereSunLight = false;
 
         // Pure Camera Origin Attachment: Attached to Camera Component with DLRelRot
@@ -879,10 +879,10 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         PreviewDirectionalLight->SetIntensity(DLIntensity);
         PreviewDirectionalLight->SetLightColor(DLColor);
-        PreviewDirectionalLight->SetUseTemperature(false); // Disable Kelvin blackbody distortion
+        PreviewDirectionalLight->SetUseTemperature(false);
         if (bUseWorldDefaults)
         {
-            PreviewDirectionalLight->SetIndirectLightingIntensity(0.f); // Step 1 Test: Disable Indirect GI bounce
+            PreviewDirectionalLight->SetIndirectLightingIntensity(WIP_CachedWorldSunIndirect);
         }
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
         PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
