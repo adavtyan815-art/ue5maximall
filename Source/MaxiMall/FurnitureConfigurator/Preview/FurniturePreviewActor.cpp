@@ -847,11 +847,9 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // LoadProductPreview; we only update its parameters now.
     if (IsValid(PreviewSkyLight))
     {
-        const float SLIntensity    = Config ? Config->SkyLightIntensity : 2.f;
-        const FLinearColor SLColor = Config ? Config->SkyLightColor     : FLinearColor::White;
-        PreviewSkyLight->SetIntensity(SLIntensity);
-        PreviewSkyLight->SetLightColor(SLColor);
-        PreviewSkyLight->SetVisibility(SLIntensity > 0.f);
+        // Temporarily disable PreviewSkyLight to prove that SLS_CapturedScene red sky dome cubemap is the source
+        PreviewSkyLight->SetIntensity(0.f);
+        PreviewSkyLight->SetVisibility(false);
     }
 
     // ── 13. Studio Directional Key Light per-component config ─────────────
