@@ -373,7 +373,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     WIP_CachedWorldDirLights.Empty();
     WIP_CachedWorldSunRotation  = FRotator(-46.f, -46.f, 0.f);
     WIP_CachedWorldSunIntensity = 8.f;
-    WIP_CachedWorldSunColor     = FLinearColor(1.f, 0.95f, 0.85f);
+    WIP_CachedWorldSunColor     = FLinearColor::White;
     WIP_CachedWorldSunUseTemp   = false;
     WIP_CachedWorldSunTemp      = 6500.f;
     WIP_CachedWorldSunIndirect  = 1.0f;
@@ -878,10 +878,9 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         PreviewDirectionalLight->SetIntensity(DLIntensity);
         PreviewDirectionalLight->SetLightColor(DLColor);
+        PreviewDirectionalLight->SetUseTemperature(false); // Disable Kelvin blackbody distortion
         if (bUseWorldDefaults)
         {
-            PreviewDirectionalLight->SetUseTemperature(WIP_CachedWorldSunUseTemp);
-            PreviewDirectionalLight->SetTemperature(WIP_CachedWorldSunTemp);
             PreviewDirectionalLight->SetIndirectLightingIntensity(WIP_CachedWorldSunIndirect);
         }
         PreviewDirectionalLight->SetCastShadows(bDLShadows);
