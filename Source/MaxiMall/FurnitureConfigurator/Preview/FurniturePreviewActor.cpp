@@ -397,11 +397,14 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         }
     }
 
-    // TICK N — Step 3: Schedule the GPU capture (executes at end of this tick's render pass).
+    // TICK N — Step 3: Trigger real-time GPU capture of the live booth environment.
     if (IsValid(PreviewSkyLight))
     {
         PreviewSkyLight->SetVisibility(true);
-        PreviewSkyLight->RecaptureSky(); // GPU captures AFTER this tick ends, BEFORE next tick begins
+        PreviewSkyLight->SourceType       = ESkyLightSourceType::SLS_CapturedScene;
+        PreviewSkyLight->bRealTimeCapture = true;
+        PreviewSkyLight->RecaptureSky();
+        PreviewSkyLight->MarkRenderStateDirty();
     }
 
     // TICK N — Step 4: Store SourceBooth for DeferredHideWorldLights (runs next tick).
@@ -847,6 +850,7 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     {
         const float SLIntensity    = Config ? Config->SkyLightIntensity : 2.f;
         const FLinearColor SLColor = Config ? Config->SkyLightColor     : FLinearColor::White;
+        PreviewSkyLight->SourceType = ESkyLightSourceType::SLS_CapturedScene;
         PreviewSkyLight->SetIntensity(SLIntensity);
         PreviewSkyLight->SetLightColor(SLColor);
         PreviewSkyLight->SetVisibility(SLIntensity > 0.f);
