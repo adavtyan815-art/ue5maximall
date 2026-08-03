@@ -297,6 +297,32 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void AFurniturePreviewActor::DeferredHideWorldLights()
 {
+    // ── Execute RecaptureSky on Tick N+1 (when SkyLight render proxies are 100% registered) ──
+    if (IsValid(PreviewSkyLight))
+    {
+        PreviewSkyLight->SetVisibility(true);
+        PreviewSkyLight->SourceType       = ESkyLightSourceType::SLS_CapturedScene;
+        PreviewSkyLight->bRealTimeCapture = true;
+        PreviewSkyLight->RecaptureSky();
+        PreviewSkyLight->MarkRenderStateDirty();
+    }
+    if (UWorld* W = GetWorld())
+    {
+        for (TActorIterator<ASkyLight> SkyIt(W); SkyIt; ++SkyIt)
+        {
+            ASkyLight* WorldSky = *SkyIt;
+            if (IsValid(WorldSky) && IsValid(WorldSky->GetLightComponent()))
+            {
+                USkyLightComponent* SLC = WorldSky->GetLightComponent();
+                SLC->SetVisibility(true);
+                SLC->SourceType       = ESkyLightSourceType::SLS_CapturedScene;
+                SLC->bRealTimeCapture = true;
+                SLC->RecaptureSky();
+                SLC->MarkRenderStateDirty();
+            }
+        }
+    }
+
     // ── Hide SourceBooth (no longer needed visually; preview meshes take its place) ──
     if (AShowroomBooth* Booth = WIP_DeferredSourceBooth.Get())
     {
@@ -306,7 +332,6 @@ void AFurniturePreviewActor::DeferredHideWorldLights()
     WIP_DeferredSourceBooth.Reset();
 
     // ── Hide all world ARectLight actors ──────────────────────────────────────
-    // Prevents world Rect Lights from double-lighting the focused mesh.
     WIP_CachedWorldRectLights.Empty();
     if (UWorld* W = GetWorld())
     {
@@ -321,7 +346,17 @@ void AFurniturePreviewActor::DeferredHideWorldLights()
         }
     }
 
-    // ── Lock in the warm captured cubemap from Tick N (before lights were hidden) ────
+    // Schedule lock-in for Tick N+2 so Tick N+1's GPU pass finishes capturing
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().SetTimerForNextTick(this, &AFurniturePreviewActor::LockInSkyLightCubemap);
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[PreviewActor] DeferredHideWorldLights executed on Tick N+1. SkyLight RecaptureSky triggered."));
+}
+
+void AFurniturePreviewActor::LockInSkyLightCubemap()
+{
     if (IsValid(PreviewSkyLight))
     {
         PreviewSkyLight->bRealTimeCapture = false;
@@ -338,9 +373,7 @@ void AFurniturePreviewActor::DeferredHideWorldLights()
             }
         }
     }
-
-    UE_LOG(LogTemp, Log, TEXT("[PreviewActor] DeferredHideWorldLights executed on Tick N+1. "
-        "SkyLight cubemap from Tick N is now locked in."));
+    UE_LOG(LogTemp, Log, TEXT("[PreviewActor] LockInSkyLightCubemap executed on Tick N+2. SkyLight cubemap locked in."));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

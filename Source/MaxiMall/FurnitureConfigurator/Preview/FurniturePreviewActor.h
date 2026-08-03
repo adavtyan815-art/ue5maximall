@@ -341,6 +341,9 @@ public:
 
 private:
 
+    void DeferredHideWorldLights();
+    void LockInSkyLightCubemap();
+
     // ── Active zoom limits (set from the focused component's FPreviewComponentConfig) ──
     float ActiveMinZoom = 30.f;
     float ActiveMaxZoom = 400.f;
@@ -396,14 +399,6 @@ private:
     void    WIP_ApplyStencilIsolation();
     void    WIP_UpdateWallOcclusion();   // One-shot sphere overlap. Called from SetFocusComponent.
     void    ConfigureMesh(UStaticMeshComponent* Comp) const;
-
-    /**
-     * Executed on the tick AFTER LoadProductPreview via SetTimerForNextTick.
-     * Hides the SourceBooth and disables world lights so that the SkyLight
-     * scene capture (scheduled by RecaptureSky() on the previous tick) runs
-     * against the fully-lit unmodified scene before anything is hidden.
-     */
-    void DeferredHideWorldLights();
 
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                         const FFurnitureComponentOptions& Options,
