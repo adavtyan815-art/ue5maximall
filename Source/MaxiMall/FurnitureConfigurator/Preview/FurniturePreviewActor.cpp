@@ -14,6 +14,7 @@
 #include "Engine/OverlapResult.h"
 #include "Engine/RectLight.h"
 #include "Engine/DirectionalLight.h"
+#include "Engine/SkyLight.h"
 #include "Components/RectLightComponent.h"
 #include "Components/SkyLightComponent.h"
 #include "Components/DirectionalLightComponent.h"
@@ -398,6 +399,24 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
     }
 
     // TICK N — Step 3: Trigger real-time GPU capture of the live booth environment.
+    if (UWorld* W = GetWorld())
+    {
+        for (TActorIterator<ASkyLight> SkyIt(W); SkyIt; ++SkyIt)
+        {
+            ASkyLight* WorldSky = *SkyIt;
+            if (IsValid(WorldSky) && IsValid(WorldSky->GetLightComponent()))
+            {
+                USkyLightComponent* SLC = WorldSky->GetLightComponent();
+                SLC->SetVisibility(true);
+                SLC->SourceType = ESkyLightSourceType::SLS_CapturedScene;
+                SLC->bRealTimeCapture = true;
+                SLC->RecaptureSky();
+                SLC->MarkRenderStateDirty();
+                UE_LOG(LogTemp, Error, TEXT("[SKYLIGHT RECAPTURE DIAG] Executed RecaptureSky on Level SkyLight Actor '%s'"), *WorldSky->GetName());
+            }
+        }
+    }
+
     if (IsValid(PreviewSkyLight))
     {
         PreviewSkyLight->SetVisibility(true);
@@ -405,6 +424,7 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         PreviewSkyLight->bRealTimeCapture = true;
         PreviewSkyLight->RecaptureSky();
         PreviewSkyLight->MarkRenderStateDirty();
+        UE_LOG(LogTemp, Error, TEXT("[SKYLIGHT RECAPTURE DIAG] Executed RecaptureSky on PreviewSkyLight"));
     }
 
     // TICK N — Step 4: Store SourceBooth for DeferredHideWorldLights (runs next tick).
