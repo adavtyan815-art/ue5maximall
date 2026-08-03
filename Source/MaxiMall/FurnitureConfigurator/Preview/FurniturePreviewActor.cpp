@@ -321,19 +321,26 @@ void AFurniturePreviewActor::DeferredHideWorldLights()
         }
     }
 
-    // ── Zero world directional light intensities ──────────────────────────────
-    // Cached properties were already read in LoadProductPreview (Tick N).
-    // We only zero the intensity here so our PreviewDirectionalLight takes over.
-    for (const auto& Pair : WIP_CachedWorldDirLights)
+    // ── Lock in the warm captured cubemap from Tick N (before lights were hidden) ────
+    if (IsValid(PreviewSkyLight))
     {
-        if (Pair.Key.IsValid() && Pair.Key->GetLightComponent())
+        PreviewSkyLight->bRealTimeCapture = false;
+        PreviewSkyLight->MarkRenderStateDirty();
+    }
+    if (UWorld* W = GetWorld())
+    {
+        for (TActorIterator<ASkyLight> SkyIt(W); SkyIt; ++SkyIt)
         {
-            Pair.Key->GetLightComponent()->SetIntensity(0.f);
+            if (IsValid(*SkyIt) && IsValid((*SkyIt)->GetLightComponent()))
+            {
+                (*SkyIt)->GetLightComponent()->bRealTimeCapture = false;
+                (*SkyIt)->GetLightComponent()->MarkRenderStateDirty();
+            }
         }
     }
 
     UE_LOG(LogTemp, Log, TEXT("[PreviewActor] DeferredHideWorldLights executed on Tick N+1. "
-        "SkyLight cubemap was captured from warm scene on Tick N."));
+        "SkyLight cubemap from Tick N is now locked in."));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
