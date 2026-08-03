@@ -32,7 +32,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // CRITICAL: Never replicate. Client-local only.
     bReplicates                   = false;
     bAlwaysRelevant               = false;
-    PrimaryActorTick.bCanEverTick = false; // Wall occlusion is one-shot at SetFocusComponent time.
+    PrimaryActorTick.bCanEverTick = true; // Enabled to allow FTimerManager next-tick callbacks to execute.
 
     // ── Per-component zoom defaults ────────────────────────────────────────
     // These are the recommended starting values — designers override in the BP
