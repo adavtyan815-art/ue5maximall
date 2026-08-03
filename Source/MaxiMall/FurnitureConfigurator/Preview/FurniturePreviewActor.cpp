@@ -162,8 +162,9 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     PreviewSkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("PreviewSkyLight"));
     PreviewSkyLight->SetupAttachment(PreviewRoot);
     PreviewSkyLight->SetMobility(EComponentMobility::Movable);
-    PreviewSkyLight->SourceType       = ESkyLightSourceType::SLS_CapturedScene;
-    PreviewSkyLight->bRealTimeCapture = false;    // single RecaptureSky() at preview start
+    PreviewSkyLight->SourceType              = ESkyLightSourceType::SLS_CapturedScene;
+    PreviewSkyLight->bRealTimeCapture        = false;    // single RecaptureSky() at preview start
+    PreviewSkyLight->bLowerHemisphereIsBlack = false;    // Allow 360-degree ambient reflections from ground/countertop
     PreviewSkyLight->SetIntensity(2.f);
     PreviewSkyLight->SetLightColor(FLinearColor::White);
     PreviewSkyLight->SetCastShadows(false);
@@ -919,7 +920,8 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     {
         const float SLIntensity    = Config ? Config->SkyLightIntensity : 2.f;
         const FLinearColor SLColor = Config ? Config->SkyLightColor     : FLinearColor::White;
-        PreviewSkyLight->SourceType = ESkyLightSourceType::SLS_CapturedScene;
+        PreviewSkyLight->SourceType              = ESkyLightSourceType::SLS_CapturedScene;
+        PreviewSkyLight->bLowerHemisphereIsBlack = false;
         PreviewSkyLight->SetIntensity(SLIntensity);
         PreviewSkyLight->SetLightColor(SLColor);
         PreviewSkyLight->SetVisibility(SLIntensity > 0.f);
