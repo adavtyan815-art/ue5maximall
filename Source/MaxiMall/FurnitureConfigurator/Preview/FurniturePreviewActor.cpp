@@ -275,12 +275,12 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
     }
     WIP_CachedWorldRectLights.Empty();
 
-    // ── Restore world ADirectionalLight intensities ────────────────────────
+    // ── Restore world ADirectionalLight actors ────────────────────────────
     for (const auto& Pair : WIP_CachedWorldDirLights)
     {
-        if (Pair.Key.IsValid() && Pair.Key->GetLightComponent())
+        if (Pair.Key.IsValid())
         {
-            Pair.Key->GetLightComponent()->SetIntensity(Pair.Value);
+            Pair.Key->SetActorHiddenInGame(false);
         }
     }
     WIP_CachedWorldDirLights.Empty();
@@ -343,6 +343,15 @@ void AFurniturePreviewActor::DeferredHideWorldLights()
                 WIP_CachedWorldRectLights.Add(RLActor);
                 RLActor->SetActorHiddenInGame(true);
             }
+        }
+    }
+
+    // ── Hide world ADirectionalLight actors during preview ────────────────────
+    for (const auto& Pair : WIP_CachedWorldDirLights)
+    {
+        if (Pair.Key.IsValid())
+        {
+            Pair.Key->SetActorHiddenInGame(true);
         }
     }
 
