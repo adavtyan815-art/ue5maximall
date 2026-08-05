@@ -298,32 +298,6 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void AFurniturePreviewActor::DeferredHideWorldLights()
 {
-    // ── Execute RecaptureSky on Tick N+1 (when SkyLight render proxies are 100% registered) ──
-    if (IsValid(PreviewSkyLight))
-    {
-        PreviewSkyLight->SetVisibility(true);
-        PreviewSkyLight->SourceType       = ESkyLightSourceType::SLS_CapturedScene;
-        PreviewSkyLight->bRealTimeCapture = true;
-        PreviewSkyLight->RecaptureSky();
-        PreviewSkyLight->MarkRenderStateDirty();
-    }
-    if (UWorld* W = GetWorld())
-    {
-        for (TActorIterator<ASkyLight> SkyIt(W); SkyIt; ++SkyIt)
-        {
-            ASkyLight* WorldSky = *SkyIt;
-            if (IsValid(WorldSky) && IsValid(WorldSky->GetLightComponent()))
-            {
-                USkyLightComponent* SLC = WorldSky->GetLightComponent();
-                SLC->SetVisibility(true);
-                SLC->SourceType       = ESkyLightSourceType::SLS_CapturedScene;
-                SLC->bRealTimeCapture = true;
-                SLC->RecaptureSky();
-                SLC->MarkRenderStateDirty();
-            }
-        }
-    }
-
     // ── Hide SourceBooth (no longer needed visually; preview meshes take its place) ──
     if (AShowroomBooth* Booth = WIP_DeferredSourceBooth.Get())
     {
@@ -914,82 +888,55 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         }
     }
 
-    // ── 12. Studio SkyLight per-component config ──────────────────────────
-    // ── 12. Studio SkyLight per-component config ──────────────────────────
+    // ── 12. Studio SkyLight ambient fill (universal 360° studio fill) ──────────
     if (IsValid(PreviewSkyLight))
     {
-        const float SLIntensity    = Config ? Config->SkyLightIntensity : 2.f;
+        // Enforce minimum 3.0 lux studio fill so backfacing polygons are never pitch black
+        const float ConfigSL       = Config ? Config->SkyLightIntensity : 3.0f;
+        const float SLIntensity    = FMath::Max(3.0f, ConfigSL);
         const FLinearColor SLColor = Config ? Config->SkyLightColor     : FLinearColor::White;
-        PreviewSkyLight->SourceType              = ESkyLightSourceType::SLS_CapturedScene;
         PreviewSkyLight->bLowerHemisphereIsBlack = false;
         PreviewSkyLight->SetIntensity(SLIntensity);
         PreviewSkyLight->SetLightColor(SLColor);
-        PreviewSkyLight->SetVisibility(SLIntensity > 0.f);
+        PreviewSkyLight->SetVisibility(true);
     }
 
-    // ── 13. Studio Directional Key Light per-component config ─────────────
-    if (IsValid(PreviewDirectionalLight))
+    // ── 13. Camera-Attached Studio Key & Backfill Lights ─────────────────────
+    // Attached directly to CameraComponent so illumination moves 1:1 with camera view line.
+    // Every face (front, back, left, right, top, bottom) of ANY mesh is evenly lit.
+    if (IsValid(PreviewDirectionalLight) && IsValid(Camera))
     {
         PreviewDirectionalLight->SetMobility(EComponentMobility::Movable);
-
-        const bool bUseWorldDefaults = Config ? Config->bUseWorldSunDefaults : true;
-
-        // When bUseWorldSunDefaults is true: inherit live room lighting from the target booth's world environment.
-        // When false: apply per-component designer overrides from Config.
-        const float DLIntensity     = (Config && !bUseWorldDefaults) ? Config->DirectionalLightIntensity        : WIP_CachedWorldSunIntensity;
-        const FLinearColor DLColor  = (Config && !bUseWorldDefaults) ? Config->DirectionalLightColor            : WIP_CachedWorldSunColor;
-        const FRotator DLRelRot     = Config ? Config->DirectionalLightRelativeRotation : FRotator(-15.f, 15.f, 0.f);
-        const bool bDLShadows       = (Config && !bUseWorldDefaults) ? Config->bDirectionalLightCastShadows     : false;
-
-        // Prevent PreviewDirectionalLight from triggering SkyAtmosphere sunset scattering
         PreviewDirectionalLight->bAtmosphereSunLight = false;
 
-        // Pure Camera Origin Attachment: Attached to Camera Component with DLRelRot
-        if (IsValid(Camera))
-        {
-            PreviewDirectionalLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
-            PreviewDirectionalLight->SetRelativeLocation(FVector::ZeroVector);
-            PreviewDirectionalLight->SetRelativeRotation(DLRelRot);
-        }
-
-        PreviewDirectionalLight->SetIntensity(DLIntensity);
-        PreviewDirectionalLight->SetLightColor(DLColor);
+        // Camera-Attached Key Light: positioned top-front-left relative to camera view
+        PreviewDirectionalLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
+        PreviewDirectionalLight->SetRelativeLocation(FVector::ZeroVector);
+        PreviewDirectionalLight->SetRelativeRotation(FRotator(-20.f, 25.f, 0.f));
+        PreviewDirectionalLight->SetIntensity(5.0f);
+        PreviewDirectionalLight->SetLightColor(FLinearColor(1.0f, 0.96f, 0.92f));
         PreviewDirectionalLight->SetUseTemperature(false);
-        if (bUseWorldDefaults)
-        {
-            PreviewDirectionalLight->SetIndirectLightingIntensity(WIP_CachedWorldSunIndirect);
-        }
-        PreviewDirectionalLight->SetCastShadows(bDLShadows);
-        PreviewDirectionalLight->SetVisibility(DLIntensity > 0.f);
-
-        UE_LOG(LogTemp, Error, TEXT("[STEP 1 DIAG] UseWorldDefaults=%d | CachedSunColor=(R=%.3f, G=%.3f, B=%.3f) | CachedSunIntensity=%.2f | CachedSunIndirect=%.2f | AppliedIndirect=0.00"),
-            bUseWorldDefaults ? 1 : 0,
-            WIP_CachedWorldSunColor.R, WIP_CachedWorldSunColor.G, WIP_CachedWorldSunColor.B,
-            WIP_CachedWorldSunIntensity,
-            WIP_CachedWorldSunIndirect);
-
-        if (IsValid(PreviewSkyLight))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[PreviewSkyLight SETUP] Mobility=%d | Intensity=%.2f | Visibility=%d"),
-                (int32)PreviewSkyLight->Mobility, PreviewSkyLight->Intensity, PreviewSkyLight->IsVisible() ? 1 : 0);
-        }
-
-        if (IsValid(CurrentFocusedComponent) && CurrentFocusedComponent->GetStaticMesh())
-        {
-            UStaticMesh* MeshAsset = CurrentFocusedComponent->GetStaticMesh();
-            UE_LOG(LogTemp, Warning, TEXT("[PreviewMesh DIAG] FocusedMesh=%s | NumMaterials=%d | NumLODs=%d"),
-                *MeshAsset->GetName(), CurrentFocusedComponent->GetNumMaterials(), MeshAsset->GetNumLODs());
-            for (int32 MatIdx = 0; MatIdx < CurrentFocusedComponent->GetNumMaterials(); ++MatIdx)
-            {
-                UMaterialInterface* Mat = CurrentFocusedComponent->GetMaterial(MatIdx);
-                if (Mat)
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("[PreviewMesh DIAG] Mat[%d]=%s | TwoSided=%d"),
-                        MatIdx, *Mat->GetName(), Mat->IsTwoSided() ? 1 : 0);
-                }
-            }
-        }
+        PreviewDirectionalLight->SetCastShadows(true);
+        PreviewDirectionalLight->SetVisibility(true);
     }
+
+    // Camera-Attached Backfill Light: fills the opposite/back side so backplates and rear faces never go pitch-black
+    if (IsValid(PreviewFillLight) && IsValid(Camera))
+    {
+        PreviewFillLight->SetMobility(EComponentMobility::Movable);
+        PreviewFillLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
+        PreviewFillLight->SetRelativeLocation(FVector(0.f, 0.f, 0.f));
+        PreviewFillLight->SetRelativeRotation(FRotator(20.f, -155.f, 0.f));
+        PreviewFillLight->SetIntensity(800.f);
+        PreviewFillLight->SetLightColor(FLinearColor(0.9f, 0.92f, 1.0f));
+        PreviewFillLight->SourceWidth  = 300.f;
+        PreviewFillLight->SourceHeight = 300.f;
+        PreviewFillLight->AttenuationRadius = 2500.f;
+        PreviewFillLight->SetCastShadows(false);
+        PreviewFillLight->SetVisibility(true);
+    }
+
+
 
     // ── 14. Stencil isolation post-process material ───────────────────────
     WIP_ApplyStencilIsolation();

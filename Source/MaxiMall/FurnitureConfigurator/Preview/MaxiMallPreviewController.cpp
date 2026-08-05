@@ -26,6 +26,7 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "ShaderPipelineCache.h"
 
 AMaxiMallPreviewController::AMaxiMallPreviewController()
 {
@@ -56,6 +57,9 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
 void AMaxiMallPreviewController::BeginPlay()
 {
     Super::BeginPlay();
+
+    // Force fast pre-warm batch mode for Vulkan shader pipeline compilation
+    FShaderPipelineCache::SetBatchMode(FShaderPipelineCache::BatchMode::Fast);
 
     UE_LOG(LogTemp, Warning, TEXT("AMaxiMallPreviewController::BeginPlay - Player Controller Initialized. IsLocalController: %s"), IsLocalController() ? TEXT("TRUE") : TEXT("FALSE"));
 
@@ -432,7 +436,7 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
     UClass* SpawnClass = PreviewActorClass;
-    if (!SpawnClass)
+    if (!SpawnClass || !SpawnClass->IsChildOf(AFurniturePreviewActor::StaticClass()))
     {
         SpawnClass = AFurniturePreviewActor::StaticClass();
     }
@@ -447,11 +451,11 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
     }
     const FVector TargetSpawnLocation = TargetBooth ? TargetBooth->GetActorLocation() : FVector::ZeroVector;
 
-    ActivePreviewActor = World->SpawnActor<AFurniturePreviewActor>(
+    ActivePreviewActor = Cast<AFurniturePreviewActor>(World->SpawnActor(
         SpawnClass,
-        TargetSpawnLocation,
-        SpawnRotation,
-        SpawnParams);
+        &TargetSpawnLocation,
+        &SpawnRotation,
+        SpawnParams));
 
     if (!ActivePreviewActor)
     {

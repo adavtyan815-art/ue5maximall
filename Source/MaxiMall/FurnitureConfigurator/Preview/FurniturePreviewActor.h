@@ -73,7 +73,7 @@ struct FPreviewComponentConfig
     /** Intensity of the 360° studio SkyLight fill component (0 = rely purely on level ambient). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Environment",
               meta = (DisplayName = "SkyLight Fill Intensity", ClampMin = "0.0", ClampMax = "20.0", UIMin = "0.0", UIMax = "10.0"))
-    float SkyLightIntensity = 2.f;
+    float SkyLightIntensity = 2.5f;
 
     /** Color tint for the 360° studio SkyLight ambient fill. Neutral white preserves PBR materials. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Environment",
@@ -89,31 +89,31 @@ struct FPreviewComponentConfig
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
               meta = (DisplayName = "Inherit World Sun Settings"))
-    bool bUseWorldSunDefaults = true;
+    bool bUseWorldSunDefaults = false;
 
     /** Manual intensity override for the directional sun light (lux). Active when inherit = false. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
               meta = (DisplayName = "Sun Light Intensity Override (lux)", ClampMin = "0.0", ClampMax = "100.0", UIMin = "0.0", UIMax = "30.0", EditCondition = "!bUseWorldSunDefaults"))
-    float DirectionalLightIntensity = 8.f;
+    float DirectionalLightIntensity = 4.0f;
 
     /** Manual color tint override for the directional sun light. Active when inherit = false. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
               meta = (DisplayName = "Sun Light Color Override", EditCondition = "!bUseWorldSunDefaults"))
-    FLinearColor DirectionalLightColor = FLinearColor(1.f, 0.95f, 0.85f);
+    FLinearColor DirectionalLightColor = FLinearColor(1.f, 0.96f, 0.92f);
 
     /** Local rotation offset relative to camera view line. Active when inherit = false. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
               meta = (DisplayName = "Sun Light Relative Rotation", EditCondition = "!bUseWorldSunDefaults"))
-    FRotator DirectionalLightRelativeRotation = FRotator(-15.f, 15.f, 0.f);
+    FRotator DirectionalLightRelativeRotation = FRotator(-25.f, 25.f, 0.f);
 
     /** Toggles real-time shadow casting for directional sun light. Active when inherit = false. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
               meta = (DisplayName = "Sun Light Casts Shadows", EditCondition = "!bUseWorldSunDefaults"))
-    bool bDirectionalLightCastShadows = false;
+    bool bDirectionalLightCastShadows = true;
 
     // ── Preview Rect Lights ──────────────────────────────────────────────────
 
-    /** Intensity of key RectLight component (lux). Default 0 (relying on SkyLight / Sun). */
+    /** Intensity of key RectLight component (lux). Default 0 (off to prevent rectangular beam artifacts). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
               meta = (DisplayName = "Key Rect Intensity (lux)", ClampMin = "0.0", ClampMax = "5000.0", UIMin = "0.0", UIMax = "1000.0"))
     float KeyLightIntensity = 0.f;
@@ -131,12 +131,12 @@ struct FPreviewComponentConfig
     /** Source width (cm) for rect light soft shadows. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
               meta = (DisplayName = "Rect Source Width (cm)", ClampMin = "5.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "300.0"))
-    float LightSourceWidth = 80.f;
+    float LightSourceWidth = 100.f;
 
     /** Source height (cm) for rect light soft shadows. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
               meta = (DisplayName = "Rect Source Height (cm)", ClampMin = "5.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "300.0"))
-    float LightSourceHeight = 100.f;
+    float LightSourceHeight = 120.f;
 
     /** Distance offset of key rect light from pivot along orbit arm (cm). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
@@ -151,7 +151,7 @@ struct FPreviewComponentConfig
     /** Toggles real-time shadow casting for key rect light. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
               meta = (DisplayName = "Rect Key Casts Shadows"))
-    bool bPreviewLightCastShadows = false;
+    bool bPreviewLightCastShadows = true;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

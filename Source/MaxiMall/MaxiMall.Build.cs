@@ -24,10 +24,11 @@ public class MaxiMall : ModuleRules
 			"InputCore",
 			"NetCore",       // Replication helpers
 			"UMG",           // UUserWidget for the isolated preview viewport
-			"Http",
+			"HTTP",
 			"Json",
 			"JsonUtilities",
 			"ApplicationCore",
+			"RenderCore",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
