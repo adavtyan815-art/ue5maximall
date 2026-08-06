@@ -1478,6 +1478,7 @@ bool AMaxiMallPreviewController::GetBIMElementData(UPrimitiveComponent* Componen
     }
 
     TMap<FName, FString> RawMap;
+    TMap<FString, TArray<FBIMMetadataPair>> GroupMap;
 
     auto ExtractMetaDataFromObj = [&RawMap](UObject* Obj)
     {
@@ -1550,14 +1551,61 @@ bool AMaxiMallPreviewController::GetBIMElementData(UPrimitiveComponent* Componen
         {
             OutData.IfcGUID = ValStr;
         }
-        else if (CleanKey.Contains(TEXT("Area")) || CleanKey.Contains(TEXT("Height")) || CleanKey.Contains(TEXT("Length")) || CleanKey.Contains(TEXT("Width")) || CleanKey.Contains(TEXT("breedte")))
+        // Categorize into standard BIM property groups
+        FString GroupName = TEXT("Identity Data");
+        FString PropName = CleanKey;
+
+        int32 DotIdx = INDEX_NONE;
+        if (CleanKey.FindChar(TEXT('.'), DotIdx))
         {
-            OutData.Dimensions.Add(CleanPair);
+            GroupName = CleanKey.Left(DotIdx);
+            PropName = CleanKey.Mid(DotIdx + 1);
         }
         else
         {
-            OutData.Specifications.Add(CleanPair);
+            if (CleanKey.Contains(TEXT("Constraint")) || CleanKey.Contains(TEXT("Offset")) || CleanKey.Contains(TEXT("Location Line")) || CleanKey.Contains(TEXT("Unconnected Height")) || CleanKey.Contains(TEXT("Attached")))
+            {
+                GroupName = TEXT("Constraints");
+            }
+            else if (CleanKey.Contains(TEXT("Area")) || CleanKey.Contains(TEXT("Length")) || CleanKey.Contains(TEXT("Volume")) || CleanKey.Contains(TEXT("Thickness")) || CleanKey.Contains(TEXT("Width")) || CleanKey.Contains(TEXT("Height")))
+            {
+                GroupName = TEXT("Dimensions");
+            }
+            else if (CleanKey.Contains(TEXT("Phase")))
+            {
+                GroupName = TEXT("Phasing");
+            }
+            else if (CleanKey.Contains(TEXT("Structural")) || CleanKey.Contains(TEXT("Analytical")))
+            {
+                GroupName = TEXT("Structural");
+            }
+            else if (CleanKey.Contains(TEXT("Cross-Section")) || CleanKey.Contains(TEXT("Export to IFC")) || CleanKey.Contains(TEXT("Function")))
+            {
+                GroupName = TEXT("Construction");
+            }
+            else if (CleanKey.Contains(TEXT("Material")) || CleanKey.Contains(TEXT("Absorptance")))
+            {
+                GroupName = TEXT("Materials and Finishes");
+            }
+            else if (CleanKey.Contains(TEXT("Room Bounding")) || CleanKey.Contains(TEXT("Mass")))
+            {
+                GroupName = TEXT("Model Properties");
+            }
         }
+
+        FBIMMetadataPair GroupPair;
+        GroupPair.Key = PropName;
+        GroupPair.Value = ValStr;
+        GroupMap.FindOrAdd(GroupName).Add(GroupPair);
+    }
+
+    // Convert GroupMap to CategorizedMetadata array
+    for (const TPair<FString, TArray<FBIMMetadataPair>>& GroupPair : GroupMap)
+    {
+        FBIMCategoryGroup CatGroup;
+        CatGroup.CategoryName = GroupPair.Key;
+        CatGroup.Pairs = GroupPair.Value;
+        OutData.CategorizedMetadata.Add(CatGroup);
     }
 
     // Fail-safe fallbacks: Ensure Dimensions and Title are NEVER empty

@@ -10,6 +10,8 @@
 class UTextBlock;
 class UButton;
 class UScrollBox;
+class UVerticalBox;
+class UPrimitiveComponent;
 class UBIMAttributeRowWidget;
 
 /**
@@ -34,6 +36,15 @@ protected:
 
     UFUNCTION()
     void OnCloseClicked();
+
+    UFUNCTION()
+    void OnCategoryToggleClicked();
+
+    UPROPERTY()
+    TMap<TObjectPtr<UButton>, TObjectPtr<UVerticalBox>> CategoryToggleMap;
+
+    UPROPERTY()
+    TMap<TObjectPtr<UButton>, TObjectPtr<UTextBlock>> CategoryArrowMap;
 
     UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
     TObjectPtr<UTextBlock> Txt_Category;

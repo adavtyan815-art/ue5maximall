@@ -626,6 +626,66 @@ struct FFurnitureProductRow : public FTableRowBase
     TArray<FName> AllowedMirrorIDs;
 };
 
+/** A single key-value attribute pair for BIM metadata display. */
+USTRUCT(BlueprintType)
+struct FBIMMetadataPair
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    FString Key;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    FString Value;
+};
+
+/** Grouped BIM metadata category containing a header and list of key-value pairs. */
+USTRUCT(BlueprintType)
+struct FBIMCategoryGroup
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    FString CategoryName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    TArray<FBIMMetadataPair> Pairs;
+};
+
+/** Categorized Revit / Datasmith BIM element metadata. */
+USTRUCT(BlueprintType)
+struct FBIMElementData
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    FString ElementName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    FString Category;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    FString FamilyName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    FString TypeName;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    FString IfcGUID;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    TArray<FBIMMetadataPair> Dimensions;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    TArray<FBIMMetadataPair> Specifications;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    TArray<FBIMMetadataPair> RawMetadata;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
+    TArray<FBIMCategoryGroup> CategorizedMetadata;
+};
+
 UCLASS()
 class MAXIMALL_API UFurnitureEditorHelper : public UObject
 {
