@@ -300,7 +300,31 @@ void AMaxiMallPreviewController::SetupInputComponent()
 
     if (InputComponent)
     {
-        InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMaxiMallPreviewController::OnLeftMouseButtonPressed);
+        InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AMaxiMallPreviewController::OnLeftMouseButtonDown);
+        InputComponent->BindKey(EKeys::LeftMouseButton, IE_Released, this, &AMaxiMallPreviewController::OnLeftMouseButtonReleased);
+    }
+}
+
+void AMaxiMallPreviewController::OnLeftMouseButtonDown()
+{
+    LMBPressTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
+    if (FSlateApplication::IsInitialized())
+    {
+        LMBPressMousePos = FSlateApplication::Get().GetCursorPos();
+    }
+}
+
+void AMaxiMallPreviewController::OnLeftMouseButtonReleased()
+{
+    float CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
+    float HeldDuration = CurrentTime - LMBPressTime;
+
+    FVector2D CurrentMousePos = FSlateApplication::IsInitialized() ? FSlateApplication::Get().GetCursorPos() : FVector2D::ZeroVector;
+    float DragDistance = FVector2D::Distance(CurrentMousePos, LMBPressMousePos);
+
+    if (HeldDuration <= 0.25f && DragDistance <= 8.f)
+    {
+        OnLeftMouseButtonClicked();
     }
 }
 
@@ -324,9 +348,9 @@ void AMaxiMallPreviewController::AddPitchInput(float Val)
     }
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// ─────────────────────────────────────────────────────────────────────────────
 // Pixel Streaming Cursor Broadcast
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// ─────────────────────────────────────────────────────────────────────────────
 
 void AMaxiMallPreviewController::BroadcastCursorState(bool bHovering)
 {
@@ -375,7 +399,7 @@ void AMaxiMallPreviewController::BroadcastCursorState(bool bHovering)
 #endif
 }
 
-void AMaxiMallPreviewController::OnLeftMouseButtonPressed()
+void AMaxiMallPreviewController::OnLeftMouseButtonClicked()
 {
     float CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
 

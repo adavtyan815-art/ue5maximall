@@ -207,7 +207,12 @@ private:
 
     void BroadcastCursorState(bool bHovering);
 
-    void OnLeftMouseButtonPressed();
+    void OnLeftMouseButtonDown();
+    void OnLeftMouseButtonReleased();
+    void OnLeftMouseButtonClicked();
+
+    float LMBPressTime = 0.f;
+    FVector2D LMBPressMousePos = FVector2D::ZeroVector;
 
     /** True while the camera is being rotated with RMB held.
      *  Set by AddYawInput/AddPitchInput; reset on RMB release. */
