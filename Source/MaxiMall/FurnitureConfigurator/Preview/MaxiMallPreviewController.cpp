@@ -190,7 +190,9 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
     
     bool bIsMouseOverUI = IsWidgetHoveredGeometrically(BIMInspectorInstance) || IsWidgetHoveredGeometrically(MainWidgetInstance);
 
-    if (!ActivePreviewActor && !bIsMouseOverUI)
+    bool bIsMouseDown = IsInputKeyDown(EKeys::LeftMouseButton) || IsInputKeyDown(EKeys::RightMouseButton) || bRightMouseIsDragging;
+
+    if (!ActivePreviewActor && !bIsMouseOverUI && !bIsMouseDown)
     {
         FHitResult HitResult;
         bool bHit = false;
