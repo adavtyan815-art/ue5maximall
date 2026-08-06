@@ -49,6 +49,8 @@ public:
     UFUNCTION(BlueprintCallable, Category = "BIM UI")
     bool IsMouseOverMainPanel() const;
 
+    bool IsPointerOverDragArea(const FVector2D& ScreenPos) const;
+
 protected:
     virtual void NativeConstruct() override;
     virtual void NativePreConstruct() override;
@@ -56,11 +58,27 @@ protected:
     UFUNCTION()
     void OnCloseClicked();
 
+    virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+    virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+    virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+
     UPROPERTY()
     TArray<TObjectPtr<UBIMCategoryHeaderHandler>> CategoryHeaderHandlers;
 
     UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
     TObjectPtr<UWidget> Border_MainPanel;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UWidget> Border_Header;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UWidget> Header_Horizontal_Box;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UWidget> Header_HorizontalBox;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UWidget> DragHeaderBar;
 
     UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
     TObjectPtr<UTextBlock> Txt_Category;
@@ -85,4 +103,10 @@ protected:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM UI Sizing")
     float InspectorScrollBoxHeight = 450.f;
+
+private:
+    bool bIsDraggingWindow = false;
+    FVector2D DragStartCursorPos = FVector2D::ZeroVector;
+    FVector2D DragStartPanelPos = FVector2D::ZeroVector;
+    FVector2D DragStartScreenPos = FVector2D::ZeroVector;
 };

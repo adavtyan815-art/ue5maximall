@@ -12,11 +12,142 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Components/ButtonSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Blueprint/WidgetTree.h"
 #include "Framework/Application/SlateApplication.h"
 #include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
 
 #include "Layout/Clipping.h"
+
+bool UBIMInspectorWidget::IsPointerOverDragArea(const FVector2D& ScreenPos) const
+{
+    if (!Border_MainPanel)
+    {
+        return false;
+    }
+
+    if (Btn_Close && Btn_Close->GetCachedGeometry().IsUnderLocation(ScreenPos))
+    {
+        return false;
+    }
+
+    const UWidget* DragWidget = Header_Horizontal_Box ? Header_Horizontal_Box.Get() :
+        (Header_HorizontalBox ? Header_HorizontalBox.Get() :
+        (DragHeaderBar ? DragHeaderBar.Get() :
+        (Border_Header ? Border_Header.Get() : nullptr)));
+
+    if (DragWidget && DragWidget->GetCachedGeometry().IsUnderLocation(ScreenPos))
+    {
+        return true;
+    }
+
+    FGeometry MainGeo = Border_MainPanel->GetCachedGeometry();
+    if (MainGeo.IsUnderLocation(ScreenPos))
+    {
+        FVector2D LocalPos = MainGeo.AbsoluteToLocal(ScreenPos);
+        if (LocalPos.Y >= 0.f && LocalPos.Y <= 70.f)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+FReply UBIMInspectorWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+    {
+        FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
+        if (IsPointerOverDragArea(ScreenPos))
+        {
+            UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Border_MainPanel->Slot);
+            if (CanvasSlot)
+            {
+                bIsDraggingWindow = true;
+                DragStartCursorPos = InGeometry.AbsoluteToLocal(ScreenPos);
+                DragStartPanelPos = CanvasSlot->GetPosition();
+                SetCursor(EMouseCursor::GrabHandClosed);
+                return FReply::Handled().CaptureMouse(TakeWidget());
+            }
+        }
+    }
+
+    return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+FReply UBIMInspectorWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    FVector2D CursorScreenPos = InMouseEvent.GetScreenSpacePosition();
+    bool bIsOverHeader = IsPointerOverDragArea(CursorScreenPos);
+
+    if (bIsDraggingWindow)
+    {
+        SetCursor(EMouseCursor::GrabHandClosed);
+    }
+    else if (bIsOverHeader)
+    {
+        SetCursor(EMouseCursor::GrabHand);
+    }
+    else
+    {
+        SetCursor(EMouseCursor::Default);
+    }
+
+    if (bIsDraggingWindow && Border_MainPanel)
+    {
+        UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Border_MainPanel->Slot);
+        if (CanvasSlot)
+        {
+            FVector2D CurrentCursorLocalPos = InGeometry.AbsoluteToLocal(CursorScreenPos);
+            FVector2D CursorDelta = CurrentCursorLocalPos - DragStartCursorPos;
+            FVector2D TargetPos = DragStartPanelPos + CursorDelta;
+
+            FVector2D ViewportLocalSize = InGeometry.GetLocalSize();
+            if (ViewportLocalSize.X <= 0.f || ViewportLocalSize.Y <= 0.f)
+            {
+                ViewportLocalSize = FVector2D(1920.f, 1080.f);
+            }
+
+            FVector2D PanelLocalSize = Border_MainPanel->GetCachedGeometry().GetLocalSize();
+            if (PanelLocalSize.X <= 0.f || PanelLocalSize.Y <= 0.f)
+            {
+                PanelLocalSize = FVector2D(500.f, 750.f);
+            }
+
+            FAnchors Anchors = CanvasSlot->GetAnchors();
+            FVector2D Alignment = CanvasSlot->GetAlignment();
+            FVector2D AnchorOffset(ViewportLocalSize.X * Anchors.Minimum.X, ViewportLocalSize.Y * Anchors.Minimum.Y);
+
+            float Margin = 10.f;
+            float MinPosX = Margin - AnchorOffset.X + PanelLocalSize.X * Alignment.X;
+            float MaxPosX = (ViewportLocalSize.X - Margin) - AnchorOffset.X - PanelLocalSize.X * (1.0f - Alignment.X);
+            float MinPosY = Margin - AnchorOffset.Y + PanelLocalSize.Y * Alignment.Y;
+            float MaxPosY = (ViewportLocalSize.Y - Margin) - AnchorOffset.Y - PanelLocalSize.Y * (1.0f - Alignment.Y);
+
+            FVector2D ClampedPos;
+            ClampedPos.X = FMath::Clamp(TargetPos.X, FMath::Min(MinPosX, MaxPosX), FMath::Max(MinPosX, MaxPosX));
+            ClampedPos.Y = FMath::Clamp(TargetPos.Y, FMath::Min(MinPosY, MaxPosY), FMath::Max(MinPosY, MaxPosY));
+
+            CanvasSlot->SetPosition(ClampedPos);
+            return FReply::Handled();
+        }
+    }
+
+    return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
+}
+
+FReply UBIMInspectorWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && bIsDraggingWindow)
+    {
+        bIsDraggingWindow = false;
+        SetCursor(EMouseCursor::Default);
+        return FReply::Handled().ReleaseMouseCapture();
+    }
+
+    return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
 
 bool UBIMInspectorWidget::IsMouseOverMainPanel() const
 {
@@ -103,6 +234,7 @@ void UBIMInspectorWidget::UpdateFromBIMData(const FBIMElementData& BIMData)
     if (Txt_Category)
     {
         Txt_Category->SetText(FText::FromString(BIMData.Category));
+        Txt_Category->SetColorAndOpacity(FSlateColor(FLinearColor::White));
     }
     if (Txt_Title)
     {
