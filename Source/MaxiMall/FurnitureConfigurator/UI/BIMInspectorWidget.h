@@ -14,6 +14,22 @@ class UVerticalBox;
 class UPrimitiveComponent;
 class UBIMAttributeRowWidget;
 
+UCLASS()
+class MAXIMALL_API UBIMCategoryHeaderHandler : public UObject
+{
+    GENERATED_BODY()
+
+public:
+    UPROPERTY()
+    TObjectPtr<UVerticalBox> ContentBox;
+
+    UPROPERTY()
+    TObjectPtr<UTextBlock> ArrowText;
+
+    UFUNCTION()
+    void OnHeaderClicked();
+};
+
 /**
  * UBIMInspectorWidget
  * Direct C++ parent class for WBP_BIMInspector.
@@ -30,6 +46,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "BIM UI")
     void UpdateFromBIMData(const FBIMElementData& BIMData);
 
+    UFUNCTION(BlueprintCallable, Category = "BIM UI")
+    bool IsMouseOverMainPanel() const;
+
 protected:
     virtual void NativeConstruct() override;
     virtual void NativePreConstruct() override;
@@ -37,14 +56,11 @@ protected:
     UFUNCTION()
     void OnCloseClicked();
 
-    UFUNCTION()
-    void OnCategoryToggleClicked();
-
     UPROPERTY()
-    TMap<TObjectPtr<UButton>, TObjectPtr<UVerticalBox>> CategoryToggleMap;
+    TArray<TObjectPtr<UBIMCategoryHeaderHandler>> CategoryHeaderHandlers;
 
-    UPROPERTY()
-    TMap<TObjectPtr<UButton>, TObjectPtr<UTextBlock>> CategoryArrowMap;
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UWidget> Border_MainPanel;
 
     UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
     TObjectPtr<UTextBlock> Txt_Category;

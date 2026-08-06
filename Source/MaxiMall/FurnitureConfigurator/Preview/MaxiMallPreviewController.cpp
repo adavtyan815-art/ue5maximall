@@ -102,6 +102,36 @@ void AMaxiMallPreviewController::BeginPlay()
     }
 }
 
+static bool IsWidgetHoveredGeometrically(UUserWidget* Widget)
+{
+    if (!Widget || !Widget->IsInViewport()) return false;
+
+    if (UBIMInspectorWidget* BIMWidget = Cast<UBIMInspectorWidget>(Widget))
+    {
+        return BIMWidget->IsMouseOverMainPanel();
+    }
+
+    if (Widget->IsHovered()) return true;
+
+    if (FSlateApplication::IsInitialized())
+    {
+        FGeometry WidgetGeo = Widget->GetCachedGeometry();
+        FVector2D CursorPos = FSlateApplication::Get().GetCursorPos();
+        FVector2D LocalPos = WidgetGeo.AbsoluteToLocal(CursorPos);
+        FVector2D LocalSize = WidgetGeo.GetLocalSize();
+
+        if (LocalSize.X > 0.f && LocalSize.Y > 0.f)
+        {
+            if (LocalPos.X >= 0.f && LocalPos.X <= LocalSize.X &&
+                LocalPos.Y >= 0.f && LocalPos.Y <= LocalSize.Y)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
 {
     Super::PlayerTick(DeltaTime);
@@ -158,7 +188,9 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
     AShowroomBooth* HitBooth = nullptr;
     bool bHoveringShowroom = false;
     
-    if (!ActivePreviewActor)
+    bool bIsMouseOverUI = IsWidgetHoveredGeometrically(BIMInspectorInstance) || IsWidgetHoveredGeometrically(MainWidgetInstance);
+
+    if (!ActivePreviewActor && !bIsMouseOverUI)
     {
         FHitResult HitResult;
         bool bHit = false;
@@ -362,8 +394,10 @@ void AMaxiMallPreviewController::OnLeftMouseButtonPressed()
         }
     }
 
+    bool bIsMouseOverUI = IsWidgetHoveredGeometrically(BIMInspectorInstance) || IsWidgetHoveredGeometrically(MainWidgetInstance);
+
     // Single-click selection for BIM elements & furniture components
-    if (!ActivePreviewActor)
+    if (!ActivePreviewActor && !bIsMouseOverUI)
     {
         FHitResult HitResult;
         bool bHit = false;
@@ -1522,11 +1556,11 @@ bool AMaxiMallPreviewController::GetBIMElementData(UPrimitiveComponent* Componen
         OutData.RawMetadata.Add(RawPair);
 
         FString CleanKey = KeyStr;
-        if (CleanKey.StartsWith(TEXT("Element=")))
+        if (CleanKey.StartsWith(TEXT("Element*")) || CleanKey.StartsWith(TEXT("Element=")) || CleanKey.StartsWith(TEXT("Element.")) || CleanKey.StartsWith(TEXT("Element_")) || CleanKey.StartsWith(TEXT("Element:")) || CleanKey.StartsWith(TEXT("Element-")))
         {
             CleanKey.RightChopInline(8);
         }
-        else if (CleanKey.StartsWith(TEXT("Type=")))
+        else if (CleanKey.StartsWith(TEXT("Type*")) || CleanKey.StartsWith(TEXT("Type=")) || CleanKey.StartsWith(TEXT("Type.")) || CleanKey.StartsWith(TEXT("Type_")) || CleanKey.StartsWith(TEXT("Type:")) || CleanKey.StartsWith(TEXT("Type-")))
         {
             CleanKey.RightChopInline(5);
         }
@@ -1551,6 +1585,7 @@ bool AMaxiMallPreviewController::GetBIMElementData(UPrimitiveComponent* Componen
         {
             OutData.IfcGUID = ValStr;
         }
+
         // Categorize into standard BIM property groups
         FString GroupName = TEXT("Identity Data");
         FString PropName = CleanKey;
@@ -1591,6 +1626,15 @@ bool AMaxiMallPreviewController::GetBIMElementData(UPrimitiveComponent* Componen
             {
                 GroupName = TEXT("Model Properties");
             }
+        }
+
+        if (PropName.StartsWith(TEXT("Element*")) || PropName.StartsWith(TEXT("Element=")) || PropName.StartsWith(TEXT("Element.")) || PropName.StartsWith(TEXT("Element_")))
+        {
+            PropName.RightChopInline(8);
+        }
+        else if (PropName.StartsWith(TEXT("Type*")) || PropName.StartsWith(TEXT("Type=")) || PropName.StartsWith(TEXT("Type.")) || PropName.StartsWith(TEXT("Type_")))
+        {
+            PropName.RightChopInline(5);
         }
 
         FBIMMetadataPair GroupPair;

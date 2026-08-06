@@ -13,9 +13,51 @@
 #include "Components/ButtonSlot.h"
 #include "Components/SizeBox.h"
 #include "Blueprint/WidgetTree.h"
+#include "Framework/Application/SlateApplication.h"
 #include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
 
 #include "Layout/Clipping.h"
+
+bool UBIMInspectorWidget::IsMouseOverMainPanel() const
+{
+    if (!IsInViewport())
+    {
+        return false;
+    }
+
+    const UWidget* TargetWidget = Border_MainPanel ? Cast<const UWidget>(Border_MainPanel.Get()) : Cast<const UWidget>(this);
+    if (!TargetWidget)
+    {
+        return false;
+    }
+
+    if (TargetWidget->IsHovered())
+    {
+        return true;
+    }
+
+    if (FSlateApplication::IsInitialized())
+    {
+        FGeometry WidgetGeo = TargetWidget->GetCachedGeometry();
+        FVector2D CursorPos = FSlateApplication::Get().GetCursorPos();
+        return WidgetGeo.IsUnderLocation(CursorPos);
+    }
+    return false;
+}
+
+void UBIMCategoryHeaderHandler::OnHeaderClicked()
+{
+    if (ContentBox)
+    {
+        const bool bIsCollapsed = (ContentBox->GetVisibility() == ESlateVisibility::Collapsed);
+        ContentBox->SetVisibility(bIsCollapsed ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
+        if (ArrowText)
+        {
+            ArrowText->SetText(FText::FromString(bIsCollapsed ? TEXT("▼ ") : TEXT("▶ ")));
+        }
+    }
+}
 
 void UBIMInspectorWidget::NativeConstruct()
 {
@@ -30,29 +72,6 @@ void UBIMInspectorWidget::NativeConstruct()
 void UBIMInspectorWidget::NativePreConstruct()
 {
     Super::NativePreConstruct();
-}
-
-void UBIMInspectorWidget::OnCategoryToggleClicked()
-{
-    for (auto& KVP : CategoryToggleMap)
-    {
-        UButton* Btn = KVP.Key;
-        UVerticalBox* ContentBox = KVP.Value;
-        if (Btn && ContentBox && (Btn->IsHovered() || Btn->HasUserFocus(GetOwningPlayer())))
-        {
-            const bool bIsVisible = ContentBox->GetVisibility() == ESlateVisibility::Visible;
-            ContentBox->SetVisibility(bIsVisible ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
-
-            if (TObjectPtr<UTextBlock>* ArrowPtr = CategoryArrowMap.Find(Btn))
-            {
-                if (*ArrowPtr)
-                {
-                    (*ArrowPtr)->SetText(FText::FromString(bIsVisible ? TEXT("▶ ") : TEXT("▼ ")));
-                }
-            }
-            break;
-        }
-    }
 }
 
 void UBIMInspectorWidget::OnCloseClicked()
@@ -125,8 +144,7 @@ void UBIMInspectorWidget::UpdateFromBIMData(const FBIMElementData& BIMData)
             }
         }
 
-        CategoryToggleMap.Empty();
-        CategoryArrowMap.Empty();
+        CategoryHeaderHandlers.Empty();
 
         DedicatedSizeBox->ClearChildren();
 
@@ -150,27 +168,53 @@ void UBIMInspectorWidget::UpdateFromBIMData(const FBIMElementData& BIMData)
 
                     if (HeaderBtn && HeaderBox && ArrowText && TitleText)
                     {
+                        FButtonStyle HeaderStyle = HeaderBtn->GetStyle();
+                        HeaderStyle.Normal.DrawAs = ESlateBrushDrawType::NoDrawType;
+                        HeaderStyle.Hovered.DrawAs = ESlateBrushDrawType::Box;
+                        HeaderStyle.Hovered.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.05f));
+                        HeaderStyle.Pressed.DrawAs = ESlateBrushDrawType::Box;
+                        HeaderStyle.Pressed.TintColor = FSlateColor(FLinearColor(0.2f, 0.6f, 0.9f, 0.15f));
+                        HeaderBtn->SetStyle(HeaderStyle);
+
                         ArrowText->SetText(FText::FromString(TEXT("▼ ")));
                         FSlateFontInfo ArrowFont = ArrowText->GetFont();
-                        ArrowFont.Size = 10.f;
+                        ArrowFont.Size = 9.f;
                         ArrowText->SetFont(ArrowFont);
-                        ArrowText->SetColorAndOpacity(FSlateColor(FLinearColor(0.7f, 0.7f, 0.7f, 1.f)));
+                        ArrowText->SetColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f, 1.f)));
 
                         TitleText->SetText(FText::FromString(CatGroup.CategoryName));
                         FSlateFontInfo TitleFont = TitleText->GetFont();
                         TitleFont.Size = 11.f;
                         TitleText->SetFont(TitleFont);
-                        TitleText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+                        TitleText->SetColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.85f, 0.85f, 1.f)));
 
-                        HeaderBox->AddChild(ArrowText);
-                        HeaderBox->AddChild(TitleText);
+                        UHorizontalBoxSlot* ArrowSlot = Cast<UHorizontalBoxSlot>(HeaderBox->AddChild(ArrowText));
+                        if (ArrowSlot)
+                        {
+                            ArrowSlot->SetVerticalAlignment(VAlign_Center);
+                            ArrowSlot->SetHorizontalAlignment(HAlign_Left);
+                            ArrowSlot->SetPadding(FMargin(0.f, 0.f, 4.f, 0.f));
+                        }
+
+                        UHorizontalBoxSlot* TitleSlot = Cast<UHorizontalBoxSlot>(HeaderBox->AddChild(TitleText));
+                        if (TitleSlot)
+                        {
+                            TitleSlot->SetVerticalAlignment(VAlign_Center);
+                            TitleSlot->SetHorizontalAlignment(HAlign_Left);
+                        }
 
                         if (UButtonSlot* BtnSlot = Cast<UButtonSlot>(HeaderBtn->AddChild(HeaderBox)))
                         {
-                            BtnSlot->SetPadding(FMargin(8.f, 4.f, 8.f, 4.f));
+                            BtnSlot->SetHorizontalAlignment(HAlign_Left);
+                            BtnSlot->SetVerticalAlignment(VAlign_Center);
+                            BtnSlot->SetPadding(FMargin(4.f, 3.f, 4.f, 3.f));
                         }
 
                         UVerticalBox* ContentBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+                        if (ContentBox)
+                        {
+                            ContentBox->SetVisibility(ESlateVisibility::Visible);
+                        }
 
                         for (const FBIMMetadataPair& Pair : CatGroup.Pairs)
                         {
@@ -183,7 +227,7 @@ void UBIMInspectorWidget::UpdateFromBIMData(const FBIMElementData& BIMData)
                                 if (KeyText && ValText)
                                 {
                                     KeyText->SetText(FText::FromString(Pair.Key));
-                                    KeyText->SetColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.85f, 0.85f, 1.0f)));
+                                    KeyText->SetColorAndOpacity(FSlateColor(FLinearColor(0.7f, 0.7f, 0.7f, 1.0f)));
                                     KeyText->SetAutoWrapText(true);
                                     FSlateFontInfo KeyFont = KeyText->GetFont();
                                     KeyFont.Size = 11.f;
@@ -191,7 +235,10 @@ void UBIMInspectorWidget::UpdateFromBIMData(const FBIMElementData& BIMData)
 
                                     ValText->SetText(FText::FromString(Pair.Value));
                                     ValText->SetColorAndOpacity(FSlateColor(FLinearColor(0.2f, 0.85f, 1.0f, 1.0f))); // Cyan
-                                    ValText->SetAutoWrapText(true);
+                                    ValText->SetToolTipText(FText::FromString(Pair.Value));
+                                    ValText->SetAutoWrapText(false);
+                                    ValText->SetClipping(EWidgetClipping::ClipToBounds);
+
                                     FSlateFontInfo ValFont = ValText->GetFont();
                                     ValFont.Size = 11.f;
                                     ValText->SetFont(ValFont);
@@ -200,28 +247,55 @@ void UBIMInspectorWidget::UpdateFromBIMData(const FBIMElementData& BIMData)
                                     if (KeySlot)
                                     {
                                         KeySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-                                        KeySlot->SetPadding(FMargin(0.f, 2.f, 10.f, 2.f));
+                                        KeySlot->SetPadding(FMargin(0.f, 2.f, 8.f, 2.f));
+                                        KeySlot->SetVerticalAlignment(VAlign_Center);
                                     }
 
-                                    UHorizontalBoxSlot* ValSlot = Cast<UHorizontalBoxSlot>(RowBox->AddChild(ValText));
-                                    if (ValSlot)
+                                    USizeBox* ValSizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+                                    if (ValSizeBox)
                                     {
-                                        ValSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-                                        ValSlot->SetPadding(FMargin(0.f, 2.f, 0.f, 2.f));
+                                        ValSizeBox->SetMaxDesiredWidth(140.f);
+                                        ValSizeBox->SetClipping(EWidgetClipping::ClipToBounds);
+                                        ValSizeBox->AddChild(ValText);
+
+                                        UHorizontalBoxSlot* ValSlot = Cast<UHorizontalBoxSlot>(RowBox->AddChild(ValSizeBox));
+                                        if (ValSlot)
+                                        {
+                                            ValSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
+                                            ValSlot->SetHorizontalAlignment(HAlign_Right);
+                                            ValSlot->SetVerticalAlignment(VAlign_Center);
+                                            ValSlot->SetPadding(FMargin(0.f, 2.f, 0.f, 2.f));
+                                        }
+                                    }
+                                    else
+                                    {
+                                        UHorizontalBoxSlot* ValSlot = Cast<UHorizontalBoxSlot>(RowBox->AddChild(ValText));
+                                        if (ValSlot)
+                                        {
+                                            ValSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+                                            ValSlot->SetHorizontalAlignment(HAlign_Right);
+                                            ValSlot->SetVerticalAlignment(VAlign_Center);
+                                            ValSlot->SetPadding(FMargin(0.f, 2.f, 0.f, 2.f));
+                                        }
                                     }
 
                                     UVerticalBoxSlot* VRowSlot = ContentBox->AddChildToVerticalBox(RowBox);
                                     if (VRowSlot)
                                     {
-                                        VRowSlot->SetPadding(FMargin(14.f, 2.f, 16.f, 2.f));
+                                        VRowSlot->SetPadding(FMargin(36.f, 3.f, 12.f, 3.f));
                                     }
                                 }
                             }
                         }
 
-                        CategoryToggleMap.Add(HeaderBtn, ContentBox);
-                        CategoryArrowMap.Add(HeaderBtn, ArrowText);
-                        HeaderBtn->OnClicked.AddUniqueDynamic(this, &UBIMInspectorWidget::OnCategoryToggleClicked);
+                        UBIMCategoryHeaderHandler* Handler = NewObject<UBIMCategoryHeaderHandler>(this);
+                        if (Handler)
+                        {
+                            Handler->ContentBox = ContentBox;
+                            Handler->ArrowText = ArrowText;
+                            HeaderBtn->OnClicked.AddUniqueDynamic(Handler, &UBIMCategoryHeaderHandler::OnHeaderClicked);
+                            CategoryHeaderHandlers.Add(Handler);
+                        }
 
                         ScrollBox->AddChild(HeaderBtn);
                         ScrollBox->AddChild(ContentBox);
@@ -241,12 +315,14 @@ void UBIMInspectorWidget::UpdateFromBIMData(const FBIMElementData& BIMData)
                         if (KeyText && ValText)
                         {
                             FString CleanKey = Pair.Key;
-                            CleanKey.ReplaceInline(TEXT("Element="), TEXT(""));
                             CleanKey.ReplaceInline(TEXT("Element*"), TEXT(""));
+                            CleanKey.ReplaceInline(TEXT("Element="), TEXT(""));
                             CleanKey.ReplaceInline(TEXT("Element."), TEXT(""));
-                            CleanKey.ReplaceInline(TEXT("Type="), TEXT(""));
+                            CleanKey.ReplaceInline(TEXT("Element_"), TEXT(""));
                             CleanKey.ReplaceInline(TEXT("Type*"), TEXT(""));
+                            CleanKey.ReplaceInline(TEXT("Type="), TEXT(""));
                             CleanKey.ReplaceInline(TEXT("Type."), TEXT(""));
+                            CleanKey.ReplaceInline(TEXT("Type_"), TEXT(""));
 
                             KeyText->SetText(FText::FromString(CleanKey));
                             KeyText->SetColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.85f, 0.85f, 1.0f)));
