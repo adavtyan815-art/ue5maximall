@@ -12,9 +12,11 @@
 #include "Components/InputComponent.h"
 #include "InputCoreTypes.h"
 #include "EngineUtils.h"
+#include "Engine/PostProcessVolume.h"
 #include "Blueprint/UserWidget.h"
 #include "FurnitureConfigurator/UI/ConfiguratorMainWidget.h"
 #include "FurnitureConfigurator/UI/ViewmodeOverlayWidget.h"
+#include "FurnitureConfigurator/UI/BIMInspectorWidget.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/SViewport.h"
 #include "Engine/LocalPlayer.h"
@@ -27,6 +29,10 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "ShaderPipelineCache.h"
+#include "DatasmithAssetUserData.h"
+#include "DatasmithContentBlueprintLibrary.h"
+#include "Engine/StaticMesh.h"
+#include "Components/StaticMeshComponent.h"
 
 AMaxiMallPreviewController::AMaxiMallPreviewController()
 {
@@ -150,6 +156,7 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
 
     UPrimitiveComponent* NewHoveredComp = nullptr;
     AShowroomBooth* HitBooth = nullptr;
+    bool bHoveringShowroom = false;
     
     if (!ActivePreviewActor)
     {
@@ -178,24 +185,28 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         if (bHit && HitResult.GetActor())
         {
             HitBooth = Cast<AShowroomBooth>(HitResult.GetActor());
-            if (HitBooth)
+            UPrimitiveComponent* HitComp = HitResult.GetComponent();
+
+            bool bIsShowroomInteractable = HitBooth && HitComp && (
+                HitComp == HitBooth->MainCabinet.Get() ||
+                HitComp == HitBooth->ClosetMesh.Get() ||
+                HitComp == HitBooth->DoorMeshSlot0.Get() ||
+                HitComp == HitBooth->DoorMeshSlot1.Get() ||
+                HitComp == HitBooth->ClosetDoorMeshSlot0.Get() ||
+                HitComp == HitBooth->ClosetDoorMeshSlot1.Get() ||
+                HitComp == HitBooth->CountertopMesh.Get() ||
+                HitComp == HitBooth->SinkMesh.Get() ||
+                HitComp == HitBooth->FaucetMesh.Get() ||
+                HitComp == HitBooth->MirrorMesh.Get()
+            );
+
+            if (bIsShowroomInteractable)
             {
-                UPrimitiveComponent* HitComp = HitResult.GetComponent();
-                if (HitComp && (
-                    HitComp == HitBooth->MainCabinet.Get() ||
-                    HitComp == HitBooth->ClosetMesh.Get() ||
-                    HitComp == HitBooth->DoorMeshSlot0.Get() ||
-                    HitComp == HitBooth->DoorMeshSlot1.Get() ||
-                    HitComp == HitBooth->ClosetDoorMeshSlot0.Get() ||
-                    HitComp == HitBooth->ClosetDoorMeshSlot1.Get() ||
-                    HitComp == HitBooth->CountertopMesh.Get() ||
-                    HitComp == HitBooth->SinkMesh.Get() ||
-                    HitComp == HitBooth->FaucetMesh.Get() ||
-                    HitComp == HitBooth->MirrorMesh.Get()
-                ))
-                {
-                    NewHoveredComp = HitComp;
-                }
+                bHoveringShowroom = true;
+            }
+            else if (HitComp && HasBIMMetadata(HitComp))
+            {
+                NewHoveredComp = HitComp;
             }
         }
     }
@@ -203,40 +214,49 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
     UPrimitiveComponent* CurrentHovered = HoveredComponent.Get();
     if (CurrentHovered != NewHoveredComp)
     {
-        if (CurrentHovered)
+        if (CurrentHovered && CurrentHovered != SelectedComponent.Get())
         {
             CurrentHovered->SetRenderCustomDepth(false);
+        }
+        else if (CurrentHovered && CurrentHovered == SelectedComponent.Get())
+        {
+            CurrentHovered->SetRenderCustomDepth(true);
+            CurrentHovered->SetCustomDepthStencilValue(2);
         }
         
         if (NewHoveredComp)
         {
             NewHoveredComp->SetRenderCustomDepth(true);
-            NewHoveredComp->SetCustomDepthStencilValue(1);
-            
-            if (bShowMouseCursor)
+            if (NewHoveredComp != SelectedComponent.Get())
             {
-                CurrentMouseCursor = EMouseCursor::Hand;
-            }
-        }
-        else
-        {
-            if (bShowMouseCursor)
-            {
-                CurrentMouseCursor = EMouseCursor::Default;
+                NewHoveredComp->SetCustomDepthStencilValue(1);
             }
         }
         
         HoveredComponent = NewHoveredComp;
     }
 
-    // в”Ђв”Ђ Pixel Streaming cursor data-channel broadcast в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-    // Only send when the hover state actually changes to avoid flooding the
-    // data channel with identical messages every tick.
-    const bool bNowHovering = (NewHoveredComp != nullptr);
-    if (bNowHovering != bWasHoveringInteractable)
+    const bool bIsAnyHovered = (NewHoveredComp != nullptr || bHoveringShowroom);
+    if (bIsAnyHovered)
     {
-        BroadcastCursorState(bNowHovering);
-        bWasHoveringInteractable = bNowHovering;
+        if (bShowMouseCursor)
+        {
+            CurrentMouseCursor = EMouseCursor::Hand;
+        }
+    }
+    else
+    {
+        if (bShowMouseCursor)
+        {
+            CurrentMouseCursor = EMouseCursor::Default;
+        }
+    }
+
+    // ── Pixel Streaming cursor data-channel broadcast ─────────────────────
+    if (bIsAnyHovered != bWasHoveringInteractable)
+    {
+        BroadcastCursorState(bIsAnyHovered);
+        bWasHoveringInteractable = bIsAnyHovered;
     }
 }
 
@@ -325,14 +345,87 @@ void AMaxiMallPreviewController::OnLeftMouseButtonPressed()
 {
     float CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
 
-    if (CurrentTime - LastClickTime < DoubleClickThreshold)
-    {
-        HandleDoubleClickInteraction();
-        LastClickTime = 0.f;
-        return;
-    }
-    
+    bool bIsDoubleClick = (CurrentTime - LastClickTime < DoubleClickThreshold);
     LastClickTime = CurrentTime;
+
+    if (bIsDoubleClick)
+    {
+        AShowroomBooth* HitBooth = nullptr;
+        EFurnitureComponentType ComponentType = EFurnitureComponentType::None;
+        UPrimitiveComponent* HitComponent = nullptr;
+
+        if (TraceFurnitureComponent(HitBooth, ComponentType, HitComponent) &&
+            (ComponentType == EFurnitureComponentType::Doors || ComponentType == EFurnitureComponentType::Closet))
+        {
+            HandleDoubleClickInteraction();
+            return;
+        }
+    }
+
+    // Single-click selection for BIM elements & furniture components
+    if (!ActivePreviewActor)
+    {
+        FHitResult HitResult;
+        bool bHit = false;
+        
+        if (bShowMouseCursor)
+        {
+            bHit = GetHitResultUnderCursor(ECC_Visibility, false, HitResult);
+        }
+        else
+        {
+            FVector CameraLoc;
+            FRotator CameraRot;
+            GetPlayerViewPoint(CameraLoc, CameraRot);
+            
+            FVector Start = CameraLoc;
+            FVector End = Start + (CameraRot.Vector() * 1000.f);
+            
+            FCollisionQueryParams Params;
+            Params.AddIgnoredActor(GetPawn());
+            
+            bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params);
+        }
+        
+        if (bHit && HitResult.GetComponent())
+        {
+            UPrimitiveComponent* HitComp = HitResult.GetComponent();
+            AActor* HitActor = HitResult.GetActor();
+            AShowroomBooth* HitBooth = Cast<AShowroomBooth>(HitActor);
+
+            bool bIsShowroomActor = HitBooth || (HitActor && (
+                HitActor->IsA(AShowroomBooth::StaticClass()) ||
+                HitActor->GetName().Contains(TEXT("Showroom")) ||
+                HitActor->GetClass()->GetName().Contains(TEXT("Showroom"))
+            ));
+
+            if (bIsShowroomActor)
+            {
+                // Showroom single left-click does NOT open UI or BIM selection.
+                // Double-click interaction handles opening View Mode.
+            }
+            else if (HasBIMMetadata(HitComp))
+            {
+                // Toggle selection on BIM model: clicking selected mesh deselects it
+                if (SelectedComponent.Get() == HitComp)
+                {
+                    SelectComponent(nullptr);
+                }
+                else
+                {
+                    SelectComponent(HitComp);
+                }
+            }
+            else
+            {
+                SelectComponent(nullptr);
+            }
+        }
+        else
+        {
+            SelectComponent(nullptr);
+        }
+    }
 }
 
 FString AMaxiMallPreviewController::GetRequestURL() const {
@@ -386,6 +479,9 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         UE_LOG(LogTemp, Warning, TEXT("[PreviewController] OpenFurniturePreview called with null TargetBooth."));
         return;
     }
+
+    // Clear any active BIM selection & stencil outline when entering furniture View Mode
+    SelectComponent(nullptr);
 
     if (FocusComponent == EFurnitureComponentType::Doors)
     {
@@ -450,6 +546,15 @@ void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBoot
         SpawnRotation.Yaw = TargetBooth->GetActorRotation().Yaw;
     }
     const FVector TargetSpawnLocation = TargetBooth ? TargetBooth->GetActorLocation() : FVector::ZeroVector;
+
+    // Disable world PostProcessVolume (and its M_PostProcessOutline) during View Mode
+    for (TActorIterator<APostProcessVolume> It(World); It; ++It)
+    {
+        if (APostProcessVolume* PPVol = *It)
+        {
+            PPVol->bEnabled = false;
+        }
+    }
 
     ActivePreviewActor = Cast<AFurniturePreviewActor>(World->SpawnActor(
         SpawnClass,
@@ -516,6 +621,18 @@ void AMaxiMallPreviewController::CloseFurniturePreview()
     if (CurrentTargetBooth)
     {
         CurrentTargetBooth->OnProductChanged.RemoveAll(this);
+    }
+
+    // Re-enable world PostProcessVolume when exiting View Mode
+    if (UWorld* World = GetWorld())
+    {
+        for (TActorIterator<APostProcessVolume> It(World); It; ++It)
+        {
+            if (APostProcessVolume* PPVol = *It)
+            {
+                PPVol->bEnabled = true;
+            }
+        }
     }
 
     if (!ActivePreviewActor)
@@ -1202,5 +1319,356 @@ void AMaxiMallPreviewController::SendOpenURLToBrowser(const FString& URL)
     else
     {
         UE_LOG(LogTemp, Error, TEXT("[PixelStreaming] Cannot open URL. PixelStreamingInput component is null!"));
+    }
+}
+
+bool AMaxiMallPreviewController::HasBIMMetadata(UPrimitiveComponent* Component)
+{
+    if (!Component)
+    {
+        return false;
+    }
+
+    if (Component->ComponentTags.Contains(TEXT("IgnoreBIM")))
+    {
+        return false;
+    }
+
+    if (AActor* OwnerActor = Component->GetOwner())
+    {
+        if (OwnerActor->ActorHasTag(TEXT("IgnoreBIM")) || OwnerActor->Tags.Contains(TEXT("IgnoreBIM")))
+        {
+            return false;
+        }
+
+        if (Cast<AShowroomBooth>(OwnerActor) || OwnerActor->IsA(AShowroomBooth::StaticClass()) || 
+            OwnerActor->GetName().Contains(TEXT("Showroom")) || OwnerActor->GetClass()->GetName().Contains(TEXT("Showroom")))
+        {
+            return false;
+        }
+    }
+
+    // 1. Check Component Asset User Data
+    if (UDatasmithAssetUserData* AssetUserData = UDatasmithContentBlueprintLibrary::GetDatasmithUserData(Component))
+    {
+        return true;
+    }
+
+    // 2. Check Static Mesh Asset User Data
+    if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(Component))
+    {
+        if (UStaticMesh* MeshAsset = SMC->GetStaticMesh())
+        {
+            if (UDatasmithAssetUserData* MeshUserData = UDatasmithContentBlueprintLibrary::GetDatasmithUserData(MeshAsset))
+            {
+                return true;
+            }
+        }
+    }
+
+    // 3. Check Parent Actor Asset User Data
+    if (AActor* OwnerActor = Component->GetOwner())
+    {
+        if (UDatasmithAssetUserData* ActorUserData = UDatasmithContentBlueprintLibrary::GetDatasmithUserData(OwnerActor))
+        {
+            return true;
+        }
+    }
+
+    // Fallback: If component is part of a Datasmith imported mesh/actor
+    if (AActor* OwnerActor = Component->GetOwner())
+    {
+        if (OwnerActor->GetName().Contains(TEXT("Datasmith")) || OwnerActor->GetClass()->GetName().Contains(TEXT("Datasmith")))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void AMaxiMallPreviewController::SelectComponent(UPrimitiveComponent* ComponentToSelect)
+{
+    // Never allow BIM selection or BIM events while inside Viewmode
+    if (ActivePreviewActor != nullptr && ComponentToSelect != nullptr)
+    {
+        return;
+    }
+
+    UPrimitiveComponent* PrevSelected = SelectedComponent.Get();
+
+    // Clear custom depth from previously selected component if it's no longer hovered
+    if (PrevSelected && PrevSelected != ComponentToSelect && PrevSelected != HoveredComponent.Get())
+    {
+        PrevSelected->SetRenderCustomDepth(false);
+    }
+    else if (PrevSelected && PrevSelected != ComponentToSelect && PrevSelected == HoveredComponent.Get())
+    {
+        // Revert to hover stencil (1)
+        PrevSelected->SetRenderCustomDepth(true);
+        PrevSelected->SetCustomDepthStencilValue(1);
+    }
+
+    SelectedComponent = ComponentToSelect;
+
+    if (ComponentToSelect && HasBIMMetadata(ComponentToSelect))
+    {
+        // Apply persistent selection stencil (2)
+        ComponentToSelect->SetRenderCustomDepth(true);
+        ComponentToSelect->SetCustomDepthStencilValue(2);
+
+        if (!BIMInspectorInstance && BIMInspectorClass)
+        {
+            BIMInspectorInstance = CreateWidget<UUserWidget>(this, BIMInspectorClass);
+        }
+        if (BIMInspectorInstance)
+        {
+            if (!BIMInspectorInstance->IsInViewport())
+            {
+                BIMInspectorInstance->AddToViewport();
+            }
+            if (UBIMInspectorWidget* BIMWidget = Cast<UBIMInspectorWidget>(BIMInspectorInstance))
+            {
+                BIMWidget->RefreshBIMData(ComponentToSelect);
+            }
+
+            bShowMouseCursor = true;
+            FInputModeGameAndUI InputMode;
+            InputMode.SetWidgetToFocus(BIMInspectorInstance->TakeWidget());
+            InputMode.SetHideCursorDuringCapture(true);
+            InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+            SetInputMode(InputMode);
+        }
+    }
+    else
+    {
+        if (BIMInspectorInstance && BIMInspectorInstance->IsInViewport())
+        {
+            BIMInspectorInstance->RemoveFromParent();
+
+            FInputModeGameAndUI InputMode;
+            InputMode.SetHideCursorDuringCapture(true);
+            InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+            SetInputMode(InputMode);
+        }
+    }
+
+    OnComponentSelected(ComponentToSelect);
+    OnComponentSelectedDelegate.Broadcast(ComponentToSelect);
+}
+
+UPrimitiveComponent* AMaxiMallPreviewController::GetSelectedComponent() const
+{
+    return SelectedComponent.Get();
+}
+
+bool AMaxiMallPreviewController::GetBIMElementData(UPrimitiveComponent* Component, FBIMElementData& OutData)
+{
+    OutData = FBIMElementData();
+
+    if (!Component)
+    {
+        return false;
+    }
+
+    OutData.ElementName = Component->GetName();
+    if (AActor* Owner = Component->GetOwner())
+    {
+        OutData.ElementName = Owner->GetName();
+    }
+
+    TMap<FName, FString> RawMap;
+
+    auto ExtractMetaDataFromObj = [&RawMap](UObject* Obj)
+    {
+        if (!Obj) return;
+        if (UDatasmithAssetUserData* CompData = UDatasmithContentBlueprintLibrary::GetDatasmithUserData(Obj))
+        {
+            RawMap.Append(CompData->MetaData);
+        }
+        if (IInterface_AssetUserData* Interface = Cast<IInterface_AssetUserData>(Obj))
+        {
+            if (const TArray<UAssetUserData*>* UserDataArray = Interface->GetAssetUserDataArray())
+            {
+                for (UAssetUserData* UserData : *UserDataArray)
+                {
+                    if (UDatasmithAssetUserData* DatasmithData = Cast<UDatasmithAssetUserData>(UserData))
+                    {
+                        RawMap.Append(DatasmithData->MetaData);
+                    }
+                }
+            }
+        }
+    };
+
+    ExtractMetaDataFromObj(Component);
+
+    if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(Component))
+    {
+        ExtractMetaDataFromObj(SMC->GetStaticMesh());
+    }
+
+    ExtractMetaDataFromObj(Component->GetOwner());
+
+    for (const TPair<FName, FString>& Pair : RawMap)
+    {
+        FString KeyStr = Pair.Key.ToString();
+        FString ValStr = Pair.Value;
+
+        FBIMMetadataPair RawPair;
+        RawPair.Key = KeyStr;
+        RawPair.Value = ValStr;
+        OutData.RawMetadata.Add(RawPair);
+
+        FString CleanKey = KeyStr;
+        if (CleanKey.StartsWith(TEXT("Element=")))
+        {
+            CleanKey.RightChopInline(8);
+        }
+        else if (CleanKey.StartsWith(TEXT("Type=")))
+        {
+            CleanKey.RightChopInline(5);
+        }
+
+        FBIMMetadataPair CleanPair;
+        CleanPair.Key = CleanKey;
+        CleanPair.Value = ValStr;
+
+        if (CleanKey.Equals(TEXT("Category"), ESearchCase::IgnoreCase) || CleanKey.Contains(TEXT("Category")))
+        {
+            OutData.Category = ValStr;
+        }
+        else if (CleanKey.Equals(TEXT("Family"), ESearchCase::IgnoreCase) || CleanKey.Contains(TEXT("Family")))
+        {
+            OutData.FamilyName = ValStr;
+        }
+        else if (CleanKey.Equals(TEXT("Type"), ESearchCase::IgnoreCase))
+        {
+            OutData.TypeName = ValStr;
+        }
+        else if (CleanKey.Equals(TEXT("IfcGUID"), ESearchCase::IgnoreCase))
+        {
+            OutData.IfcGUID = ValStr;
+        }
+        else if (CleanKey.Contains(TEXT("Area")) || CleanKey.Contains(TEXT("Height")) || CleanKey.Contains(TEXT("Length")) || CleanKey.Contains(TEXT("Width")) || CleanKey.Contains(TEXT("breedte")))
+        {
+            OutData.Dimensions.Add(CleanPair);
+        }
+        else
+        {
+            OutData.Specifications.Add(CleanPair);
+        }
+    }
+
+    // Fail-safe fallbacks: Ensure Dimensions and Title are NEVER empty
+    if (OutData.Dimensions.Num() == 0)
+    {
+        OutData.Dimensions = OutData.RawMetadata;
+    }
+
+    if (OutData.FamilyName.IsEmpty())
+    {
+        OutData.FamilyName = OutData.ElementName;
+    }
+    if (OutData.Category.IsEmpty())
+    {
+        OutData.Category = TEXT("BIM Element");
+    }
+    if (OutData.TypeName.IsEmpty())
+    {
+        OutData.TypeName = OutData.ElementName;
+    }
+
+    return true;
+}
+
+int32 AMaxiMallPreviewController::SelectAllComponentsOfCategory(const FString& CategoryName)
+{
+    SelectComponent(nullptr);
+
+    for (int32 i = MultiSelectedComponents.Num() - 1; i >= 0; --i)
+    {
+        if (UPrimitiveComponent* Comp = MultiSelectedComponents[i].Get())
+        {
+            Comp->SetRenderCustomDepth(false);
+        }
+    }
+    MultiSelectedComponents.Empty();
+
+    if (CategoryName.IsEmpty() || !GetWorld())
+    {
+        return 0;
+    }
+
+    int32 Count = 0;
+    for (TObjectIterator<UPrimitiveComponent> It; It; ++It)
+    {
+        UPrimitiveComponent* Comp = *It;
+        if (Comp && Comp->GetWorld() == GetWorld() && !Comp->IsBeingDestroyed())
+        {
+            FBIMElementData Data;
+            if (GetBIMElementData(Comp, Data))
+            {
+                if (Data.Category.Equals(CategoryName, ESearchCase::IgnoreCase))
+                {
+                    Comp->SetRenderCustomDepth(true);
+                    Comp->SetCustomDepthStencilValue(2);
+                    MultiSelectedComponents.Add(Comp);
+                    Count++;
+                }
+            }
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[BIM Category Selection] Highlighted %d elements for category '%s'"), Count, *CategoryName);
+    return Count;
+}
+
+void AMaxiMallPreviewController::CalculateSelectedQuantity(float& OutTotalAreaM2, float& OutTotalLengthM) const
+{
+    OutTotalAreaM2 = 0.f;
+    OutTotalLengthM = 0.f;
+
+    TArray<UPrimitiveComponent*> Targets;
+    if (SelectedComponent.IsValid())
+    {
+        Targets.Add(SelectedComponent.Get());
+    }
+    for (const TObjectPtr<UPrimitiveComponent>& CompObj : MultiSelectedComponents)
+    {
+        if (CompObj && !Targets.Contains(CompObj.Get()))
+        {
+            Targets.Add(CompObj.Get());
+        }
+    }
+
+    for (UPrimitiveComponent* Comp : Targets)
+    {
+        FBIMElementData Data;
+        if (GetBIMElementData(Comp, Data))
+        {
+            for (const FBIMMetadataPair& Dim : Data.Dimensions)
+            {
+                if (Dim.Key.Contains(TEXT("Area")))
+                {
+                    FString RawVal = Dim.Value;
+                    RawVal.ReplaceInline(TEXT("m²"), TEXT(""));
+                    RawVal.ReplaceInline(TEXT("m2"), TEXT(""));
+                    RawVal.TrimStartAndEndInline();
+                    OutTotalAreaM2 += FCString::Atof(*RawVal);
+                }
+                else if (Dim.Key.Contains(TEXT("Length")))
+                {
+                    FString RawVal = Dim.Value;
+                    RawVal.TrimStartAndEndInline();
+                    float Val = FCString::Atof(*RawVal);
+                    if (Val > 100.f)
+                    {
+                        Val /= 1000.f;
+                    }
+                    OutTotalLengthM += Val;
+                }
+            }
+        }
     }
 }

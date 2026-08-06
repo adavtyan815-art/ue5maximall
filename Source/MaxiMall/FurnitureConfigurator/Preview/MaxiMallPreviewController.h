@@ -72,6 +72,21 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Trace Furniture Component"))
     bool TraceFurnitureComponent(AShowroomBooth*& OutBooth, EFurnitureComponentType& OutComponentType, UPrimitiveComponent*& OutHitComponent);
 
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | BIM", meta = (DisplayName = "Has BIM Metadata"))
+    static bool HasBIMMetadata(UPrimitiveComponent* Component);
+
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | BIM", meta = (DisplayName = "Get BIM Element Data"))
+    static bool GetBIMElementData(UPrimitiveComponent* Component, FBIMElementData& OutData);
+
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | BIM", meta = (DisplayName = "Select All Components of Category"))
+    int32 SelectAllComponentsOfCategory(const FString& CategoryName);
+
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | BIM", meta = (DisplayName = "Calculate Selected Quantity"))
+    void CalculateSelectedQuantity(float& OutTotalAreaM2, float& OutTotalLengthM) const;
+
+    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | BIM")
+    TArray<TObjectPtr<UPrimitiveComponent>> MultiSelectedComponents;
+
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Handle Double-Click Interaction"))
     void HandleDoubleClickInteraction();
 
@@ -98,7 +113,24 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth", meta = (DisplayName = "Request Booth Component Selection"))
     void RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
 
-    // в”Ђв”Ђ BLUEPRINT EVENTS в”Ђв”Ђ
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Select Component"))
+    void SelectComponent(UPrimitiveComponent* ComponentToSelect);
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Interaction", meta = (DisplayName = "Get Selected Component"))
+    UPrimitiveComponent* GetSelectedComponent() const;
+
+    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Interaction")
+    TWeakObjectPtr<UPrimitiveComponent> SelectedComponent;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimitiveComponent*, SelectedComp);
+
+    // ── BLUEPRINT EVENTS ──────────────────────────────────────────────────
+
+    UPROPERTY(BlueprintAssignable, Category = "MaxiMall | Interaction Events", meta = (DisplayName = "On Component Selected Delegate"))
+    FOnComponentSelectedDelegate OnComponentSelectedDelegate;
+
+    UFUNCTION(BlueprintImplementableEvent, Category = "MaxiMall | Interaction Events", meta = (DisplayName = "On Component Selected"))
+    void OnComponentSelected(UPrimitiveComponent* SelectedComp);
 
     UFUNCTION(BlueprintImplementableEvent, Category = "MaxiMall | Preview Events", meta = (DisplayName = "On Preview Opened"))
     void OnPreviewOpened();
@@ -124,11 +156,17 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
     TSubclassOf<UUserWidget> ViewmodeOverlayClass;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
+    TSubclassOf<UUserWidget> BIMInspectorClass;
+
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> MainWidgetInstance;
 
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> ViewmodeOverlayInstance;
+
+    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
+    TObjectPtr<UUserWidget> BIMInspectorInstance;
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
