@@ -56,22 +56,24 @@ void ARoomPlannerManager::BeginPlay()
 	SetActorLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
 	SetActorScale3D(FVector(1.f, 1.f, 1.f));
 
-	UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] ARoomPlannerManager BeginPlay — constructing default test 4x4m room..."));
-	ProcessCommandJSON(TEXT("{\"cmd\":\"add_wall\",\"x1\":-200,\"y1\":-200,\"x2\":200,\"y2\":-200}"));
-	ProcessCommandJSON(TEXT("{\"cmd\":\"add_wall\",\"x1\":200,\"y1\":-200,\"x2\":200,\"y2\":200}"));
-	ProcessCommandJSON(TEXT("{\"cmd\":\"add_wall\",\"x1\":200,\"y1\":200,\"x2\":-200,\"y2\":200}"));
-	ProcessCommandJSON(TEXT("{\"cmd\":\"add_wall\",\"x1\":-200,\"y1\":200,\"x2\":-200,\"y2\":-200}"));
+	UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] ARoomPlannerManager BeginPlay"));
 }
 
 void ARoomPlannerManager::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (b2DViewMode && TopDownCameraActor)
+	if (UWorld* World = GetWorld())
 	{
-		if (UWorld* World = GetWorld())
+		if (APlayerController* PC = World->GetFirstPlayerController())
 		{
-			if (APlayerController* PC = World->GetFirstPlayerController())
+			if (ActiveToolMode == EPlannerToolMode::Select)
+			{
+				// We no longer need to track drag state here since openings stay selected on click!
+				bWasDraggingOpening = false;
+			}
+
+			if (b2DViewMode && TopDownCameraActor)
 			{
 				if (APawn* Pawn = PC->GetPawn())
 				{
@@ -1073,6 +1075,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 
 			if (bIn2DMode)
 			{
+				SavedControlRotation = PC->GetControlRotation();
 				PC->SetControlRotation(FRotator(0.f, 0.f, 0.f));
 				PC->SetIgnoreLookInput(true);
 				if (!TopDownCameraActor)
@@ -1104,11 +1107,17 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 			else
 			{
 				ClearWallSelection();
-				if (Pawn)
+				if (ACharacter* CharPawn = Cast<ACharacter>(PC->GetPawn()))
 				{
-					PC->SetControlRotation(Pawn->GetActorRotation());
+					PC->ResetIgnoreInputFlags();
+					PC->SetControlRotation(SavedControlRotation);
 					PC->SetIgnoreLookInput(false);
-					PC->SetViewTargetWithBlend(Pawn, 0.3f);
+					PC->SetViewTargetWithBlend(CharPawn, 0.3f);
+					
+					FInputModeGameAndUI InputMode;
+					InputMode.SetHideCursorDuringCapture(true);
+					InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+					PC->SetInputMode(InputMode);
 				}
 			}
 		}
@@ -1465,15 +1474,6 @@ int32 ARoomPlannerManager::SelectWallAtWorldPos(const FVector& WorldPos)
 	SelectedOpeningIndex = -1;
 	float LengthMeters = 0.f;
 
-	for (auto& Pair : WallActors)
-	{
-		if (Pair.Value)
-		{
-			bool bIsSelected = (Pair.Key == SelectedSegmentID);
-			Pair.Value->SetSelectedHighlight(bIsSelected, 2);
-		}
-	}
-
 	if (SelectedSegmentID != -1 && WallSegments.Contains(SelectedSegmentID))
 	{
 		const FWallSegment& Seg = WallSegments[SelectedSegmentID];
@@ -1499,8 +1499,37 @@ int32 ARoomPlannerManager::SelectWallAtWorldPos(const FVector& WorldPos)
 		}
 	}
 
+	UpdateSelectionVisuals();
+
 	OnWallSelected.Broadcast(SelectedSegmentID, LengthMeters);
 	return SelectedSegmentID;
+}
+
+void ARoomPlannerManager::UpdateSelectionVisuals()
+{
+	for (auto& Pair : WallActors)
+	{
+		if (Pair.Value)
+		{
+			bool bIsWallSelected = (Pair.Key == SelectedSegmentID);
+			bool bHighlightWall = bIsWallSelected;
+			bool bHighlightOpening = false;
+
+			if (bIsWallSelected && SelectedOpeningIndex != -1)
+			{
+				bHighlightWall = false;
+				bHighlightOpening = true;
+			}
+
+			Pair.Value->SetSelectedHighlight(bHighlightWall, 2);
+			Pair.Value->ClearAllOpeningHighlights();
+
+			if (bHighlightOpening)
+			{
+				Pair.Value->SetOpeningSelectedHighlight(SelectedOpeningIndex, true, 2);
+			}
+		}
+	}
 }
 
 bool ARoomPlannerManager::SetWallLength(int32 SegmentID, float NewLengthMeters)
@@ -1618,7 +1647,8 @@ static float FindNonOverlappingOpeningDist(const FWallSegment& Seg, float NewWid
 		}
 	}
 
-	return FMath::Clamp(RightEdge + 10.f + HalfW, HalfW + 5.f, FMath::Max(HalfW + 5.f, WallLengthCm - HalfW - 5.f));
+	// Cannot find any space
+	return -1.0f;
 }
 
 bool ARoomPlannerManager::AddDoorToSelectedWall(float WidthMeters, float HeightMeters)
@@ -1637,6 +1667,11 @@ bool ARoomPlannerManager::AddDoorToSelectedWall(float WidthMeters, float HeightM
 			float WidthCm = WidthMeters * 100.f;
 			float HeightCm = HeightMeters * 100.f;
 			float DistFromStartCm = FindNonOverlappingOpeningDist(Seg, WidthCm, WallLengthCm);
+
+			if (DistFromStartCm < 0.f)
+			{
+				return false; // Not enough space for a new door
+			}
 
 			AddOpeningToWall(SelectedSegmentID, EOpeningType::Door, DistFromStartCm, WidthCm, HeightCm, 0.f);
 			SelectedOpeningIndex = WallSegments[SelectedSegmentID].Openings.Num() - 1;
@@ -1669,6 +1704,11 @@ bool ARoomPlannerManager::AddWindowToSelectedWall(float WidthMeters, float Heigh
 			float HeightCm = HeightMeters * 100.f;
 			float SillCm = SillHeightMeters * 100.f;
 			float DistFromStartCm = FindNonOverlappingOpeningDist(Seg, WidthCm, WallLengthCm);
+
+			if (DistFromStartCm < 0.f)
+			{
+				return false; // Not enough space for a new window
+			}
 
 			AddOpeningToWall(SelectedSegmentID, EOpeningType::Window, DistFromStartCm, WidthCm, HeightCm, SillCm);
 			SelectedOpeningIndex = WallSegments[SelectedSegmentID].Openings.Num() - 1;
@@ -1731,6 +1771,7 @@ bool ARoomPlannerManager::UpdateOpeningPosition(int32 SegmentID, int32 OpeningIn
 
 				RebuildAllWalls();
 				ReplicatedRoomJSON = ExportLayoutToJSON();
+				UpdateSelectionVisuals();
 				return true;
 			}
 		}
@@ -1872,6 +1913,48 @@ void ARoomPlannerManager::Server_DeleteSelectedWall_Implementation(int32 Segment
 }
 
 bool ARoomPlannerManager::Server_DeleteSelectedWall_Validate(int32 SegmentID)
+{
+	return true;
+}
+
+bool ARoomPlannerManager::DeleteSelectedOpening()
+{
+	if (SelectedSegmentID == -1 || SelectedOpeningIndex == -1 || !WallSegments.Contains(SelectedSegmentID)) return false;
+
+	int32 TargetSeg = SelectedSegmentID;
+	int32 TargetOpening = SelectedOpeningIndex;
+	SelectedOpeningIndex = -1;
+
+	if (HasAuthority())
+	{
+		WallSegments[TargetSeg].Openings.RemoveAt(TargetOpening);
+		RebuildAllWalls();
+		ReplicatedRoomJSON = ExportLayoutToJSON();
+		UpdateSelectionVisuals();
+		return true;
+	}
+	else
+	{
+		Server_DeleteSelectedOpening(TargetSeg, TargetOpening);
+		return true;
+	}
+}
+
+void ARoomPlannerManager::Server_DeleteSelectedOpening_Implementation(int32 SegmentID, int32 OpeningIndex)
+{
+	if (!WallSegments.Contains(SegmentID)) return;
+	if (!WallSegments[SegmentID].Openings.IsValidIndex(OpeningIndex)) return;
+	
+	int32 SavedSelected = SelectedSegmentID;
+	int32 SavedOpening = SelectedOpeningIndex;
+	SelectedSegmentID = SegmentID;
+	SelectedOpeningIndex = OpeningIndex;
+	DeleteSelectedOpening();
+	SelectedSegmentID = SavedSelected;
+	SelectedOpeningIndex = SavedOpening;
+}
+
+bool ARoomPlannerManager::Server_DeleteSelectedOpening_Validate(int32 SegmentID, int32 OpeningIndex)
 {
 	return true;
 }

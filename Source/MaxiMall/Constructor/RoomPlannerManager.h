@@ -121,6 +121,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void StartInteractiveWallDraw(const FVector& WorldPos);
 
+	void UpdateActiveWallLength();
+	void EndWallDrawing();
+
+	void UpdateSelectionVisuals();
+	bool bWasDraggingOpening = false;
+
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void UpdateInteractiveWallDraw(const FVector& WorldPos);
 
@@ -150,6 +156,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "RoomPlanner")
 	FVector GetDragCurrentPoint() const { return DragCurrentPoint; }
 
+	UPROPERTY()
+	FRotator SavedControlRotation;
+
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void SetToolMode(EPlannerToolMode NewToolMode);
 
@@ -159,6 +168,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	int32 SelectWallAtWorldPos(const FVector& WorldPos);
 
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "RoomPlanner")
+	int32 GetWallCount() const { return WallSegments.Num(); }
+
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool SetWallLength(int32 SegmentID, float NewLengthMeters);
 
@@ -167,6 +179,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool DeleteSelectedWall();
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool DeleteSelectedOpening();
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool AddDoorToSelectedWall(float WidthMeters = 0.9f, float HeightMeters = 2.1f);
@@ -217,6 +232,9 @@ public:
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_DeleteSelectedWall(int32 SegmentID);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_DeleteSelectedOpening(int32 SegmentID, int32 OpeningIndex);
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_AddDoorToSelectedWall(int32 SegmentID, float WidthMeters, float HeightMeters);

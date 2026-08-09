@@ -43,6 +43,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Wall")
 	void SetSelectedHighlight(bool bSelected, int32 StencilValue = 2);
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
+	TArray<TObjectPtr<UProceduralMeshComponent>> OpeningHighlightMeshes;
+
+	UFUNCTION(BlueprintCallable, Category = "Wall")
+	void SetOpeningSelectedHighlight(int32 OpeningIndex, bool bSelected, int32 StencilValue = 2);
+
+	UFUNCTION(BlueprintCallable, Category = "Wall")
+	void ClearAllOpeningHighlights();
+
 private:
 	void GenerateQuad(TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs,
 	                  const FVector& V0, const FVector& V1, const FVector& V2, const FVector& V3,

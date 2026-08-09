@@ -25,6 +25,7 @@ class MAXIMALL_API URoomPlannerWidget : public UUserWidget
 
 public:
 	virtual void NativeConstruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	/** Toggle between 2D Top-Down Drawing Mode and 3D Inspection Mode. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")

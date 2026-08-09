@@ -48,6 +48,44 @@ void URoomPlannerWidget::NativeConstruct()
 	UpdateViewModeButtonStyles();
 }
 
+void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (PlannerManager)
+	{
+		// Logic for Select button
+		bool bHasWalls = PlannerManager->GetWallCount() > 0;
+		if (BtnSelectTool)
+		{
+			if (!bHasWalls)
+			{
+				BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Пока нет стен для работы")));
+			}
+			else
+			{
+				BtnSelectTool->SetToolTipText(FText::GetEmpty());
+			}
+		}
+		
+		// If Select tool is active but no walls exist, force revert to Draw Wall
+		if (!bHasWalls && PlannerManager->ActiveToolMode == EPlannerToolMode::Select)
+		{
+			SetToolMode(EPlannerToolMode::DrawWall);
+		}
+
+		// Logic for Door/Window tools (visible only if a wall is selected)
+		bool bHasSelection = PlannerManager->SelectedSegmentID != -1;
+		ESlateVisibility DoorWinVis = bHasSelection ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+
+		if (BtnAddDoor) BtnAddDoor->SetVisibility(DoorWinVis);
+		if (BtnAddWindow) BtnAddWindow->SetVisibility(DoorWinVis);
+		if (EditableTxtOpeningWidth) EditableTxtOpeningWidth->SetVisibility(DoorWinVis);
+		if (EditableTxtOpeningHeight) EditableTxtOpeningHeight->SetVisibility(DoorWinVis);
+		if (EditableTxtOpeningSillHeight) EditableTxtOpeningSillHeight->SetVisibility(DoorWinVis);
+	}
+}
+
 void URoomPlannerWidget::SetViewMode(ERoomPlannerViewMode NewMode)
 {
 	CurrentViewMode = NewMode;
@@ -78,7 +116,17 @@ void URoomPlannerWidget::UpdateToolModeButtonStyles()
 		CurrentToolMode = PlannerManager->ActiveToolMode;
 	}
 
-	if (BtnSelectTool) BtnSelectTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Select ? ActiveColor : InactiveColor);
+	if (BtnSelectTool) 
+	{
+		if (PlannerManager && PlannerManager->GetWallCount() == 0)
+		{
+			BtnSelectTool->SetBackgroundColor(FLinearColor(0.05f, 0.05f, 0.05f, 1.0f)); // Visually disabled
+		}
+		else
+		{
+			BtnSelectTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Select ? ActiveColor : InactiveColor);
+		}
+	}
 	if (BtnDrawWallTool) BtnDrawWallTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::DrawWall ? ActiveColor : InactiveColor);
 	if (BtnDeleteTool) BtnDeleteTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Erase ? ActiveColor : InactiveColor);
 }
@@ -103,7 +151,13 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 
 void URoomPlannerWidget::On2DViewClicked() { SetViewMode(ERoomPlannerViewMode::View2D); }
 void URoomPlannerWidget::On3DViewClicked() { SetViewMode(ERoomPlannerViewMode::View3D); }
-void URoomPlannerWidget::OnSelectToolClicked() { SetToolMode(EPlannerToolMode::Select); }
+void URoomPlannerWidget::OnSelectToolClicked() 
+{ 
+	if (PlannerManager && PlannerManager->GetWallCount() > 0)
+	{
+		SetToolMode(EPlannerToolMode::Select); 
+	}
+}
 void URoomPlannerWidget::OnDrawWallToolClicked() { SetToolMode(EPlannerToolMode::DrawWall); }
 void URoomPlannerWidget::OnDeleteToolClicked()
 {
@@ -111,7 +165,14 @@ void URoomPlannerWidget::OnDeleteToolClicked()
 	{
 		if (PlannerManager->SelectedSegmentID != -1)
 		{
-			PlannerManager->DeleteSelectedWall();
+			if (PlannerManager->SelectedOpeningIndex != -1)
+			{
+				PlannerManager->DeleteSelectedOpening();
+			}
+			else
+			{
+				PlannerManager->DeleteSelectedWall();
+			}
 			UpdateSummaryStatsUI();
 		}
 		else

@@ -59,6 +59,25 @@ void AProceduralWallActor::SetSelectedHighlight(bool bSelected, int32 StencilVal
 	}
 }
 
+void AProceduralWallActor::SetOpeningSelectedHighlight(int32 OpeningIndex, bool bSelected, int32 StencilValue)
+{
+	if (OpeningHighlightMeshes.IsValidIndex(OpeningIndex) && OpeningHighlightMeshes[OpeningIndex])
+	{
+		OpeningHighlightMeshes[OpeningIndex]->SetVisibility(bSelected);
+	}
+}
+
+void AProceduralWallActor::ClearAllOpeningHighlights()
+{
+	for (UProceduralMeshComponent* Comp : OpeningHighlightMeshes)
+	{
+		if (Comp)
+		{
+			Comp->SetVisibility(false);
+		}
+	}
+}
+
 void AProceduralWallActor::GenerateQuad(TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs,
                                          const FVector& V0, const FVector& V1, const FVector& V2, const FVector& V3,
                                          const FVector& Normal, float UVScale)
@@ -105,6 +124,15 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	}
 
 	WallProceduralMesh->ClearAllMeshSections();
+
+	for (UProceduralMeshComponent* Comp : OpeningHighlightMeshes)
+	{
+		if (Comp)
+		{
+			Comp->DestroyComponent();
+		}
+	}
+	OpeningHighlightMeshes.Empty();
 
 	FVector2D Dir2D = (EndPos - StartPos);
 	float TotalLength = Dir2D.Size();
@@ -251,6 +279,73 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 			FVector(OpEL.X, OpEL.Y, LintelZ), FVector(OpER.X, OpER.Y, LintelZ), EndNormalVector);
 
 		CurrentDist = OpenEnd;
+
+		// Generate visible highlight box for this opening
+		UProceduralMeshComponent* HighlightMesh = NewObject<UProceduralMeshComponent>(this);
+		HighlightMesh->CreationMethod = EComponentCreationMethod::Instance;
+		HighlightMesh->RegisterComponent();
+		HighlightMesh->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
+		AddInstanceComponent(HighlightMesh);
+		HighlightMesh->bRenderInMainPass = true;
+		HighlightMesh->bRenderCustomDepth = false;
+		HighlightMesh->SetVisibility(false);
+		HighlightMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		OpeningHighlightMeshes.Add(HighlightMesh);
+
+		TArray<FVector> HVerts;
+		TArray<int32> HTris;
+		TArray<FVector> HNorms;
+		TArray<FVector2D> HUVs;
+
+		FVector2D OutLeft = FVector2D(LeftNormalVector.X, LeftNormalVector.Y) * 2.0f;
+		FVector2D OutRight = FVector2D(RightNormalVector.X, RightNormalVector.Y) * 2.0f;
+		FVector2D OutStart = FVector2D(StartNormalVector.X, StartNormalVector.Y) * 2.0f;
+		FVector2D OutEnd = FVector2D(EndNormalVector.X, EndNormalVector.Y) * 2.0f;
+
+		FVector2D H_OpSL = OpSL + OutLeft + OutStart;
+		FVector2D H_OpEL = OpEL + OutLeft + OutEnd;
+		FVector2D H_OpSR = OpSR + OutRight + OutStart;
+		FVector2D H_OpER = OpER + OutRight + OutEnd;
+		
+		float H_SillZ = SillZ - 2.0f;
+		float H_LintelZ = LintelZ + 2.0f;
+
+		// Front Face
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpSL.X, H_OpSL.Y, H_SillZ), FVector(H_OpEL.X, H_OpEL.Y, H_SillZ),
+			FVector(H_OpEL.X, H_OpEL.Y, H_LintelZ), FVector(H_OpSL.X, H_OpSL.Y, H_LintelZ), LeftNormalVector);
+		// Back Face
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpER.X, H_OpER.Y, H_SillZ), FVector(H_OpSR.X, H_OpSR.Y, H_SillZ),
+			FVector(H_OpSR.X, H_OpSR.Y, H_LintelZ), FVector(H_OpER.X, H_OpER.Y, H_LintelZ), RightNormalVector);
+		// Left Face (Start Jamb)
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpSR.X, H_OpSR.Y, H_SillZ), FVector(H_OpSL.X, H_OpSL.Y, H_SillZ),
+			FVector(H_OpSL.X, H_OpSL.Y, H_LintelZ), FVector(H_OpSR.X, H_OpSR.Y, H_LintelZ), StartNormalVector);
+		// Right Face (End Jamb)
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpEL.X, H_OpEL.Y, H_SillZ), FVector(H_OpER.X, H_OpER.Y, H_SillZ),
+			FVector(H_OpER.X, H_OpER.Y, H_LintelZ), FVector(H_OpEL.X, H_OpEL.Y, H_LintelZ), EndNormalVector);
+		// Top Face
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpSL.X, H_OpSL.Y, H_LintelZ), FVector(H_OpEL.X, H_OpEL.Y, H_LintelZ),
+			FVector(H_OpER.X, H_OpER.Y, H_LintelZ), FVector(H_OpSR.X, H_OpSR.Y, H_LintelZ), UpVector);
+		// Bottom Face
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpEL.X, H_OpEL.Y, H_SillZ), FVector(H_OpSL.X, H_OpSL.Y, H_SillZ),
+			FVector(H_OpSR.X, H_OpSR.Y, H_SillZ), FVector(H_OpER.X, H_OpER.Y, H_SillZ), -UpVector);
+
+		HighlightMesh->CreateMeshSection(0, HVerts, HTris, HNorms, HUVs, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
+		
+		UMaterialInterface* OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
+		if (OpeningMat)
+		{
+			HighlightMesh->SetMaterial(0, OpeningMat);
+		}
+		else
+		{
+			HighlightMesh->SetMaterial(0, WallProceduralMesh->GetMaterial(0));
+		}
 	}
 
 	// Final wall section after last opening
