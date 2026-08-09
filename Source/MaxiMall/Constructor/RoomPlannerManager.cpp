@@ -182,8 +182,8 @@ ARoomPlannerManager* ARoomPlannerManager::GetOrCreateInstance(UWorld* World)
 
 int32 ARoomPlannerManager::AddNode(const FVector2D& Position)
 {
-	// Check for snapping to existing node (10cm tolerance)
-	const float SnapToleranceSq = 100.f; // 10cm * 10cm
+	// Check for snapping to existing node (50cm tolerance)
+	const float SnapToleranceSq = 2500.f; // 50cm * 50cm
 	for (const TPair<int32, FWallNode>& Pair : Nodes)
 	{
 		if (FVector2D::DistSquared(Pair.Value.Position, Position) <= SnapToleranceSq)
@@ -341,14 +341,12 @@ void ARoomPlannerManager::ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FV
                                                      TMap<int32, FVector2D>& OutEndLeftOffsets,
                                                      TMap<int32, FVector2D>& OutEndRightOffsets)
 {
-	// Miter calculation between connected walls at NodeID
 	const FWallNode* Node = Nodes.Find(NodeID);
 	if (!Node || Node->ConnectedSegmentIDs.Num() < 2)
 	{
 		return;
 	}
 
-	// For simple 2-wall corners: calculate bisector offset
 	if (Node->ConnectedSegmentIDs.Num() == 2)
 	{
 		int32 SegA_ID = Node->ConnectedSegmentIDs[0];
@@ -369,32 +367,66 @@ void ARoomPlannerManager::ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FV
 		FVector2D DirA = (OtherA - PosNode).GetSafeNormal();
 		FVector2D DirB = (OtherB - PosNode).GetSafeNormal();
 
-		float Cross = FVector2D::CrossProduct(DirA, DirB);
-		float Dot = FVector2D::DotProduct(DirA, DirB);
+		auto Cross2D = [](const FVector2D& V1, const FVector2D& V2) {
+			return V1.X * V2.Y - V1.Y * V2.X;
+		};
+
+		float Cross = Cross2D(DirA, DirB);
 
 		// If not collinear
 		if (FMath::Abs(Cross) > 0.01f)
 		{
-			FVector2D Bisector = (DirA + DirB).GetSafeNormal();
-			float HalfAngle = FMath::Acos(FMath::Clamp(Dot, -0.99f, 0.99f)) * 0.5f;
-			float MiterLength = (SegA->Thickness * 0.5f) / FMath::Max(FMath::Sin(HalfAngle), 0.1f);
-			FVector2D MiterOffset = Bisector * (MiterLength - SegA->Thickness * 0.5f);
+			FVector2D N1(-DirA.Y, DirA.X);
+			FVector2D N2(-DirB.Y, DirB.X);
+			
+			float WA = SegA->Thickness * 0.5f;
+			float WB = SegB->Thickness * 0.5f;
 
-			if (Cross > 0.f)
+			auto IntersectLines = [&](FVector2D P1, FVector2D D1, FVector2D P2, FVector2D D2, float& OutT1, float& OutT2) {
+				float Denom = Cross2D(D1, D2);
+				if (FMath::Abs(Denom) < 0.001f) return false;
+				FVector2D Diff = P2 - P1;
+				OutT1 = Cross2D(Diff, D2) / Denom;
+				OutT2 = Cross2D(Diff, D1) / Denom;
+				return true;
+			};
+
+			float MaxMiter = FMath::Max(SegA->Thickness, SegB->Thickness) * 2.0f;
+			float LenA = FVector2D::Distance(PosNode, OtherA);
+			float LenB = FVector2D::Distance(PosNode, OtherB);
+			float MaxMiterA = FMath::Min(MaxMiter, LenA * 0.45f);
+			float MaxMiterB = FMath::Min(MaxMiter, LenB * 0.45f);
+
+			float tA_Left, tB_Right;
+			if (IntersectLines(PosNode + N1 * WA, DirA, PosNode - N2 * WB, DirB, tA_Left, tB_Right))
 			{
-				if (bNodeIsStartA) OutStartRightOffsets.Add(SegA_ID, MiterOffset);
-				else OutEndRightOffsets.Add(SegA_ID, MiterOffset);
+				tA_Left = FMath::Clamp(tA_Left, -MaxMiterA, MaxMiterA);
+				tB_Right = FMath::Clamp(tB_Right, -MaxMiterB, MaxMiterB);
 
-				if (bNodeIsStartB) OutStartLeftOffsets.Add(SegB_ID, MiterOffset);
-				else OutEndLeftOffsets.Add(SegB_ID, MiterOffset);
+				FVector2D OffsetA_Left = DirA * tA_Left;
+				FVector2D OffsetB_Right = DirB * tB_Right;
+				
+				if (bNodeIsStartA) OutStartLeftOffsets.Add(SegA_ID, OffsetA_Left);
+				else OutEndRightOffsets.Add(SegA_ID, OffsetA_Left); // If node is End, N1 is flipped, wait.
+
+				if (bNodeIsStartB) OutStartRightOffsets.Add(SegB_ID, OffsetB_Right);
+				else OutEndLeftOffsets.Add(SegB_ID, OffsetB_Right);
 			}
-			else
-			{
-				if (bNodeIsStartA) OutStartLeftOffsets.Add(SegA_ID, MiterOffset);
-				else OutEndLeftOffsets.Add(SegA_ID, MiterOffset);
 
-				if (bNodeIsStartB) OutStartRightOffsets.Add(SegB_ID, MiterOffset);
-				else OutEndRightOffsets.Add(SegB_ID, MiterOffset);
+			float tA_Right, tB_Left;
+			if (IntersectLines(PosNode - N1 * WA, DirA, PosNode + N2 * WB, DirB, tA_Right, tB_Left))
+			{
+				tA_Right = FMath::Clamp(tA_Right, -MaxMiterA, MaxMiterA);
+				tB_Left = FMath::Clamp(tB_Left, -MaxMiterB, MaxMiterB);
+
+				FVector2D OffsetA_Right = DirA * tA_Right;
+				FVector2D OffsetB_Left = DirB * tB_Left;
+				
+				if (bNodeIsStartA) OutStartRightOffsets.Add(SegA_ID, OffsetA_Right);
+				else OutEndLeftOffsets.Add(SegA_ID, OffsetA_Right);
+
+				if (bNodeIsStartB) OutStartLeftOffsets.Add(SegB_ID, OffsetB_Left);
+				else OutEndRightOffsets.Add(SegB_ID, OffsetB_Left);
 			}
 		}
 	}
@@ -452,20 +484,8 @@ void ARoomPlannerManager::RebuildRooms()
 	if (CeilingProceduralMesh) CeilingProceduralMesh->ClearAllMeshSections();
 	if (BaseboardProceduralMesh) BaseboardProceduralMesh->ClearAllMeshSections();
 
-	if (GEngine)
-	{
-		FString DebugMsg = FString::Printf(TEXT("[RoomPlanner Debug] RebuildRooms: Nodes=%d, Walls=%d"), Nodes.Num(), WallSegments.Num());
-		GEngine->AddOnScreenDebugMessage(1001, 6.f, FColor::Yellow, DebugMsg);
-		UE_LOG(LogTemp, Warning, TEXT("%s"), *DebugMsg);
-	}
-
 	if (Nodes.Num() < 3 || WallSegments.Num() < 3)
 	{
-		if (GEngine)
-		{
-			FString FailMsg = FString::Printf(TEXT("[RoomPlanner Debug] Skip RebuildRooms: Need >=3 nodes and walls (Current Nodes=%d, Walls=%d)"), Nodes.Num(), WallSegments.Num());
-			GEngine->AddOnScreenDebugMessage(1002, 6.f, FColor::Orange, FailMsg);
-		}
 		return;
 	}
 
@@ -527,12 +547,6 @@ void ARoomPlannerManager::RebuildRooms()
 
 	if (FoundCycles.Num() == 0)
 	{
-		if (GEngine)
-		{
-			FString FailMsg = FString::Printf(TEXT("[RoomPlanner Debug] NO CLOSED CYCLE FOUND! (Nodes=%d, Walls=%d)"), Nodes.Num(), WallSegments.Num());
-			GEngine->AddOnScreenDebugMessage(1003, 8.f, FColor::Red, FailMsg);
-			UE_LOG(LogTemp, Error, TEXT("%s"), *FailMsg);
-		}
 		return;
 	}
 
@@ -550,20 +564,6 @@ void ARoomPlannerManager::RebuildRooms()
 	int32 VertCount = Room.FloorPolygon.Num();
 	if (VertCount < 3) return;
 
-	// Sort room polygon vertices counter-clockwise around room centroid to ensure clean fan triangulation
-	FVector2D Centroid(0.f, 0.f);
-	for (const FVector2D& Pt : Room.FloorPolygon)
-	{
-		Centroid += Pt;
-	}
-	Centroid /= (float)VertCount;
-
-	Room.FloorPolygon.Sort([&Centroid](const FVector2D& A, const FVector2D& B) {
-		float AngleA = FMath::Atan2(A.Y - Centroid.Y, A.X - Centroid.X);
-		float AngleB = FMath::Atan2(B.Y - Centroid.Y, B.X - Centroid.X);
-		return AngleA < AngleB;
-	});
-
 	float TwiceArea = 0.f;
 	for (int32 i = 0; i < VertCount; ++i)
 	{
@@ -571,15 +571,16 @@ void ARoomPlannerManager::RebuildRooms()
 		const FVector2D& P2 = Room.FloorPolygon[(i + 1) % VertCount];
 		TwiceArea += (P1.X * P2.Y - P2.X * P1.Y);
 	}
-	Room.AreaM2 = FMath::Abs(TwiceArea) * 0.5f / 10000.f;
-	Rooms.Add(Room.RoomID, Room);
-
-	if (GEngine)
+	
+	// Ensure counter-clockwise winding
+	if (TwiceArea < 0.f)
 	{
-		FString SuccessMsg = FString::Printf(TEXT("[RoomPlanner Debug] CLOSED ROOM FOUND! Verts=%d, Area=%.2f m^2"), VertCount, Room.AreaM2);
-		GEngine->AddOnScreenDebugMessage(1004, 10.f, FColor::Green, SuccessMsg);
-		UE_LOG(LogTemp, Warning, TEXT("%s"), *SuccessMsg);
+		Algo::Reverse(Room.FloorPolygon);
+		TwiceArea = -TwiceArea;
 	}
+
+	Room.AreaM2 = TwiceArea * 0.5f / 10000.f;
+	Rooms.Add(Room.RoomID, Room);
 
 	UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
 	if (!BaseMat)
@@ -590,8 +591,8 @@ void ARoomPlannerManager::RebuildRooms()
 	UMaterialInstanceDynamic* FloorMatInst = UMaterialInstanceDynamic::Create(BaseMat, this);
 	if (FloorMatInst)
 	{
-		FloorMatInst->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.85f, 0.78f, 0.65f, 1.0f));
-		FloorMatInst->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(0.85f, 0.78f, 0.65f, 1.0f));
+		FloorMatInst->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
+		FloorMatInst->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
 	}
 
 	UMaterialInstanceDynamic* CeilMatInst = UMaterialInstanceDynamic::Create(BaseMat, this);
@@ -608,6 +609,84 @@ void ARoomPlannerManager::RebuildRooms()
 		BbMatInst->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(0.4f, 0.3f, 0.2f, 1.0f));
 	}
 
+	// Triangulate Room Polygon (Ear Clipping)
+	TArray<int32> Indices;
+	for (int32 i = 0; i < VertCount; ++i) Indices.Add(i);
+
+	auto IsPointInTriangle = [](const FVector2D& P, const FVector2D& A, const FVector2D& B, const FVector2D& C) {
+		auto Sign = [](const FVector2D& P1, const FVector2D& P2, const FVector2D& P3) {
+			return (P1.X - P3.X) * (P2.Y - P3.Y) - (P2.X - P3.X) * (P1.Y - P3.Y);
+		};
+		bool b1 = Sign(P, A, B) < 0.0f;
+		bool b2 = Sign(P, B, C) < 0.0f;
+		bool b3 = Sign(P, C, A) < 0.0f;
+		return ((b1 == b2) && (b2 == b3));
+	};
+
+	TArray<int32> TriangulatedIndices;
+	int32 IterationCount = 0;
+	while (Indices.Num() > 3 && IterationCount < 1000)
+	{
+		IterationCount++;
+		bool bEarFound = false;
+		for (int32 i = 0; i < Indices.Num(); ++i)
+		{
+			int32 PrevIdx = (i == 0) ? Indices.Num() - 1 : i - 1;
+			int32 NextIdx = (i == Indices.Num() - 1) ? 0 : i + 1;
+
+			int32 V0 = Indices[PrevIdx];
+			int32 V1 = Indices[i];
+			int32 V2 = Indices[NextIdx];
+
+			const FVector2D& P0 = Room.FloorPolygon[V0];
+			const FVector2D& P1 = Room.FloorPolygon[V1];
+			const FVector2D& P2 = Room.FloorPolygon[V2];
+
+			// Cross > 0 indicates convex corner (since winding is CCW)
+			float Cross = (P1.X - P0.X) * (P2.Y - P1.Y) - (P1.Y - P0.Y) * (P2.X - P1.X);
+			if (Cross >= -0.01f)
+			{
+				bool bValid = true;
+				for (int32 j = 0; j < Indices.Num(); ++j)
+				{
+					if (j == PrevIdx || j == i || j == NextIdx) continue;
+					if (IsPointInTriangle(Room.FloorPolygon[Indices[j]], P0, P1, P2))
+					{
+						bValid = false;
+						break;
+					}
+				}
+
+				if (bValid)
+				{
+					TriangulatedIndices.Add(V0);
+					TriangulatedIndices.Add(V1);
+					TriangulatedIndices.Add(V2);
+					Indices.RemoveAt(i);
+					bEarFound = true;
+					break;
+				}
+			}
+		}
+		if (!bEarFound) 
+		{
+			// Fallback to guarantee triangulation never fully aborts
+			TriangulatedIndices.Add(Indices[0]);
+			TriangulatedIndices.Add(Indices[1]);
+			TriangulatedIndices.Add(Indices[2]);
+			Indices.RemoveAt(1);
+		}
+	}
+	if (Indices.Num() == 3)
+	{
+		TriangulatedIndices.Add(Indices[0]);
+		TriangulatedIndices.Add(Indices[1]);
+		TriangulatedIndices.Add(Indices[2]);
+	}
+
+	// Reverse to make it Clockwise for Unreal's default front-face culling
+	Algo::Reverse(TriangulatedIndices);
+
 	// 1. Generate Procedural Floor Mesh
 	if (FloorProceduralMesh)
 	{
@@ -617,29 +696,56 @@ void ARoomPlannerManager::RebuildRooms()
 		TArray<FVector2D> UVs;
 		TArray<FColor> FloorColors;
 
+		// Top face (Z=1.f)
 		for (int32 i = 0; i < VertCount; ++i)
 		{
-			Vertices.Add(FVector(Room.FloorPolygon[i].X, Room.FloorPolygon[i].Y, 2.f));
+			Vertices.Add(FVector(Room.FloorPolygon[i].X, Room.FloorPolygon[i].Y, 1.f));
 			Normals.Add(FVector::UpVector);
 			UVs.Add(Room.FloorPolygon[i] / 100.f);
-			FloorColors.Add(FColor(215, 200, 165, 255));
+			FloorColors.Add(FColor(255, 255, 255, 255));
+		}
+		Triangles = TriangulatedIndices;
+
+		// Bottom face (Z=0.f)
+		int32 StartIdx = Vertices.Num();
+		for (int32 i = 0; i < VertCount; ++i)
+		{
+			Vertices.Add(FVector(Room.FloorPolygon[i].X, Room.FloorPolygon[i].Y, 0.f));
+			Normals.Add(-FVector::UpVector);
+			UVs.Add(Room.FloorPolygon[i] / 100.f);
+			FloorColors.Add(FColor(255, 255, 255, 255));
+		}
+		for (int32 i = 0; i < TriangulatedIndices.Num(); i+=3)
+		{
+			Triangles.Add(StartIdx + TriangulatedIndices[i]);
+			Triangles.Add(StartIdx + TriangulatedIndices[i+2]);
+			Triangles.Add(StartIdx + TriangulatedIndices[i+1]);
 		}
 
-		for (int32 i = 1; i < VertCount - 1; ++i)
+		// Side faces for 1cm thickness
+		for (int32 i = 0; i < VertCount; ++i)
 		{
-			Triangles.Add(0); Triangles.Add(i); Triangles.Add(i + 1);
-			Triangles.Add(0); Triangles.Add(i + 1); Triangles.Add(i);
+			FVector2D P1 = Room.FloorPolygon[i];
+			FVector2D P2 = Room.FloorPolygon[(i + 1) % VertCount];
+			FVector2D EdgeDir = (P2 - P1).GetSafeNormal();
+			FVector2D EdgeNorm(EdgeDir.Y, -EdgeDir.X);
+			FVector OutNormal(EdgeNorm.X, EdgeNorm.Y, 0.f);
+
+			int32 SIdx = Vertices.Num();
+			Vertices.Add(FVector(P2.X, P2.Y, 0.f));
+			Vertices.Add(FVector(P1.X, P1.Y, 0.f));
+			Vertices.Add(FVector(P1.X, P1.Y, 1.f));
+			Vertices.Add(FVector(P2.X, P2.Y, 1.f));
+			
+			for(int k=0; k<4; k++) { Normals.Add(OutNormal); UVs.Add(FVector2D::ZeroVector); FloorColors.Add(FColor(255, 255, 255, 255)); }
+			
+			Triangles.Add(SIdx + 0); Triangles.Add(SIdx + 1); Triangles.Add(SIdx + 2);
+			Triangles.Add(SIdx + 0); Triangles.Add(SIdx + 2); Triangles.Add(SIdx + 3);
 		}
 
 		FloorProceduralMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, FloorColors, TArray<FProcMeshTangent>(), true);
 		FloorProceduralMesh->SetMaterial(0, FloorMatInst ? FloorMatInst : BaseMat);
 		FloorProceduralMesh->SetVisibility(true);
-
-		if (GEngine)
-		{
-			FString MeshMsg = FString::Printf(TEXT("[RoomPlanner Debug] Floor Mesh Created! Verts=%d, Tris=%d, Mat=WarmFloor"), Vertices.Num(), Triangles.Num());
-			GEngine->AddOnScreenDebugMessage(1005, 10.f, FColor::Cyan, MeshMsg);
-		}
 	}
 
 	// 2. Generate Procedural Ceiling Mesh
@@ -660,23 +766,17 @@ void ARoomPlannerManager::RebuildRooms()
 			CeilColors.Add(FColor(240, 240, 240, 255));
 		}
 
-		for (int32 i = 1; i < VertCount - 1; ++i)
+		for (int32 i = 0; i < TriangulatedIndices.Num(); i += 3)
 		{
-			CeilTris.Add(0); CeilTris.Add(i + 1); CeilTris.Add(i);
-			CeilTris.Add(0); CeilTris.Add(i); CeilTris.Add(i + 1);
+			CeilTris.Add(TriangulatedIndices[i]);
+			CeilTris.Add(TriangulatedIndices[i + 2]);
+			CeilTris.Add(TriangulatedIndices[i + 1]);
 		}
 
 		CeilingProceduralMesh->CreateMeshSection(0, CeilVerts, CeilTris, CeilNorms, CeilUVs, CeilColors, TArray<FProcMeshTangent>(), true);
 		CeilingProceduralMesh->SetMaterial(0, CeilMatInst ? CeilMatInst : BaseMat);
 		bool bShowCeil = bCeilingVisible && !b2DViewMode;
 		CeilingProceduralMesh->SetVisibility(bShowCeil);
-
-		if (GEngine)
-		{
-			FString CeilMsg = FString::Printf(TEXT("[RoomPlanner Debug] Ceiling Mesh Created! Visible=%s (2DMode=%s, bCeilVis=%s)"),
-				bShowCeil ? TEXT("YES") : TEXT("NO"), b2DViewMode ? TEXT("YES") : TEXT("NO"), bCeilingVisible ? TEXT("YES") : TEXT("NO"));
-			GEngine->AddOnScreenDebugMessage(1006, 10.f, FColor::Cyan, CeilMsg);
-		}
 	}
 
 	// 3. Generate Procedural 3D Baseboards
@@ -1002,6 +1102,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 				ClearWallSelection();
 				if (Pawn)
 				{
+					PC->SetControlRotation(Pawn->GetActorRotation());
 					PC->SetViewTargetWithBlend(Pawn, 0.3f);
 				}
 			}
@@ -1094,6 +1195,14 @@ void ARoomPlannerManager::StartInteractiveWallDraw(const FVector& WorldPos)
 		SpawnParams.Owner = this;
 		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 		PreviewWallActor = GetWorld()->SpawnActor<AProceduralWallActor>(AProceduralWallActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
+		if (PreviewWallActor)
+		{
+			PreviewWallActor->SetActorEnableCollision(false);
+			if (PreviewWallActor->WallProceduralMesh)
+			{
+				PreviewWallActor->WallProceduralMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			}
+		}
 	}
 
 	if (PreviewWallActor)
@@ -1170,7 +1279,7 @@ void ARoomPlannerManager::UpdateInteractiveWallDraw(const FVector& WorldPos)
 
 		if (PreviewWallActor)
 		{
-			PreviewWallActor->RebuildWallMesh(P1, P2);
+			PreviewWallActor->RebuildWallMesh(P1, P2, FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, false);
 		}
 
 		float LengthMeters = LengthCm / 100.f;

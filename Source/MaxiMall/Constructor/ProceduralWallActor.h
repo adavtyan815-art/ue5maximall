@@ -34,7 +34,8 @@ public:
 	                     FVector2D StartLeftMiterOffset = FVector2D::ZeroVector,
 	                     FVector2D StartRightMiterOffset = FVector2D::ZeroVector,
 	                     FVector2D EndLeftMiterOffset = FVector2D::ZeroVector,
-	                     FVector2D EndRightMiterOffset = FVector2D::ZeroVector);
+	                     FVector2D EndRightMiterOffset = FVector2D::ZeroVector,
+	                     bool bCreateCollision = true);
 
 	UFUNCTION(BlueprintCallable, Category = "Wall")
 	void SetWallMaterial(UMaterialInterface* NewMaterial);

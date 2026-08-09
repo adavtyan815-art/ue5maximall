@@ -92,20 +92,12 @@ void AProceduralWallActor::GenerateQuad(TArray<FVector>& Vertices, TArray<int32>
 	Triangles.Add(StartIdx + 0);
 	Triangles.Add(StartIdx + 2);
 	Triangles.Add(StartIdx + 3);
-
-	// Reverse Triangles (Double-sided rendering fallback)
-	Triangles.Add(StartIdx + 2);
-	Triangles.Add(StartIdx + 1);
-	Triangles.Add(StartIdx + 0);
-
-	Triangles.Add(StartIdx + 3);
-	Triangles.Add(StartIdx + 2);
-	Triangles.Add(StartIdx + 0);
 }
 
 void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVector2D& EndPos,
                                             FVector2D StartLeftMiterOffset, FVector2D StartRightMiterOffset,
-                                            FVector2D EndLeftMiterOffset, FVector2D EndRightMiterOffset)
+                                            FVector2D EndLeftMiterOffset, FVector2D EndRightMiterOffset,
+                                            bool bCreateCollision)
 {
 	if (!WallProceduralMesh)
 	{
@@ -304,7 +296,7 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 			FVector(ER2D.X, ER2D.Y, WallHeight), FVector(EL2D.X, EL2D.Y, WallHeight), EndNormalVector);
 	}
 
-	WallProceduralMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, TArray<FColor>(), Tangents, true);
+	WallProceduralMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, TArray<FColor>(), Tangents, bCreateCollision);
 
 	if (WallProceduralMesh->GetMaterial(0) == nullptr)
 	{
