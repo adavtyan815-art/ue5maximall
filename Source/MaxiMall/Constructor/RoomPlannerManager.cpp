@@ -28,18 +28,21 @@ ARoomPlannerManager::ARoomPlannerManager()
 	FloorProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("FloorProceduralMesh"));
 	FloorProceduralMesh->SetupAttachment(SceneRoot);
 	FloorProceduralMesh->bUseAsyncCooking = true;
+	FloorProceduralMesh->bUseComplexAsSimpleCollision = true;
 	FloorProceduralMesh->SetCastShadow(false);
 	FloorProceduralMesh->SetAbsolute(true, true, true);
 
 	CeilingProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("CeilingProceduralMesh"));
 	CeilingProceduralMesh->SetupAttachment(SceneRoot);
 	CeilingProceduralMesh->bUseAsyncCooking = true;
+	CeilingProceduralMesh->bUseComplexAsSimpleCollision = true;
 	CeilingProceduralMesh->SetCastShadow(true);
 	CeilingProceduralMesh->SetAbsolute(true, true, true);
 
 	BaseboardProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("BaseboardProceduralMesh"));
 	BaseboardProceduralMesh->SetupAttachment(SceneRoot);
-	BaseboardProceduralMesh->bUseAsyncCooking = true;
+	BaseboardProceduralMesh->bUseAsyncCooking = false;
+	BaseboardProceduralMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	BaseboardProceduralMesh->SetCastShadow(true);
 	BaseboardProceduralMesh->SetAbsolute(true, true, true);
 
@@ -816,7 +819,7 @@ void ARoomPlannerManager::RebuildRooms()
 			BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 3); BbTris.Add(StartIdx + 2);
 		}
 
-		BaseboardProceduralMesh->CreateMeshSection(0, BbVerts, BbTris, BbNorms, BbUVs, BbColors, TArray<FProcMeshTangent>(), true);
+		BaseboardProceduralMesh->CreateMeshSection(0, BbVerts, BbTris, BbNorms, BbUVs, BbColors, TArray<FProcMeshTangent>(), false);
 		BaseboardProceduralMesh->SetMaterial(0, BbMatInst ? BbMatInst : BaseMat);
 		BaseboardProceduralMesh->SetVisibility(true);
 	}
