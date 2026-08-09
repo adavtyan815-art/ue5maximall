@@ -6,6 +6,7 @@
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "Components/EditableTextBox.h"
+#include "Components/Image.h"
 #include "Kismet/GameplayStatics.h"
 
 void URoomPlannerWidget::NativeConstruct()
@@ -27,8 +28,6 @@ void URoomPlannerWidget::NativeConstruct()
 	if (Btn_ToggleCeiling) { Btn_ToggleCeiling->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnToggleCeilingClicked); }
 	if (BtnCeiling) { BtnCeiling->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnToggleCeilingClicked); }
 
-	if (EditableTxtWallLength) { EditableTxtWallLength->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnWallLengthCommitted); }
-	if (TxtSelectedWallLength) { TxtSelectedWallLength->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnWallLengthCommitted); }
 	if (EditableTxtOpeningWidth) { EditableTxtOpeningWidth->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnOpeningWidthCommitted); }
 	if (EditableTxtOpeningHeight) { EditableTxtOpeningHeight->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnOpeningHeightCommitted); }
 	if (EditableTxtOpeningSillHeight) { EditableTxtOpeningSillHeight->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnOpeningSillHeightCommitted); }
@@ -39,9 +38,15 @@ void URoomPlannerWidget::NativeConstruct()
 		if (PlannerManager)
 		{
 			PlannerManager->OnInteractiveWallDragProgress.AddUniqueDynamic(this, &URoomPlannerWidget::HandleWallDragProgress);
-			PlannerManager->OnWallSelected.AddUniqueDynamic(this, &URoomPlannerWidget::HandleWallSelected);
+			PlannerManager->OnWallSelected.AddUniqueDynamic(this, &URoomPlannerWidget::OnWallSelected);
 		}
 	}
+
+	if (BtnApplyProperties) { BtnApplyProperties->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnApplyPropertiesClicked); }
+
+	// Initialize UI state
+	UpdateViewModeButtonStyles();
+	UpdateDynamicPropertiesPanel();
 
 	UpdateSummaryStatsUI();
 	UpdateToolModeButtonStyles();
@@ -55,9 +60,12 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	if (PlannerManager)
 	{
 		// Logic for Select button
+		bool bIs2D = (CurrentViewMode == ERoomPlannerViewMode::View2D);
 		bool bHasWalls = PlannerManager->GetWallCount() > 0;
 		if (BtnSelectTool)
 		{
+			BtnSelectTool->SetVisibility((bIs2D && bHasWalls) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
 			if (!bHasWalls)
 			{
 				BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Пока нет стен для работы")));
@@ -82,18 +90,23 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 		if (BtnAddWindow) BtnAddWindow->SetVisibility(DoorWinVis);
 		if (EditableTxtOpeningWidth) EditableTxtOpeningWidth->SetVisibility(DoorWinVis);
 		if (EditableTxtOpeningHeight) EditableTxtOpeningHeight->SetVisibility(DoorWinVis);
+		
+		if (EditableTxtOpeningWidth_1) EditableTxtOpeningWidth_1->SetVisibility(DoorWinVis);
+		if (EditableTxtOpeningHeight_1) EditableTxtOpeningHeight_1->SetVisibility(DoorWinVis);
 		if (EditableTxtOpeningSillHeight) EditableTxtOpeningSillHeight->SetVisibility(DoorWinVis);
 	}
 }
 
 void URoomPlannerWidget::SetViewMode(ERoomPlannerViewMode NewMode)
 {
+	if (CurrentViewMode == NewMode) return;
 	CurrentViewMode = NewMode;
 	if (PlannerManager)
 	{
 		PlannerManager->SetViewMode(NewMode == ERoomPlannerViewMode::View2D);
 	}
 	UpdateViewModeButtonStyles();
+	UpdateDynamicPropertiesPanel();
 }
 
 void URoomPlannerWidget::SetToolMode(EPlannerToolMode NewToolMode)
@@ -138,15 +151,23 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 
 	bool bIs2D = (CurrentViewMode == ERoomPlannerViewMode::View2D);
 
-	if (Btn2DView) Btn2DView->SetBackgroundColor(bIs2D ? ActiveColor : InactiveColor);
-	if (Btn_2DView) Btn_2DView->SetBackgroundColor(bIs2D ? ActiveColor : InactiveColor);
-	if (Btn3DView) Btn3DView->SetBackgroundColor(!bIs2D ? ActiveColor : InactiveColor);
-	if (Btn_3DView) Btn_3DView->SetBackgroundColor(!bIs2D ? ActiveColor : InactiveColor);
+	if (Btn2DView) { Btn2DView->SetBackgroundColor(bIs2D ? ActiveColor : InactiveColor); Btn2DView->SetIsEnabled(!bIs2D); }
+	if (Btn_2DView) { Btn_2DView->SetBackgroundColor(bIs2D ? ActiveColor : InactiveColor); Btn_2DView->SetIsEnabled(!bIs2D); }
+	if (Btn3DView) { Btn3DView->SetBackgroundColor(!bIs2D ? ActiveColor : InactiveColor); Btn3DView->SetIsEnabled(bIs2D); }
+	if (Btn_3DView) { Btn_3DView->SetBackgroundColor(!bIs2D ? ActiveColor : InactiveColor); Btn_3DView->SetIsEnabled(bIs2D); }
 
 	bool bCeilingOn = PlannerManager && PlannerManager->bCeilingVisible;
 	if (BtnToggleCeiling) BtnToggleCeiling->SetBackgroundColor(bCeilingOn ? ActiveColor : InactiveColor);
 	if (Btn_ToggleCeiling) Btn_ToggleCeiling->SetBackgroundColor(bCeilingOn ? ActiveColor : InactiveColor);
 	if (BtnCeiling) BtnCeiling->SetBackgroundColor(bCeilingOn ? ActiveColor : InactiveColor);
+
+	ESlateVisibility ToolsVis = bIs2D ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	if (BtnDrawWallTool) BtnDrawWallTool->SetVisibility(ToolsVis);
+	if (BtnClearLayout) BtnClearLayout->SetVisibility(ToolsVis);
+	if (BtnPresetRoom) BtnPresetRoom->SetVisibility(ToolsVis);
+	if (Image_1) Image_1->SetVisibility(ToolsVis);
+	
+	// BtnSelectTool is handled by NativeTick, but we can also force it here
 }
 
 void URoomPlannerWidget::On2DViewClicked() { SetViewMode(ERoomPlannerViewMode::View2D); }
@@ -182,33 +203,153 @@ void URoomPlannerWidget::OnDeleteToolClicked()
 	}
 }
 
-void URoomPlannerWidget::OnAddDoorClicked() { if (PlannerManager) PlannerManager->AddDoorToSelectedWall(); }
-void URoomPlannerWidget::OnAddWindowClicked() { if (PlannerManager) PlannerManager->AddWindowToSelectedWall(); }
+void URoomPlannerWidget::OnAddDoorClicked()
+{
+	if (!PlannerManager) return;
+	float W = 0.9f;
+	float H = 2.1f;
+	if (EditableTxtOpeningWidth && !EditableTxtOpeningWidth->GetText().IsEmpty()) W = FCString::Atof(*EditableTxtOpeningWidth->GetText().ToString()) / 100.f;
+	if (EditableTxtOpeningHeight && !EditableTxtOpeningHeight->GetText().IsEmpty()) H = FCString::Atof(*EditableTxtOpeningHeight->GetText().ToString()) / 100.f;
+	PlannerManager->AddDoorToSelectedWall(W, H);
+}
+
+void URoomPlannerWidget::OnAddWindowClicked()
+{
+	if (!PlannerManager) return;
+	float W = 1.2f;
+	float H = 1.2f;
+	float S = 0.9f;
+	if (EditableTxtOpeningWidth_1 && !EditableTxtOpeningWidth_1->GetText().IsEmpty()) W = FCString::Atof(*EditableTxtOpeningWidth_1->GetText().ToString()) / 100.f;
+	if (EditableTxtOpeningHeight_1 && !EditableTxtOpeningHeight_1->GetText().IsEmpty()) H = FCString::Atof(*EditableTxtOpeningHeight_1->GetText().ToString()) / 100.f;
+	if (EditableTxtOpeningSillHeight && !EditableTxtOpeningSillHeight->GetText().IsEmpty()) S = FCString::Atof(*EditableTxtOpeningSillHeight->GetText().ToString()) / 100.f;
+	PlannerManager->AddWindowToSelectedWall(W, H, S);
+}
+
 void URoomPlannerWidget::OnPresetRoomClicked() { BuildPreset4x4mRoom(); UpdateSummaryStatsUI(); }
 void URoomPlannerWidget::OnClearLayoutClicked() { ClearLayout(); UpdateSummaryStatsUI(); }
 void URoomPlannerWidget::OnToggleCeilingClicked() { if (PlannerManager) PlannerManager->ToggleCeilingVisibility(); UpdateViewModeButtonStyles(); }
 
-void URoomPlannerWidget::HandleWallSelected(int32 SegmentID, float LengthMeters)
+void URoomPlannerWidget::OnWallSelected(int32 SegmentID, float LengthMeters)
 {
-	float LengthCm = LengthMeters * 100.f;
-	FString FormattedText = FString::Printf(TEXT("%.0f cm"), LengthCm);
-	if (EditableTxtWallLength)
-	{
-		EditableTxtWallLength->SetText(FText::FromString(FormattedText));
-	}
-	if (TxtSelectedWallLength)
-	{
-		TxtSelectedWallLength->SetText(FText::FromString(FormattedText));
-	}
+	UpdateDynamicPropertiesPanel();
 
-	if (PlannerManager)
+	// Update creation tool fields with some defaults if they are empty
+	if (EditableTxtOpeningWidth && EditableTxtOpeningWidth->GetText().IsEmpty()) EditableTxtOpeningWidth->SetText(FText::FromString(TEXT("90")));
+	if (EditableTxtOpeningHeight && EditableTxtOpeningHeight->GetText().IsEmpty()) EditableTxtOpeningHeight->SetText(FText::FromString(TEXT("210")));
+	if (EditableTxtOpeningWidth_1 && EditableTxtOpeningWidth_1->GetText().IsEmpty()) EditableTxtOpeningWidth_1->SetText(FText::FromString(TEXT("120")));
+	if (EditableTxtOpeningHeight_1 && EditableTxtOpeningHeight_1->GetText().IsEmpty()) EditableTxtOpeningHeight_1->SetText(FText::FromString(TEXT("120")));
+	if (EditableTxtOpeningSillHeight && EditableTxtOpeningSillHeight->GetText().IsEmpty()) EditableTxtOpeningSillHeight->SetText(FText::FromString(TEXT("90")));
+}
+
+#include "Components/Image.h"
+
+void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
+{
+	if (!PlannerManager) return;
+
+	if (PlannerManager->SelectedSegmentID != -1 && CurrentViewMode == ERoomPlannerViewMode::View2D)
 	{
-		float WidthM = 0.f, HeightM = 0.f, SillM = 0.f;
-		if (PlannerManager->GetOpeningDetails(SegmentID, PlannerManager->SelectedOpeningIndex, WidthM, HeightM, SillM))
+		if (PlannerManager->SelectedOpeningIndex != -1)
 		{
-			if (EditableTxtOpeningWidth) EditableTxtOpeningWidth->SetText(FText::FromString(FString::Printf(TEXT("%.0f cm"), WidthM * 100.f)));
-			if (EditableTxtOpeningHeight) EditableTxtOpeningHeight->SetText(FText::FromString(FString::Printf(TEXT("%.0f cm"), HeightM * 100.f)));
-			if (EditableTxtOpeningSillHeight) EditableTxtOpeningSillHeight->SetText(FText::FromString(FString::Printf(TEXT("%.0f cm"), SillM * 100.f)));
+			// An opening is selected
+			float W_m = 0.f, H_m = 0.f, Sill_m = 0.f;
+			if (PlannerManager->GetOpeningDetails(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, W_m, H_m, Sill_m))
+			{
+				float W_cm = W_m * 100.f;
+				float H_cm = H_m * 100.f;
+				float S_cm = Sill_m * 100.f;
+
+				if (EditableTxtProp1)
+				{
+					EditableTxtProp1->SetVisibility(ESlateVisibility::Visible);
+					EditableTxtProp1->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), W_cm)));
+				}
+				if (EditableTxtProp2)
+				{
+					EditableTxtProp2->SetVisibility(ESlateVisibility::Visible);
+					EditableTxtProp2->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), H_cm)));
+				}
+
+				if (S_cm > 1.0f) // It's a window
+				{
+					if (EditableTxtProp3)
+					{
+						EditableTxtProp3->SetVisibility(ESlateVisibility::Visible);
+						EditableTxtProp3->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), S_cm)));
+					}
+					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер окна")));
+				}
+				else // It's a door
+				{
+					if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
+					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер двери")));
+				}
+			}
+		}
+		else
+		{
+			// Only Wall is selected
+			if (EditableTxtProp1)
+			{
+				EditableTxtProp1->SetVisibility(ESlateVisibility::Visible);
+				
+				float LenCm = PlannerManager->GetWallLength(PlannerManager->SelectedSegmentID) * 100.f;
+				EditableTxtProp1->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), LenCm)));
+			}
+			if (EditableTxtProp2) EditableTxtProp2->SetVisibility(ESlateVisibility::Hidden);
+			if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
+			if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер стены")));
+		}
+
+		if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Visible);
+		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(ESlateVisibility::Visible);
+		if (Image_2) Image_2->SetVisibility(ESlateVisibility::Visible);
+	}
+	else
+	{
+		// Nothing is selected
+		if (EditableTxtProp1) EditableTxtProp1->SetVisibility(ESlateVisibility::Hidden);
+		if (EditableTxtProp2) EditableTxtProp2->SetVisibility(ESlateVisibility::Hidden);
+		if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
+		if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Размер стены")));
+
+		if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Collapsed);
+		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(ESlateVisibility::Collapsed);
+		if (Image_2) Image_2->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+void URoomPlannerWidget::OnApplyPropertiesClicked()
+{
+	if (!PlannerManager || PlannerManager->SelectedSegmentID == -1) return;
+
+	if (PlannerManager->SelectedOpeningIndex != -1)
+	{
+		// Modify Opening
+		float W_m = 0.f, H_m = 0.f, Sill_m = 0.f;
+		if (PlannerManager->GetOpeningDetails(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, W_m, H_m, Sill_m))
+		{
+			float W = W_m * 100.f;
+			float H = H_m * 100.f;
+			float S = Sill_m * 100.f;
+
+			if (EditableTxtProp1) W = FCString::Atof(*EditableTxtProp1->GetText().ToString());
+			if (EditableTxtProp2) H = FCString::Atof(*EditableTxtProp2->GetText().ToString());
+			if (EditableTxtProp3 && EditableTxtProp3->GetVisibility() == ESlateVisibility::Visible)
+			{
+				S = FCString::Atof(*EditableTxtProp3->GetText().ToString());
+			}
+
+			PlannerManager->UpdateOpeningDimensions(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, W / 100.f, H / 100.f, S / 100.f);
+		}
+	}
+	else
+	{
+		// Modify Wall
+		if (EditableTxtProp1)
+		{
+			float NewLenMeters = FCString::Atof(*EditableTxtProp1->GetText().ToString()) / 100.f;
+			PlannerManager->SetWallLength(PlannerManager->SelectedSegmentID, NewLenMeters);
 		}
 	}
 }

@@ -10,6 +10,7 @@ class ARoomPlannerManager;
 class UButton;
 class UTextBlock;
 class UEditableTextBox;
+class UImage;
 
 UENUM(BlueprintType)
 enum class ERoomPlannerViewMode : uint8
@@ -141,12 +142,23 @@ public:
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UWidget> SnapIndicator;
 
+	// --- Dynamic Properties Panel ---
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
-	TObjectPtr<UEditableTextBox> EditableTxtWallLength;
+	TObjectPtr<UEditableTextBox> EditableTxtProp1; // Wall Length OR Opening Width
 
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
-	TObjectPtr<UEditableTextBox> TxtSelectedWallLength;
+	TObjectPtr<UEditableTextBox> EditableTxtProp2; // Opening Height
 
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UEditableTextBox> EditableTxtProp3; // Window Sill Height
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnApplyProperties; // Replaces 'wall_size' button
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UTextBlock> TxtApplyProperties; // Text inside BtnApplyProperties
+
+	// --- Creation Tools ---
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UEditableTextBox> EditableTxtOpeningWidth;
 
@@ -154,7 +166,19 @@ public:
 	TObjectPtr<UEditableTextBox> EditableTxtOpeningHeight;
 
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UEditableTextBox> EditableTxtOpeningWidth_1;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UEditableTextBox> EditableTxtOpeningHeight_1;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UEditableTextBox> EditableTxtOpeningSillHeight;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UImage> Image_1;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UImage> Image_2;
 
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
@@ -192,7 +216,12 @@ private:
 	UFUNCTION() void OnToggleCeilingClicked();
 
 	UFUNCTION()
-	void HandleWallSelected(int32 SegmentID, float LengthMeters);
+	void OnApplyPropertiesClicked();
+
+	UFUNCTION()
+	void OnWallSelected(int32 SegmentID, float LengthMeters);
+
+	void UpdateDynamicPropertiesPanel();
 
 	UFUNCTION()
 	void OnWallLengthCommitted(const FText& Text, ETextCommit::Type CommitMethod);

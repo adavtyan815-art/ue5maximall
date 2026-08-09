@@ -34,3 +34,8 @@ This document summarizes the changes, fixes, and architecture implemented for th
 
 ### 5. WebRTC / PixelStreaming Command Handler
 - Supported `ProcessCommandJSON` for external remote control over PixelStreaming data channels (`add_wall`, `add_opening`, `clear`, `get_state`).
+
+### 6. UI Dynamic Properties & View Mode Management (`URoomPlannerWidget`)
+- **2D/3D State Separation**: Automatically collapses creation tools and dynamic property panels when switching to 3D Orbit view, and reveals them only in 2D Mode.
+- **Dynamic Property Block**: Hides and shows contextual buttons (e.g., `BtnAddDoor`, `BtnApplyProperties`) alongside layout line dividers (`Image_1`, `Image_2`) based exactly on whether a wall or opening is currently selected.
+- **State Initialization**: Correctly initializes UI visibilities in `NativeConstruct` to prevent layout bugs when the widget defaults to 3D mode.

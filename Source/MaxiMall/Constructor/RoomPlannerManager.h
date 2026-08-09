@@ -172,6 +172,9 @@ public:
 	int32 GetWallCount() const { return WallSegments.Num(); }
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	float GetWallLength(int32 SegmentID) const;
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool SetWallLength(int32 SegmentID, float NewLengthMeters);
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")

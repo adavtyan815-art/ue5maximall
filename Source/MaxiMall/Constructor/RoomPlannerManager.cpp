@@ -1532,6 +1532,20 @@ void ARoomPlannerManager::UpdateSelectionVisuals()
 	}
 }
 
+float ARoomPlannerManager::GetWallLength(int32 SegmentID) const
+{
+	if (!WallSegments.Contains(SegmentID)) return 0.f;
+
+	const FWallSegment& Seg = WallSegments[SegmentID];
+	if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
+	{
+		FVector2D P1 = Nodes[Seg.StartNodeID].Position;
+		FVector2D P2 = Nodes[Seg.EndNodeID].Position;
+		return FVector2D::Distance(P1, P2) / 100.f; // Return in meters
+	}
+	return 0.f;
+}
+
 bool ARoomPlannerManager::SetWallLength(int32 SegmentID, float NewLengthMeters)
 {
 	if (NewLengthMeters <= 0.1f || !WallSegments.Contains(SegmentID)) return false;
@@ -1931,11 +1945,14 @@ bool ARoomPlannerManager::DeleteSelectedOpening()
 		RebuildAllWalls();
 		ReplicatedRoomJSON = ExportLayoutToJSON();
 		UpdateSelectionVisuals();
+		OnWallSelected.Broadcast(TargetSeg, GetWallLength(TargetSeg));
 		return true;
 	}
 	else
 	{
 		Server_DeleteSelectedOpening(TargetSeg, TargetOpening);
+		UpdateSelectionVisuals();
+		OnWallSelected.Broadcast(TargetSeg, GetWallLength(TargetSeg));
 		return true;
 	}
 }
@@ -1951,7 +1968,8 @@ void ARoomPlannerManager::Server_DeleteSelectedOpening_Implementation(int32 Segm
 	SelectedOpeningIndex = OpeningIndex;
 	DeleteSelectedOpening();
 	SelectedSegmentID = SavedSelected;
-	SelectedOpeningIndex = SavedOpening;
+	SelectedOpeningIndex = -1;
+	OnWallSelected.Broadcast(SelectedSegmentID, GetWallLength(SelectedSegmentID));
 }
 
 bool ARoomPlannerManager::Server_DeleteSelectedOpening_Validate(int32 SegmentID, int32 OpeningIndex)
