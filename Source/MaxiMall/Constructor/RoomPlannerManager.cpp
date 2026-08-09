@@ -1071,6 +1071,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 			if (bIn2DMode)
 			{
 				PC->SetControlRotation(FRotator(0.f, 0.f, 0.f));
+				PC->SetIgnoreLookInput(true);
 				if (!TopDownCameraActor)
 				{
 					FActorSpawnParameters SpawnParams;
@@ -1103,6 +1104,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 				if (Pawn)
 				{
 					PC->SetControlRotation(Pawn->GetActorRotation());
+					PC->SetIgnoreLookInput(false);
 					PC->SetViewTargetWithBlend(Pawn, 0.3f);
 				}
 			}
