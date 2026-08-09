@@ -29,6 +29,8 @@ public class MaxiMall : ModuleRules
 			"JsonUtilities",
 			"ApplicationCore",
 			"RenderCore",
+			"DatasmithContent",
+			"ProceduralMeshComponent",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

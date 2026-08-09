@@ -51,12 +51,18 @@ public:
 
     bool IsPointerOverDragArea(const FVector2D& ScreenPos) const;
 
+    UFUNCTION(BlueprintCallable, Category = "BIM UI")
+    void UpdateShareButtonText(bool bIsSharing);
+
 protected:
     virtual void NativeConstruct() override;
     virtual void NativePreConstruct() override;
 
     UFUNCTION()
     void OnCloseClicked();
+
+    UFUNCTION()
+    void OnToggleSharedSelectionClicked();
 
     virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
     virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -91,6 +97,24 @@ protected:
 
     UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
     TObjectPtr<UButton> Btn_Close;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UButton> ToggleSharedSelection;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UButton> Btn_ToggleSharedSelection;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UButton> Toggle_Shared_Selection;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UTextBlock> Txt_ToggleSharedSelection;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UTextBlock> Txt_ShareText;
+
+    UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
+    TObjectPtr<UTextBlock> TextBlock_93;
 
     UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "BIM UI")
     TObjectPtr<UScrollBox> ScrollBox_Attributes;

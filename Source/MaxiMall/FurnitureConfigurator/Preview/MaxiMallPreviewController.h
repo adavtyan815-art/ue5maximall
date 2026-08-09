@@ -49,6 +49,15 @@ public:
 	UFUNCTION(BlueprintCallable, Server, Reliable, Category="MaxiMall")
 	void Kick();
 
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_CommitWall(FVector2D StartPos, FVector2D EndPos, float Thickness = 20.f, float Height = 280.f);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_ClearLayout();
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_BuildPreset4x4mRoom();
+
     // в”Ђв”Ђ CONFIGURATOR PREVIEW MANAGEMENT в”Ђв”Ђ
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview", meta = (DisplayName = "Open Furniture Preview"))
@@ -116,6 +125,22 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Select Component"))
     void SelectComponent(UPrimitiveComponent* ComponentToSelect);
 
+    /**
+     * Toggles the broadcast of this player's currently selected mesh to all
+     * other connected clients. All clients apply CustomDepthStencilValue=3
+     * (shared-selection outline) to that mesh.
+     * Calling again, or closing the BIM Inspector, deactivates the broadcast.
+     * Wired to the Share button in WBP_BIMInspector.
+     */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction",
+              meta = (DisplayName = "Toggle Shared Selection"))
+    bool ToggleSharedSelection();
+
+    /** True while this controller has an active shared-selection broadcast. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Interaction",
+              meta = (DisplayName = "Is Shared Selection Active"))
+    bool IsSharedSelectionActive() const { return bSharedSelectionActive; }
+
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Interaction", meta = (DisplayName = "Get Selected Component"))
     UPrimitiveComponent* GetSelectedComponent() const;
 
@@ -159,8 +184,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
     TSubclassOf<UUserWidget> BIMInspectorClass;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
+    TSubclassOf<UUserWidget> RoomPlannerClass;
+
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> MainWidgetInstance;
+
+    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
+    TObjectPtr<UUserWidget> RoomPlannerInstance;
 
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> ViewmodeOverlayInstance;
@@ -186,6 +217,23 @@ protected:
 
     UFUNCTION(Server, Reliable, WithValidation)
     void Server_RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
+
+    /**
+     * Server RPC: tells the server to broadcast a shared-selection highlight
+     * for ComponentName on ComponentOwner to all clients.
+     * bActivate=true  → apply stencil 3 on all clients.
+     * bActivate=false → clear stencil 3 on all clients (restoring local state).
+     */
+    UFUNCTION(Server, Reliable, WithValidation)
+    void Server_SetSharedSelection(AActor* ComponentOwner,
+                                   const FString& ComponentName,
+                                   bool bActivate);
+
+    /** Client RPC: received by each client controller; applies/clears stencil 3. */
+    UFUNCTION(Client, Reliable)
+    void Client_ApplySharedSelection(AActor* ComponentOwner,
+                                      const FString& ComponentName,
+                                      bool bActivate);
 
 private:
     UPROPERTY()
@@ -218,15 +266,38 @@ private:
      *  Set by AddYawInput/AddPitchInput; reset on RMB release. */
     bool bRightMouseIsDragging = false;
 
+    /** True while dragging in 2D top-down mode to draw a wall. */
+    bool bIs2DDrawingWall = false;
+
+    /**
+     * Cached reference to the UPixelStreamingInput component owned by the PS plugin.
+     * Populated ONCE in BeginPlay() via GetComponentByClass — NOT CreateDefaultSubobject.
+     * FIX 2: ActivePixelStreamingInput removed (was causing duplicate delegate stacking).
+     */
     UPROPERTY()
     TObjectPtr<UPixelStreamingInput> PixelStreamingInput;
-
-    UPROPERTY()
-    TObjectPtr<UPixelStreamingInput> ActivePixelStreamingInput;
 
     FString LastKnownClipboardContent;
     float ClipboardCheckInterval = 0.2f;
     float ClipboardCheckTimer = 0.0f;
+
+    // ── Shared-Selection State ─────────────────────────────────────────────────────
+
+    /** True while this controller has broadcast its selection to all others. */
+    bool bSharedSelectionActive = false;
+
+    /**
+     * The component currently being broadcast. Tracked so we know what to
+     * clear when sharing stops (SelectComponent(nullptr) auto-deactivates).
+     */
+    TWeakObjectPtr<UPrimitiveComponent> SharedSelectionComponent;
+
+    /**
+     * Components that OTHER players (or this player) are sharing with us.
+     * Populated by Multicast_ApplySharedSelection.
+     * Used to restore stencil=3 after local hover clears it.
+     */
+    TSet<TWeakObjectPtr<UPrimitiveComponent>> SharedHighlights;
 
     UFUNCTION()
     void OnPixelStreamingInput(const FString& Descriptor);

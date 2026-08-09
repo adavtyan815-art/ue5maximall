@@ -198,6 +198,19 @@ void UBIMInspectorWidget::NativeConstruct()
     {
         Btn_Close->OnClicked.AddUniqueDynamic(this, &UBIMInspectorWidget::OnCloseClicked);
     }
+
+    if (ToggleSharedSelection)
+    {
+        ToggleSharedSelection->OnClicked.AddUniqueDynamic(this, &UBIMInspectorWidget::OnToggleSharedSelectionClicked);
+    }
+    if (Btn_ToggleSharedSelection)
+    {
+        Btn_ToggleSharedSelection->OnClicked.AddUniqueDynamic(this, &UBIMInspectorWidget::OnToggleSharedSelectionClicked);
+    }
+    if (Toggle_Shared_Selection)
+    {
+        Toggle_Shared_Selection->OnClicked.AddUniqueDynamic(this, &UBIMInspectorWidget::OnToggleSharedSelectionClicked);
+    }
 }
 
 void UBIMInspectorWidget::NativePreConstruct()
@@ -214,12 +227,57 @@ void UBIMInspectorWidget::OnCloseClicked()
     RemoveFromParent();
 }
 
+void UBIMInspectorWidget::OnToggleSharedSelectionClicked()
+{
+    if (AMaxiMallPreviewController* PC = Cast<AMaxiMallPreviewController>(GetOwningPlayer()))
+    {
+        bool bIsSharing = PC->ToggleSharedSelection();
+        UpdateShareButtonText(bIsSharing);
+    }
+}
+
+void UBIMInspectorWidget::UpdateShareButtonText(bool bIsSharing)
+{
+    FText ShareText = FText::FromString(bIsSharing ? TEXT("Stop Sharing") : TEXT("Start Sharing"));
+
+    if (TextBlock_93)
+    {
+        TextBlock_93->SetText(ShareText);
+    }
+    if (Txt_ToggleSharedSelection)
+    {
+        Txt_ToggleSharedSelection->SetText(ShareText);
+    }
+    if (Txt_ShareText)
+    {
+        Txt_ShareText->SetText(ShareText);
+    }
+
+    // Fallback: search child widgets of the share button for any text block
+    UButton* ShareBtn = ToggleSharedSelection ? ToggleSharedSelection.Get() :
+        (Btn_ToggleSharedSelection ? Btn_ToggleSharedSelection.Get() :
+        (Toggle_Shared_Selection ? Toggle_Shared_Selection.Get() : nullptr));
+
+    if (ShareBtn && ShareBtn->GetChildrenCount() > 0)
+    {
+        if (UTextBlock* ChildText = Cast<UTextBlock>(ShareBtn->GetChildAt(0)))
+        {
+            ChildText->SetText(ShareText);
+        }
+    }
+}
+
 void UBIMInspectorWidget::RefreshBIMData(UPrimitiveComponent* Component)
 {
     if (!Component)
     {
         RemoveFromParent();
         return;
+    }
+
+    if (AMaxiMallPreviewController* PC = Cast<AMaxiMallPreviewController>(GetOwningPlayer()))
+    {
+        UpdateShareButtonText(PC->IsSharedSelectionActive());
     }
 
     FBIMElementData BIMData;
