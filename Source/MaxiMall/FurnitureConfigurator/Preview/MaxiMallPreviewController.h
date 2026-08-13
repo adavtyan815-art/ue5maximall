@@ -1,4 +1,4 @@
-//
+﻿//
 // Created by Siqi Wu on 1/17/25.
 //
 
@@ -58,7 +58,7 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_BuildPreset4x4mRoom();
 
-    // в”Ђв”Ђ CONFIGURATOR PREVIEW MANAGEMENT в”Ђв”Ђ
+    // РІвЂќР‚РІвЂќР‚ CONFIGURATOR PREVIEW MANAGEMENT РІвЂќР‚РІвЂќР‚
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview", meta = (DisplayName = "Open Furniture Preview"))
     void OpenFurniturePreview(AShowroomBooth* TargetBooth, EFurnitureComponentType FocusComponent = EFurnitureComponentType::None);
@@ -111,7 +111,7 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Preview")
     EFurnitureComponentType CurrentTargetComponent;
 
-    // в”Ђв”Ђ BOOTH INTERACTION API в”Ђв”Ђ
+    // РІвЂќР‚РІвЂќР‚ BOOTH INTERACTION API РІвЂќР‚РІвЂќР‚
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth", meta = (DisplayName = "Request Booth Product Change"))
     void RequestBoothProductChange(AShowroomBooth* TargetBooth, FName NewProductID);
@@ -120,7 +120,10 @@ public:
     void RequestBoothDoorToggle(AShowroomBooth* TargetBooth, int32 SlotIndex);
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth", meta = (DisplayName = "Request Booth Component Selection"))
-    void RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
+        void RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
+
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Booth", meta = (DisplayName = "Request Booth Custom Color Change"))
+    void RequestBoothCustomColorChange(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Select Component"))
     void SelectComponent(UPrimitiveComponent* ComponentToSelect);
@@ -149,7 +152,7 @@ public:
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimitiveComponent*, SelectedComp);
 
-    // ── BLUEPRINT EVENTS ──────────────────────────────────────────────────
+    // в”Ђв”Ђ BLUEPRINT EVENTS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     UPROPERTY(BlueprintAssignable, Category = "MaxiMall | Interaction Events", meta = (DisplayName = "On Component Selected Delegate"))
     FOnComponentSelectedDelegate OnComponentSelectedDelegate;
@@ -163,7 +166,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UFUNCTION(BlueprintImplementableEvent, Category = "MaxiMall | Preview Events", meta = (DisplayName = "On Preview Closed"))
     void OnPreviewClosed();
 
-    // в”Ђв”Ђ CONFIG в”Ђв”Ђ
+    // РІвЂќР‚РІвЂќР‚ CONFIG РІвЂќР‚РІвЂќР‚
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Actor Class"))
     TSubclassOf<AFurniturePreviewActor> PreviewActorClass;
@@ -216,13 +219,18 @@ protected:
     void Server_RequestBoothProductChange(AShowroomBooth* TargetBooth, FName NewProductID);
 
     UFUNCTION(Server, Reliable, WithValidation)
-    void Server_RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
+        void Server_RequestBoothComponentSelection(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
+
+    UFUNCTION(Server, Reliable, WithValidation)
+    void Server_RequestBoothCustomColorChange(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
+    bool Server_RequestBoothCustomColorChange_Validate(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
+    void Server_RequestBoothCustomColorChange_Implementation(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
 
     /**
      * Server RPC: tells the server to broadcast a shared-selection highlight
      * for ComponentName on ComponentOwner to all clients.
-     * bActivate=true  → apply stencil 3 on all clients.
-     * bActivate=false → clear stencil 3 on all clients (restoring local state).
+     * bActivate=true  в†’ apply stencil 3 on all clients.
+     * bActivate=false в†’ clear stencil 3 on all clients (restoring local state).
      */
     UFUNCTION(Server, Reliable, WithValidation)
     void Server_SetSharedSelection(AActor* ComponentOwner,
@@ -271,7 +279,7 @@ private:
 
     /**
      * Cached reference to the UPixelStreamingInput component owned by the PS plugin.
-     * Populated ONCE in BeginPlay() via GetComponentByClass — NOT CreateDefaultSubobject.
+     * Populated ONCE in BeginPlay() via GetComponentByClass вЂ” NOT CreateDefaultSubobject.
      * FIX 2: ActivePixelStreamingInput removed (was causing duplicate delegate stacking).
      */
     UPROPERTY()
@@ -281,7 +289,7 @@ private:
     float ClipboardCheckInterval = 0.2f;
     float ClipboardCheckTimer = 0.0f;
 
-    // ── Shared-Selection State ─────────────────────────────────────────────────────
+    // в”Ђв”Ђ Shared-Selection State в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** True while this controller has broadcast its selection to all others. */
     bool bSharedSelectionActive = false;

@@ -5,7 +5,10 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "ColorCatalogTypes.h"
+#include "Blueprint/UserWidget.h"
 #include "ColorCatalogWidget.generated.h"
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnColorSelectedEvent, FLinearColor, SelectedColor, UMaterialInterface*, OverrideMaterial);
 
 class UTileView;
 class UEditableTextBox;
@@ -38,26 +41,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller", meta = (DefaultToSelf = "CallingWidget"))
 	static UColorCatalogWidget* OpenColorCatalogForWidget(
 		UUserWidget* CallingWidget,
-		TSubclassOf<UColorCatalogWidget> CatalogWidgetClass,
-		UPrimitiveComponent* TargetMesh,
-		AActor* TargetActor = nullptr
+		TSubclassOf<UColorCatalogWidget> CatalogWidgetClass
 	);
 
 	/** Set parent widget to collapse on open and restore on Back button click */
-	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
-	void SetParentCallingWidget(UUserWidget* InParentWidget);
+	    /** Set the parent UI to collapse when this catalog is active */
+    UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+    void SetParentCallingWidget(UUserWidget* InParentWidget);
 
-	/** Set a single target 3D Primitive Component (mesh) to tint */
-	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
-	void SetTargetComponent(UPrimitiveComponent* InTargetComponent, FName InColorParameterName = FName("BaseColor"));
-
-	/** Set multiple target 3D Primitive Components (selected meshes) to tint */
-	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
-	void SetTargetComponents(const TArray<UPrimitiveComponent*>& InTargetComponents, FName InColorParameterName = FName("BaseColor"));
-
-	/** Set the target 3D actor whose material will be tinted when selecting/applying colors */
-	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
-	void SetTargetActor(AActor* InTargetActor, FName InColorParameterName = FName("BaseColor"));
+    /** Event fired when a color swatch is clicked for Live Preview. Bind to this for multiplayer! */
+    UPROPERTY(BlueprintAssignable, Category = "Color Catalog Controller")
+    FOnColorSelectedEvent OnColorSelected;
 
 	/** Switch catalog tab (RAL vs NCS) */
 	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
@@ -162,6 +156,6 @@ private:
 	UFUNCTION() void OnCatNeutralClicked() { SetActiveCategory(EColorShadeCategory::Neutral); }
 
 	void BindCategoryButtons();
-	void ApplyColorToTargetMeshes(const FLinearColor& LinearColor);
+	void BroadcastColorSelected(const FLinearColor& LinearColor, UMaterialInterface* InOverrideMaterial);
 };
 

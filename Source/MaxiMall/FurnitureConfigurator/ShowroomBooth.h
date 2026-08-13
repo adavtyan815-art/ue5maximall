@@ -1,14 +1,14 @@
-// Copyright MaxiMall Project. All Rights Reserved.
+﻿// Copyright MaxiMall Project. All Rights Reserved.
 // ShowroomBooth.h
 //
-// AShowroomBooth — the replicated Exhibition Booth Actor.
+// AShowroomBooth вЂ” the replicated Exhibition Booth Actor.
 //
 // Designer workflow:
 //   1. Place this actor in the level.
 //   2. In the Details panel, assign the six static mesh components (created
 //      automatically as UPROPERTY sub-objects) and arrange them visually.
 //   3. Set ProductCatalog (DataTable) and InitialProductID in the Details panel.
-//   4. Hit Play — the system locks in the editor layout as the baseline
+//   4. Hit Play вЂ” the system locks in the editor layout as the baseline
 //      and applies dynamic offsets only when a configuration change occurs.
 //
 // Multiplayer:
@@ -21,9 +21,9 @@
 // Loose coupling:
 //   - No hard reference to any Character class.
 //   - External actors call RequestProductChange() / RequestDoorToggle() via
-//     BlueprintCallable interfaces — the booth does not care who calls them.
+//     BlueprintCallable interfaces вЂ” the booth does not care who calls them.
 //
-// Compatible: UE 5.3 → UE 5.6+ (no deprecated APIs used)
+// Compatible: UE 5.3 в†’ UE 5.6+ (no deprecated APIs used)
 
 #pragma once
 
@@ -38,9 +38,9 @@ class UStaticMeshComponent;
 class UDataTable;
 class UBoothProximityComponent;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Delegates (Blueprint-Assignable)
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /** Fired on all machines after a product configuration change is fully applied. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -55,9 +55,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
     int32,           SlotIndex,
     EDoorSlotState,  NewState);
 
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // AShowroomBooth
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 UCLASS(ClassGroup = (MaxiMall),
        HideCategories = (Rendering, Physics, Collision, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData),
@@ -70,7 +70,7 @@ public:
 
     AShowroomBooth();
 
-    // ── Lifecycle ─────────────────────────────────────────────────────────
+    // в”Ђв”Ђ Lifecycle в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     virtual void BeginPlay() override;
     virtual void PostInitializeComponents() override;
@@ -81,14 +81,14 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Booth | Initialization")
     void InitializeDefaultBooth();
 
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // VISUAL COMPONENTS
     // Designers assign and arrange these in the Editor.
     // The C++ system reads their editor-established transforms as the
     // "baseline" and only applies deltas during runtime product changes.
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-    /** Root — invisible scene anchor. All other components attach to this. */
+    /** Root вЂ” invisible scene anchor. All other components attach to this. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
     TObjectPtr<USceneComponent> BoothRoot;
 
@@ -97,15 +97,15 @@ public:
     TObjectPtr<UStaticMeshComponent> MainCabinet;
 
     /**
-     * Door Slot 0 — Left door or single door.
+     * Door Slot 0 вЂ” Left door or single door.
      * Visibility/collision controlled at runtime based on EDoorCount.
-     * Never destroyed or reallocated — pure state management.
+     * Never destroyed or reallocated вЂ” pure state management.
      */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
     TObjectPtr<UStaticMeshComponent> DoorMeshSlot0;
 
     /**
-     * Door Slot 1 — Right door.
+     * Door Slot 1 вЂ” Right door.
      * Hidden and collision-disabled when EDoorCount < TwoDoors.
      */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
@@ -123,11 +123,11 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
     TObjectPtr<UStaticMeshComponent> SinkMesh;
 
-    /** Faucet mesh — always repositioned relative to CountertopMesh. */
+    /** Faucet mesh вЂ” always repositioned relative to CountertopMesh. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
     TObjectPtr<UStaticMeshComponent> FaucetMesh;
 
-    /** Mirror mesh — no runtime transform dependency, mesh/material only. */
+    /** Mirror mesh вЂ” no runtime transform dependency, mesh/material only. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
     TObjectPtr<UStaticMeshComponent> MirrorMesh;
 
@@ -143,9 +143,9 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Booth | Components")
     TObjectPtr<UStaticMeshComponent> ClosetDoorMeshSlot1;
 
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // CONFIGURATION (Designer-set in Editor)
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /**
      * The DataTable asset containing FFurnitureProductRow rows.
@@ -180,14 +180,14 @@ public:
 
     /**
      * Human-readable booth identifier shown in UI.
-     * Not replicated — purely cosmetic/informational.
+     * Not replicated вЂ” purely cosmetic/informational.
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Booth | Config")
     FText BoothDisplayName;
 
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // REPLICATED STATE
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /**
      * Authoritative configuration state of the showroom booth (replicated).
@@ -197,10 +197,17 @@ public:
     FShowroomBoothConfigState ActiveState;
 
     /**
+     * Authoritative custom color overrides from the Color Catalog.
+     */
+    UPROPERTY(ReplicatedUsing = OnRep_CustomColors, BlueprintReadOnly,
+              Category = "Booth | State")
+    TArray<FCustomColorOverride> CustomColors;
+
+    /**
      * Per-slot door state. Max 2 entries (indices 0 and 1).
      * Replicated with RepNotify. Initialized from EDoorCount in the product data.
      *
-     * Memory note: TArray with exactly 2 pre-allocated entries — no dynamic growth.
+     * Memory note: TArray with exactly 2 pre-allocated entries вЂ” no dynamic growth.
      */
     UPROPERTY(ReplicatedUsing = OnRep_DoorStates, BlueprintReadOnly,
               Category = "Booth | State")
@@ -209,9 +216,9 @@ public:
     UPROPERTY(Replicated, BlueprintReadOnly, Category = "Booth | State")
     bool bCountertopSizeFallbackActive;
 
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // PUBLIC API (Blueprint Callable)
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /**
      * Primary entry point for changing the displayed product.
@@ -233,9 +240,14 @@ public:
     /**
      * Request a size or color selection change on a specific subcomponent.
      */
-    UFUNCTION(BlueprintCallable, Category = "Booth | Interaction",
-              meta = (DisplayName = "Request Component Selection"))
+    UFUNCTION(BlueprintCallable, Category = "Booth | Interaction")
     void RequestComponentSelection(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
+
+    /**
+     * Request a custom color override on a specific subcomponent.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Booth | Interaction")
+    void RequestCustomColorChange(EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
 
     /**
      * Toggles the open/closed state of a single door slot.
@@ -317,9 +329,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Booth | Query")
     FFurniturePlacementOffset GetActiveCountertopOffset() const;
 
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // DELEGATES (Blueprint-Assignable)
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** Broadcast after every successful product configuration change. */
     UPROPERTY(BlueprintAssignable, Category = "Booth | Events")
@@ -331,21 +343,25 @@ public:
 
 protected:
 
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // REPLICATION CALLBACKS
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** Called on every client (and listen-server client) when ActiveState changes. */
     UFUNCTION()
     void OnRep_ActiveState();
 
+    /** Called on every client (and listen-server client) when CustomColors changes. */
+    UFUNCTION()
+    void OnRep_CustomColors();
+
     /** Called on every client (and listen-server client) when DoorStates changes. */
     UFUNCTION()
     void OnRep_DoorStates();
 
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // SERVER RPCs
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /**
      * Server-authoritative product change.
@@ -366,6 +382,15 @@ protected:
     void Server_ApplyComponentSelection_Implementation(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex);
 
     /**
+     * Server-authoritative custom color change from the Catalog.
+     */
+    UFUNCTION(Server, Reliable, WithValidation,
+              meta = (DisplayName = "[Server] Apply Custom Color"))
+    void Server_ApplyCustomColor(EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
+    bool Server_ApplyCustomColor_Validate(EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
+    void Server_ApplyCustomColor_Implementation(EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
+
+    /**
      * Server-authoritative door toggle.
      */
     UFUNCTION(Server, Reliable, WithValidation,
@@ -374,12 +399,12 @@ protected:
     bool Server_ToggleDoor_Validate(int32 SlotIndex);
     void Server_ToggleDoor_Implementation(int32 SlotIndex);
 
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // INTERNAL VISUAL APPLICATION (runs on ALL machines via RepNotify)
-    // ─────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /**
-     * Master rebuild — applies every visual aspect of a product row:
+     * Master rebuild вЂ” applies every visual aspect of a product row:
      *  1. Cabinet mesh + materials
      *  2. Door meshes + visibility + collision
      *  3. Countertop mesh + materials
@@ -417,11 +442,11 @@ protected:
 
     /**
      * Drives door slot visibility and collision from active product data.
-     * No components are created or destroyed — only state is modified.
+     * No components are created or destroyed вЂ” only state is modified.
      *
-     * DoorCount == NoDoors  : Both slots → NotPresent (hidden, no collision)
-     * DoorCount == OneDoor  : Slot0 → Closed, Slot1 → NotPresent
-     * DoorCount == TwoDoors : Both slots → Closed
+     * DoorCount == NoDoors  : Both slots в†’ NotPresent (hidden, no collision)
+     * DoorCount == OneDoor  : Slot0 в†’ Closed, Slot1 в†’ NotPresent
+     * DoorCount == TwoDoors : Both slots в†’ Closed
      */
     void ApplyDoorConfiguration(const FFurnitureProductRow& Data);
 

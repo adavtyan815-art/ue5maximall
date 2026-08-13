@@ -99,6 +99,9 @@ protected:
     void OnColorCatalogClicked();
 
     UFUNCTION()
+    void HandleColorSelected(FLinearColor SelectedColor, UMaterialInterface* OverrideMaterial);
+
+    UFUNCTION()
     void OnURLButtonClicked();
 
 public:

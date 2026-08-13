@@ -1036,6 +1036,23 @@ void AMaxiMallPreviewController::RequestBoothComponentSelection(AShowroomBooth* 
     }
 }
 
+void AMaxiMallPreviewController::RequestBoothCustomColorChange(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial)
+{
+    if (!TargetBooth)
+    {
+        return;
+    }
+
+    if (GetLocalRole() == ROLE_Authority)
+    {
+        TargetBooth->RequestCustomColorChange(ComponentType, Color, OverrideMaterial);
+    }
+    else
+    {
+        Server_RequestBoothCustomColorChange(TargetBooth, ComponentType, Color, OverrideMaterial);
+    }
+}
+
 void AMaxiMallPreviewController::Server_RequestBoothDoorToggle_Implementation(AShowroomBooth* TargetBooth, int32 SlotIndex)
 {
     if (TargetBooth)
@@ -1071,6 +1088,19 @@ void AMaxiMallPreviewController::Server_RequestBoothComponentSelection_Implement
 }
 
 bool AMaxiMallPreviewController::Server_RequestBoothComponentSelection_Validate(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex)
+{
+    return true;
+}
+
+void AMaxiMallPreviewController::Server_RequestBoothCustomColorChange_Implementation(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial)
+{
+    if (TargetBooth)
+    {
+        TargetBooth->RequestCustomColorChange(ComponentType, Color, OverrideMaterial);
+    }
+}
+
+bool AMaxiMallPreviewController::Server_RequestBoothCustomColorChange_Validate(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial)
 {
     return true;
 }

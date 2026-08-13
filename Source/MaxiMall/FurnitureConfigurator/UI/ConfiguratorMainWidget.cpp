@@ -648,7 +648,7 @@ void UConfiguratorMainWidget::RefreshSelections()
                 Booth->bCountertopSizeFallbackActive ? TEXT("True") : TEXT("False"));
             if (Booth->bCountertopSizeFallbackActive)
             {
-                Txt_Warning->SetText(FText::FromString(TEXT("Р”Р»СЏ СЌС‚РѕР№ РјРѕРґРµР»Рё РЅРµС‚ РІСЃС‚СЂРѕРµРЅРЅРѕР№ СЃС‚РѕР»РµС€РЅРёС†С‹ СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰РµРіРѕ СЂР°Р·РјРµСЂР°")));
+                Txt_Warning->SetText(FText::FromString(TEXT("Для этой модели нет встроенной столешницы соответствующего размера")));
                 Txt_Warning->SetVisibility(ESlateVisibility::Visible);
             }
             else
@@ -706,7 +706,28 @@ void UConfiguratorMainWidget::OnColorCatalogClicked()
     }
 
     // Open the catalog widget via the static C++ helper!
-    UColorCatalogWidget::OpenColorCatalogForWidget(this, ColorCatalogWidgetClass, TargetMesh, Booth);
+    UColorCatalogWidget* CatalogWidget = UColorCatalogWidget::OpenColorCatalogForWidget(this, ColorCatalogWidgetClass);
+    if (CatalogWidget)
+    {
+        CatalogWidget->OnColorSelected.AddUniqueDynamic(this, &UConfiguratorMainWidget::HandleColorSelected);
+    }
+}
+
+void UConfiguratorMainWidget::HandleColorSelected(FLinearColor SelectedColor, UMaterialInterface* OverrideMaterial)
+{
+    AShowroomBooth* Booth = TargetBooth.Get();
+    if (Booth)
+    {
+        AMaxiMallPreviewController* PreviewPC = Cast<AMaxiMallPreviewController>(GetOwningPlayer());
+        if (PreviewPC)
+        {
+            PreviewPC->RequestBoothCustomColorChange(Booth, ActiveComponent, SelectedColor, OverrideMaterial);
+        }
+        else
+        {
+            Booth->RequestCustomColorChange(ActiveComponent, SelectedColor, OverrideMaterial);
+        }
+    }
 }
 
 void UConfiguratorMainWidget::OnURLButtonClicked()

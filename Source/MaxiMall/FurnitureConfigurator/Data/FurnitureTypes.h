@@ -1,9 +1,9 @@
-// Copyright awsTutorial Project. All Rights Reserved.
+﻿// Copyright awsTutorial Project. All Rights Reserved.
 // FurnitureTypes.h
 //
 // Central type definitions for the Modular Furniture Configurator System.
 // All enums and structs are Blueprint-exposed. No engine-version-specific APIs used.
-// Compatible: UE 5.3 → UE 5.6+
+// Compatible: UE 5.3 в†’ UE 5.6+
 
 #pragma once
 
@@ -11,9 +11,9 @@
 #include "Engine/DataTable.h"
 #include "FurnitureTypes.generated.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // ENUMERATIONS
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 UENUM(BlueprintType)
 enum class EOptionType : uint8
@@ -25,10 +25,10 @@ enum class EOptionType : uint8
 /**
  * Defines how the countertop and sink geometry interact structurally.
  *
- * BuiltIn       – The sink basin is part of the countertop mesh geometry.
+ * BuiltIn       вЂ“ The sink basin is part of the countertop mesh geometry.
  *                 The standalone Sink component must be hidden.
  *
- * SurfaceMounted – A separate sink mesh sits on top of the countertop.
+ * SurfaceMounted вЂ“ A separate sink mesh sits on top of the countertop.
  *                  The standalone Sink component is shown and repositioned
  *                  using FSinkPlacementOffset from the product data.
  */
@@ -55,7 +55,7 @@ enum class EDoorCount : uint8
 /**
  * Runtime interaction state of a single cabinet door slot.
  * Kept separate from EDoorCount so a door can be "present but closed"
- * vs "not present" — the distinction matters for collision toggling.
+ * vs "not present" вЂ” the distinction matters for collision toggling.
  */
 UENUM(BlueprintType)
 enum class EDoorSlotState : uint8
@@ -90,9 +90,9 @@ enum class EFaucetType : uint8
 
 
 
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // SUPPORTING SUB-STRUCTS
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /**
  * Describes a single named material override slot on any mesh component.
@@ -107,7 +107,7 @@ struct FFurnitureMaterialSlot
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material")
     int32 SlotIndex = 0;
 
-    /** Material to apply. Soft reference — not loaded until needed. */
+    /** Material to apply. Soft reference вЂ” not loaded until needed. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material")
     TSoftObjectPtr<UMaterialInterface> Material;
 };
@@ -402,7 +402,7 @@ struct FFurnitureDoubleDoorsColorOption
  * and the angular offset applied when the door transitions to the Open state.
  *
  * Both offsets are relative to the MainCabinet component's local origin so the
- * designer-established world placement is never overwritten — only the delta
+ * designer-established world placement is never overwritten вЂ” only the delta
  * between "product A door position" and "product B door position" is applied.
  */
 USTRUCT(BlueprintType)
@@ -419,7 +419,7 @@ struct FDoorSlotConfig
 
     /**
      * Yaw rotation offset (degrees) added to the component when transitioning
-     * from Closed → Open. Negative = swing left, Positive = swing right.
+     * from Closed в†’ Open. Negative = swing left, Positive = swing right.
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
     float OpenYawDelta = 90.f;
@@ -432,7 +432,7 @@ struct FDoorSlotConfig
     bool bIsRotation = true;
 
     /**
-     * Translation offset applied when transitioning from Closed → Open.
+     * Translation offset applied when transitioning from Closed в†’ Open.
      * Only evaluated if bIsRotation is false.
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Door")
@@ -514,6 +514,36 @@ struct FFurnitureDoorsConfig
 };
 
 /**
+ * Custom color override for a specific component.
+ */
+USTRUCT(BlueprintType)
+struct FCustomColorOverride
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Custom Color")
+    EFurnitureComponentType ComponentType;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Custom Color")
+    FLinearColor CustomColor;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Custom Color")
+    UMaterialInterface* OverrideMaterial;
+
+    FCustomColorOverride()
+        : ComponentType(EFurnitureComponentType::Cabinet)
+        , CustomColor(FLinearColor::White)
+        , OverrideMaterial(nullptr)
+    {}
+
+    FCustomColorOverride(EFurnitureComponentType InComponent, const FLinearColor& InColor, UMaterialInterface* InMaterial)
+        : ComponentType(InComponent)
+        , CustomColor(InColor)
+        , OverrideMaterial(InMaterial)
+    {}
+};
+
+/**
  * Replicated configuration state tracking choices for all subcomponents of a booth.
  */
 USTRUCT(BlueprintType)
@@ -564,12 +594,12 @@ struct FShowroomBoothConfigState
 
 
 
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // PRIMARY DATA TABLE ROW
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /**
- * FFurnitureProductRow — One row per distinct product category/set in the DataTable.
+ * FFurnitureProductRow вЂ” One row per distinct product category/set in the DataTable.
  *
  * The DataTable RowName serves as the ProductID (FName key).
  * Designers populate every field inside the Editor's DataTable editor.
@@ -583,43 +613,43 @@ struct FFurnitureProductRow : public FTableRowBase
 {
     GENERATED_BODY()
 
-    // ── Cabinet Body ──────────────────────────────────────────────────────
+    // в”Ђв”Ђ Cabinet Body в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** Main cabinet body options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Cabinet")
     FFurnitureCabinetOptions CabinetOptions;
 
-    // ── Closet Body ───────────────────────────────────────────────────────
+    // в”Ђв”Ђ Closet Body в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** Closet options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Closet")
     FFurnitureComponentOptions ClosetOptions;
 
-    // ── Doors ─────────────────────────────────────────────────────────────
+    // в”Ђв”Ђ Doors в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** Unified doors configuration for cabinet and closet doors. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Doors")
     FFurnitureDoorsConfig DoorsConfig;
 
-    // ── Countertop ────────────────────────────────────────────────────────
+    // в”Ђв”Ђ Countertop в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** Countertop allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetCountertopOptions"))
     TArray<FName> AllowedCountertopIDs;
 
-    // ── Sink ──────────────────────────────────────────────────────────────
+    // в”Ђв”Ђ Sink в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** Standalone sink allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetSinkOptions"))
     TArray<FName> AllowedSinkIDs;
 
-    // ── Faucet ────────────────────────────────────────────────────────────
+    // в”Ђв”Ђ Faucet в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** Faucet allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetFaucetOptions"))
     TArray<FName> AllowedFaucetIDs;
 
-    // ── Mirror ────────────────────────────────────────────────────────────
+    // в”Ђв”Ђ Mirror в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     /** Mirror allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetMirrorOptions"))
