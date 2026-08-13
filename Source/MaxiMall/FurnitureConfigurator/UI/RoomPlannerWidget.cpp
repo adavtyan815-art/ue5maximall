@@ -1,7 +1,7 @@
-// Copyright 2026 MaxiMall. All Rights Reserved.
+﻿// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #include "FurnitureConfigurator/UI/RoomPlannerWidget.h"
-#include "Constructor/RoomPlannerManager.h"
+#include "RoomPlanner/RoomPlannerManager.h"
 #include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
@@ -68,7 +68,7 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 
 			if (!bHasWalls)
 			{
-				BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Пока нет стен для работы")));
+				BtnSelectTool->SetToolTipText(FText::FromString(TEXT("РџРѕРєР° РЅРµС‚ СЃС‚РµРЅ РґР»СЏ СЂР°Р±РѕС‚С‹")));
 			}
 			else
 			{
@@ -277,12 +277,12 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 						EditableTxtProp3->SetVisibility(ESlateVisibility::Visible);
 						EditableTxtProp3->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), S_cm)));
 					}
-					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер окна")));
+					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("РР·РјРµРЅРёС‚СЊ СЂР°Р·РјРµСЂ РѕРєРЅР°")));
 				}
 				else // It's a door
 				{
 					if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
-					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер двери")));
+					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("РР·РјРµРЅРёС‚СЊ СЂР°Р·РјРµСЂ РґРІРµСЂРё")));
 				}
 			}
 		}
@@ -298,7 +298,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 			}
 			if (EditableTxtProp2) EditableTxtProp2->SetVisibility(ESlateVisibility::Hidden);
 			if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
-			if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер стены")));
+			if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("РР·РјРµРЅРёС‚СЊ СЂР°Р·РјРµСЂ СЃС‚РµРЅС‹")));
 		}
 
 		if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Visible);
@@ -311,7 +311,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 		if (EditableTxtProp1) EditableTxtProp1->SetVisibility(ESlateVisibility::Hidden);
 		if (EditableTxtProp2) EditableTxtProp2->SetVisibility(ESlateVisibility::Hidden);
 		if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
-		if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Размер стены")));
+		if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Р Р°Р·РјРµСЂ СЃС‚РµРЅС‹")));
 
 		if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Collapsed);
 		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(ESlateVisibility::Collapsed);
@@ -487,7 +487,7 @@ void URoomPlannerWidget::UpdateSummaryStatsUI()
 {
 	if (TxtFloorArea)
 	{
-		TxtFloorArea->SetText(FText::FromString(FString::Printf(TEXT("%.2f m²"), GetFloorAreaM2())));
+		TxtFloorArea->SetText(FText::FromString(FString::Printf(TEXT("%.2f mВІ"), GetFloorAreaM2())));
 	}
 	if (TxtPerimeter)
 	{
@@ -591,3 +591,4 @@ float URoomPlannerWidget::GetPerimeterLengthM() const
 	}
 	return 0.0f;
 }
+

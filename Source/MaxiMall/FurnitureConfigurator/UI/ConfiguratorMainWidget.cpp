@@ -1,4 +1,4 @@
-// Copyright MaxiMall Project. All Rights Reserved.
+﻿// Copyright MaxiMall Project. All Rights Reserved.
 
 #include "FurnitureConfigurator/UI/ConfiguratorMainWidget.h"
 #include "Components/TextBlock.h"
@@ -18,6 +18,7 @@
 #include "Components/ButtonSlot.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/WrapBoxSlot.h"
+#include "ColorCatalog/ColorCatalogWidget.h"
 
 void UFurnitureOptionListener::OnButtonClicked()
 {
@@ -62,6 +63,11 @@ void UConfiguratorMainWidget::NativeConstruct()
         Txt_BtnURL->OnClicked.RemoveAll(this);
         Txt_BtnURL->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnURLButtonClicked);
     }
+    if (Btn_ColorCatalog)
+    {
+        Btn_ColorCatalog->OnClicked.RemoveAll(this);
+        Btn_ColorCatalog->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnColorCatalogClicked);
+    }
 }
 
 void UConfiguratorMainWidget::SetupWidget(AMaxiMallPreviewController* InPC, AShowroomBooth* InBooth, EFurnitureComponentType InComponent)
@@ -84,7 +90,7 @@ void UConfiguratorMainWidget::RefreshSelections()
     FFurnitureProductRow ProductData;
     if (Booth->GetActiveProductData(ProductData))
     {
-        // Gate optional component visibility — if the component's mesh is missing/null, collapse the UI selectors
+        // Gate optional component visibility вЂ” if the component's mesh is missing/null, collapse the UI selectors
         bool bIsValidMesh = IsComponentMeshValid(Booth, ActiveComponent);
         ESlateVisibility TargetVisibility = bIsValidMesh ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 
@@ -132,7 +138,7 @@ void UConfiguratorMainWidget::RefreshSelections()
             }
         }
 
-        // ── SIZE SELECTORS ──
+        // в”Ђв”Ђ SIZE SELECTORS в”Ђв”Ђ
         if (Size_Container)
         {
             if (ActiveComponent == EFurnitureComponentType::Cabinet)
@@ -390,7 +396,7 @@ void UConfiguratorMainWidget::RefreshSelections()
             }
         }
 
-        // ── COLOR SELECTORS ──
+        // в”Ђв”Ђ COLOR SELECTORS в”Ђв”Ђ
         TArray<FFurnitureColorOption> ActiveColors;
         if (ActiveComponent == EFurnitureComponentType::Cabinet)
         {
@@ -605,7 +611,7 @@ void UConfiguratorMainWidget::RefreshSelections()
             }
         }
 
-        // ── Update Metadata Text Blocks ──
+        // в”Ђв”Ђ Update Metadata Text Blocks в”Ђв”Ђ
         if (Txt_ProductName_1 || Txt_SKU)
         {
             FText ProductName;
@@ -635,14 +641,14 @@ void UConfiguratorMainWidget::RefreshSelections()
             }
         }
 
-        // ── Warning Popup ──
+        // в”Ђв”Ђ Warning Popup в”Ђв”Ђ
         if (Txt_Warning)
         {
             UE_LOG(LogTemp, Warning, TEXT("[Widget] RefreshSelections: Txt_Warning is valid. bCountertopSizeFallbackActive = %s"), 
                 Booth->bCountertopSizeFallbackActive ? TEXT("True") : TEXT("False"));
             if (Booth->bCountertopSizeFallbackActive)
             {
-                Txt_Warning->SetText(FText::FromString(TEXT("Для этой модели нет встроенной столешницы соответствующего размера")));
+                Txt_Warning->SetText(FText::FromString(TEXT("Р”Р»СЏ СЌС‚РѕР№ РјРѕРґРµР»Рё РЅРµС‚ РІСЃС‚СЂРѕРµРЅРЅРѕР№ СЃС‚РѕР»РµС€РЅРёС†С‹ СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰РµРіРѕ СЂР°Р·РјРµСЂР°")));
                 Txt_Warning->SetVisibility(ESlateVisibility::Visible);
             }
             else
@@ -675,6 +681,32 @@ void UConfiguratorMainWidget::OnCloseUIClicked()
     {
         PC->ToggleConfiguratorUI(Booth, ActiveComponent, false);
     }
+}
+
+void UConfiguratorMainWidget::OnColorCatalogClicked()
+{
+    AShowroomBooth* Booth = TargetBooth.Get();
+    if (!Booth || !ColorCatalogWidgetClass)
+    {
+        return;
+    }
+
+    // Get the corresponding UPrimitiveComponent based on the ActiveComponent
+    UPrimitiveComponent* TargetMesh = nullptr;
+    switch (ActiveComponent)
+    {
+    case EFurnitureComponentType::Cabinet: TargetMesh = Booth->MainCabinet; break;
+    case EFurnitureComponentType::Closet: TargetMesh = Booth->ClosetMesh; break;
+    case EFurnitureComponentType::Doors: TargetMesh = Booth->DoorMeshSlot0; break;
+    case EFurnitureComponentType::Countertop: TargetMesh = Booth->CountertopMesh; break;
+    case EFurnitureComponentType::Sink: TargetMesh = Booth->SinkMesh; break;
+    case EFurnitureComponentType::Faucet: TargetMesh = Booth->FaucetMesh; break;
+    case EFurnitureComponentType::Mirror: TargetMesh = Booth->MirrorMesh; break;
+    default: break;
+    }
+
+    // Open the catalog widget via the static C++ helper!
+    UColorCatalogWidget::OpenColorCatalogForWidget(this, ColorCatalogWidgetClass, TargetMesh, Booth);
 }
 
 void UConfiguratorMainWidget::OnURLButtonClicked()
@@ -779,3 +811,5 @@ bool UConfiguratorMainWidget::IsComponentMeshValid(AShowroomBooth* Booth, EFurni
     }
     return false;
 }
+
+

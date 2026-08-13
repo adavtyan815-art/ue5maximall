@@ -1,6 +1,6 @@
-// Copyright 2026 MaxiMall. All Rights Reserved.
+﻿// Copyright 2026 MaxiMall. All Rights Reserved.
 
-#include "Constructor/RoomPlannerManager.h"
+#include "RoomPlanner/RoomPlannerManager.h"
 #include "Camera/CameraActor.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -1976,3 +1976,4 @@ bool ARoomPlannerManager::Server_DeleteSelectedOpening_Validate(int32 SegmentID,
 {
 	return true;
 }
+

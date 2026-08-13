@@ -1,4 +1,4 @@
-#include "MaxiMallPreviewController.h"
+﻿#include "MaxiMallPreviewController.h"
 #include "UObject/UObjectIterator.h"
 
 #include <Net/Core/Connection/NetCloseResult.h>
@@ -38,7 +38,7 @@
 #include "DatasmithContentBlueprintLibrary.h"
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
-#include "Constructor/RoomPlannerManager.h"
+#include "RoomPlanner/RoomPlannerManager.h"
 
 AMaxiMallPreviewController::AMaxiMallPreviewController()
 {
@@ -63,10 +63,10 @@ AMaxiMallPreviewController::AMaxiMallPreviewController()
     PixelStreamingInput = CreateDefaultSubobject<UPixelStreamingInput>(TEXT("PixelStreamingInputComponent"));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SendDiag_PC — sends a DIAG diagnostic string to the browser via PS data channel.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// SendDiag_PC вЂ” sends a DIAG diagnostic string to the browser via PS data channel.
 // Works in Shipping builds (no UE_LOG dependency for browser visibility).
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 static void SendDiag_PC(UPixelStreamingInput* PSInput, const FString& Message)
 {
     if (!PSInput)
@@ -82,11 +82,11 @@ void AMaxiMallPreviewController::BeginPlay()
 {
     Super::BeginPlay();
 
-    // ─────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // FIX 1 APPLIED: FShaderPipelineCache::SetBatchMode(BatchMode::Fast)
     // has been REMOVED from BeginPlay().
     // Background PSO compilation driven by DefaultEngine.ini settings.
-    // ─────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|PC] ===== BeginPlay START =====  IsLocalController: %s"),
         IsLocalController() ? TEXT("YES") : TEXT("NO"));
@@ -94,20 +94,20 @@ void AMaxiMallPreviewController::BeginPlay()
     if (IsLocalController())
     {
         ARoomPlannerManager::GetOrCreateInstance(GetWorld());
-        // ─────────────────────────────────────────────────────────────
+        // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         // FIX 2 APPLIED: No CreateDefaultSubobject (removed from ctor).
         //
         // The PS plugin attaches UPixelStreamingInput to this controller ONLY
         // when a browser connects via WebRTC. This happens AFTER BeginPlay on
-        // a persistent server — so GetComponentByClass may return null here.
+        // a persistent server вЂ” so GetComponentByClass may return null here.
         //
         // Strategy:
         //   1. Try once in BeginPlay (handles pre-connected / single-session builds).
         //   2. If not found, PlayerTick retries every tick until it is found.
         //      AddUniqueDynamic prevents duplicate bindings (the old per-tick scan
         //      used plain AddDynamic, which stacked duplicates every tick and caused
-        //      the PS handshake to process messages twice → kickbacks).
-        // ─────────────────────────────────────────────────────────────
+        //      the PS handshake to process messages twice в†’ kickbacks).
+        // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if (!PixelStreamingInput)
         {
             PixelStreamingInput = GetComponentByClass<UPixelStreamingInput>();
@@ -123,15 +123,15 @@ void AMaxiMallPreviewController::BeginPlay()
 
             SendDiag_PC(PixelStreamingInput,
                 TEXT("[PC] BeginPlay OK"
-                     " | FIX1: shader-pipeline Fast-batch removed — no game-thread stall"
+                     " | FIX1: shader-pipeline Fast-batch removed вЂ” no game-thread stall"
                      " | FIX2: PS component bound in BeginPlay via GetComponentByClass"
                      " | Level transition should be < 5 s now."));
         }
         else
         {
-            // Component not yet attached — PlayerTick will retry once per tick.
+            // Component not yet attached вЂ” PlayerTick will retry once per tick.
             UE_LOG(LogTemp, Warning,
-                TEXT("[MaxiMall|PC] PS Input NOT found in BeginPlay — will retry in PlayerTick."));
+                TEXT("[MaxiMall|PC] PS Input NOT found in BeginPlay вЂ” will retry in PlayerTick."));
         }
 
         // Force Epic quality scalability settings to prevent virtual server fallbacks
@@ -145,7 +145,7 @@ void AMaxiMallPreviewController::BeginPlay()
                 GameUserSettings->ApplySettings(false);
 
                 SendDiag_PC(PixelStreamingInput,
-                    TEXT("[PC] Scalability set to Epic (3) — quality override applied."));
+                    TEXT("[PC] Scalability set to Epic (3) вЂ” quality override applied."));
             }
         }
         else
@@ -171,7 +171,7 @@ void AMaxiMallPreviewController::BeginPlay()
         }
 
         UE_LOG(LogTemp, Warning,
-            TEXT("[MaxiMall|PC] ===== BeginPlay END — input mode set, cursor enabled. ====="));
+            TEXT("[MaxiMall|PC] ===== BeginPlay END вЂ” input mode set, cursor enabled. ====="));
     }
 }
 
@@ -214,7 +214,7 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         return;
     }
 
-    // ── PS Input late-bind retry ──────────────────────────────────────────
+    // в”Ђв”Ђ PS Input late-bind retry в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // If BeginPlay ran before the PS plugin attached the component (common on
     // persistent servers where the browser connects after level load), we retry
     // here. AddUniqueDynamic guarantees no duplicate bindings even if called
@@ -249,7 +249,7 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         {
             LastKnownClipboardContent = CurrentClipboard;
             
-            // FIX 2: ActivePixelStreamingInput removed — single cached PixelStreamingInput.
+            // FIX 2: ActivePixelStreamingInput removed вЂ” single cached PixelStreamingInput.
             UPixelStreamingInput* TargetInput = PixelStreamingInput.Get();
             if (TargetInput)
             {
@@ -264,7 +264,7 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         bRightMouseIsDragging = false;
     }
 
-    // ── 2D Dynamic Drag-to-Draw Wall Handling ─────────────────────────────────
+    // в”Ђв”Ђ 2D Dynamic Drag-to-Draw Wall Handling в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     ARoomPlannerManager* PlannerManager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
     if (PlannerManager && PlannerManager->Is2DModeActive())
     {
@@ -455,7 +455,7 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
         }
     }
 
-    // ── Pixel Streaming cursor data-channel broadcast ─────────────────────
+    // в”Ђв”Ђ Pixel Streaming cursor data-channel broadcast в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     if (bIsAnyHovered != bWasHoveringInteractable)
     {
         BroadcastCursorState(bIsAnyHovered);
@@ -517,9 +517,9 @@ void AMaxiMallPreviewController::AddPitchInput(float Val)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Pixel Streaming Cursor Broadcast
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 void AMaxiMallPreviewController::BroadcastCursorState(bool bHovering)
 {
@@ -694,7 +694,7 @@ void AMaxiMallPreviewController::Kick_Implementation() {
 	netConnection->Close(UE::Net::FNetCloseResult());
 }
 
-// в”Ђв”Ђ CONFIGURATOR PREVIEW MANAGEMENT в”Ђв”Ђ
+// РІвЂќР‚РІвЂќР‚ CONFIGURATOR PREVIEW MANAGEMENT РІвЂќР‚РІвЂќР‚
 
 void AMaxiMallPreviewController::OpenFurniturePreview(AShowroomBooth* TargetBooth, EFurnitureComponentType FocusComponent)
 {
@@ -1509,12 +1509,12 @@ void AMaxiMallPreviewController::OnPixelStreamingInput(const FString& Descriptor
     UE_LOG(LogTemp, Warning,
         TEXT("[MaxiMall|PC] OnPixelStreamingInput fired. Descriptor length: %d"), Descriptor.Len());
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // LEGACY FORMAT (backward-compat): the old player.js sends a plain-text
     // string starting with "MaxiMallPaste " followed by clipboard text.
     // We must handle this BEFORE attempting JSON deserialization so we do NOT
     // break existing paste functionality when player.js has not been updated.
-    // ─────────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     static const FString LegacyPrefix = TEXT("MaxiMallPaste ");
     if (Descriptor.StartsWith(LegacyPrefix))
     {
@@ -1541,9 +1541,9 @@ void AMaxiMallPreviewController::OnPixelStreamingInput(const FString& Descriptor
         return;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // JSON FORMAT: new browser side sends {"Cmd":"ClipboardPaste","Text":"..."}
-    // ─────────────────────────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] OnPixelStreamingInput raw Descriptor: %s"), *Descriptor);
 
     FString CleanDescriptor = Descriptor;
@@ -1562,7 +1562,7 @@ void AMaxiMallPreviewController::OnPixelStreamingInput(const FString& Descriptor
 
     if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
     {
-        // Not legacy format, not valid JSON — log but do NOT crash.
+        // Not legacy format, not valid JSON вЂ” log but do NOT crash.
         UE_LOG(LogTemp, Warning,
             TEXT("[MaxiMall|PC] OnPixelStreamingInput: unrecognised message format. Descriptor: %s"), *Descriptor);
         return;
@@ -1591,7 +1591,7 @@ void AMaxiMallPreviewController::OnPixelStreamingInput(const FString& Descriptor
         }
     }
 
-    // ── ClipboardPaste command ───────────────────────────────────────────────
+    // в”Ђв”Ђ ClipboardPaste command в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     if (JsonObject->HasField(TEXT("Cmd")) &&
         JsonObject->GetStringField(TEXT("Cmd")) == TEXT("ClipboardPaste"))
     {
@@ -1623,17 +1623,17 @@ void AMaxiMallPreviewController::OnPixelStreamingInput(const FString& Descriptor
 
             SendDiag_PC(PixelStreamingInput.Get(),
                 FString::Printf(
-                    TEXT("[PC] ClipboardPaste OK — injected %d chars via Slate."), PasteText.Len()));
+                    TEXT("[PC] ClipboardPaste OK вЂ” injected %d chars via Slate."), PasteText.Len()));
         }
         else
         {
             UE_LOG(LogTemp, Error,
                 TEXT("[MaxiMall|PC] ClipboardPaste FAILED: SlateApplication not initialized."));
             SendDiag_PC(PixelStreamingInput.Get(),
-                TEXT("[PC] ERROR: ClipboardPaste failed — Slate not initialized."));
+                TEXT("[PC] ERROR: ClipboardPaste failed вЂ” Slate not initialized."));
         }
     }
-    // ── Constructor commands ──────────────────────────────────────────────
+    // в”Ђв”Ђ Constructor commands в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     else if (JsonObject->HasField(TEXT("cmd")) || JsonObject->HasField(TEXT("Cmd")))
     {
         FString CmdVal = JsonObject->HasField(TEXT("cmd")) ? JsonObject->GetStringField(TEXT("cmd")) : JsonObject->GetStringField(TEXT("Cmd"));
@@ -1652,14 +1652,14 @@ void AMaxiMallPreviewController::OnPixelStreamingInput(const FString& Descriptor
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ToggleSharedSelection — called from WBP_BIMInspector Share button.
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// ToggleSharedSelection вЂ” called from WBP_BIMInspector Share button.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 bool AMaxiMallPreviewController::ToggleSharedSelection()
 {
     if (bSharedSelectionActive)
     {
-        // ── DEACTIVATE: stop sharing the currently broadcast component ──────────────────
+        // в”Ђв”Ђ DEACTIVATE: stop sharing the currently broadcast component в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if (SharedSelectionComponent.IsValid())
         {
             UPrimitiveComponent* Comp = SharedSelectionComponent.Get();
@@ -1673,13 +1673,13 @@ bool AMaxiMallPreviewController::ToggleSharedSelection()
     }
     else
     {
-        // ── ACTIVATE: broadcast the currently selected component to all players ──
+        // в”Ђв”Ђ ACTIVATE: broadcast the currently selected component to all players в”Ђв”Ђ
         UPrimitiveComponent* Comp = SelectedComponent.Get();
         if (!Comp || !Comp->GetOwner() || !HasBIMMetadata(Comp))
         {
             // Nothing valid to share.
             UE_LOG(LogTemp, Warning,
-                TEXT("[MaxiMall|PC] ToggleSharedSelection: no valid BIM component selected — nothing to share."));
+                TEXT("[MaxiMall|PC] ToggleSharedSelection: no valid BIM component selected вЂ” nothing to share."));
             return false;
         }
 
@@ -1708,9 +1708,9 @@ bool AMaxiMallPreviewController::ToggleSharedSelection()
     return bSharedSelectionActive;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Server_SetSharedSelection — validates and calls the NetMulticast.
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// Server_SetSharedSelection вЂ” validates and calls the NetMulticast.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 bool AMaxiMallPreviewController::Server_SetSharedSelection_Validate(
     AActor* ComponentOwner, const FString& ComponentName, bool bActivate)
 {
@@ -1742,12 +1742,12 @@ void AMaxiMallPreviewController::Server_SetSharedSelection_Implementation(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Client_ApplySharedSelection — executed on every connected client.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// Client_ApplySharedSelection вЂ” executed on every connected client.
 // Finds the named component on ComponentOwner and applies / removes stencil 3.
 // Local hover (1) and local selection (2) take priority: this function restores
 // them if they were previously set, avoiding visual conflict.
-// ─────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 void AMaxiMallPreviewController::Client_ApplySharedSelection_Implementation(
     AActor* ComponentOwner, const FString& ComponentName, bool bActivate)
 {
@@ -1782,7 +1782,7 @@ void AMaxiMallPreviewController::Client_ApplySharedSelection_Implementation(
 
     if (bActivate)
     {
-        // ── Add to our local SharedHighlights tracking set ───────────────────────
+        // в”Ђв”Ђ Add to our local SharedHighlights tracking set в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         SharedHighlights.Add(TargetComp);
 
         // Apply stencil 3 ONLY if local player is not hovering (1) or selecting (2)
@@ -1807,7 +1807,7 @@ void AMaxiMallPreviewController::Client_ApplySharedSelection_Implementation(
     }
     else
     {
-        // ── Remove from tracking set ─────────────────────────────────────────
+        // в”Ђв”Ђ Remove from tracking set в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         SharedHighlights.Remove(TargetComp);
 
         // Restore the correct local stencil for this client.
@@ -1816,7 +1816,7 @@ void AMaxiMallPreviewController::Client_ApplySharedSelection_Implementation(
 
         if (bIsLocallySelected)
         {
-            // Keep stencil 2 (locally selected — still clicked on by this player)
+            // Keep stencil 2 (locally selected вЂ” still clicked on by this player)
             TargetComp->SetRenderCustomDepth(true);
             TargetComp->SetCustomDepthStencilValue(2);
         }
@@ -1828,12 +1828,12 @@ void AMaxiMallPreviewController::Client_ApplySharedSelection_Implementation(
         }
         else
         {
-            // Not hovered or selected locally — clear completely
+            // Not hovered or selected locally вЂ” clear completely
             TargetComp->SetRenderCustomDepth(false);
         }
 
         UE_LOG(LogTemp, Warning,
-            TEXT("[MaxiMall|Client] SharedSelection DEACTIVATED on '%s' — restored to %s."),
+            TEXT("[MaxiMall|Client] SharedSelection DEACTIVATED on '%s' вЂ” restored to %s."),
             *ComponentName,
             bIsLocallySelected ? TEXT("stencil 2") :
             bIsLocallyHovered  ? TEXT("stencil 1") : TEXT("off"));
@@ -1842,7 +1842,7 @@ void AMaxiMallPreviewController::Client_ApplySharedSelection_Implementation(
 
 void AMaxiMallPreviewController::SendOpenURLToBrowser(const FString& URL)
 {
-    // FIX 2: ActivePixelStreamingInput removed — use single cached PixelStreamingInput.
+    // FIX 2: ActivePixelStreamingInput removed вЂ” use single cached PixelStreamingInput.
     UPixelStreamingInput* TargetInput = PixelStreamingInput.Get();
     if (TargetInput)
     {
@@ -1853,7 +1853,7 @@ void AMaxiMallPreviewController::SendOpenURLToBrowser(const FString& URL)
 
         // Browser diagnostic: confirms URL command was sent.
         SendDiag_PC(TargetInput,
-            FString::Printf(TEXT("[PC] SendOpenURLToBrowser fired — URL: %s"), *URL));
+            FString::Printf(TEXT("[PC] SendOpenURLToBrowser fired вЂ” URL: %s"), *URL));
     }
     else
     {
@@ -1935,7 +1935,7 @@ void AMaxiMallPreviewController::SelectComponent(UPrimitiveComponent* ComponentT
         return;
     }
 
-    // ── Auto-deactivate shared selection on any selection change ──────────────
+    // в”Ђв”Ђ Auto-deactivate shared selection on any selection change в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // Covers both: closing BIM Inspector (ComponentToSelect == nullptr) and
     // clicking a different mesh while sharing is active.
     if (bSharedSelectionActive && SharedSelectionComponent.IsValid() &&
@@ -2272,7 +2272,7 @@ void AMaxiMallPreviewController::CalculateSelectedQuantity(float& OutTotalAreaM2
                 if (Dim.Key.Contains(TEXT("Area")))
                 {
                     FString RawVal = Dim.Value;
-                    RawVal.ReplaceInline(TEXT("m²"), TEXT(""));
+                    RawVal.ReplaceInline(TEXT("mВІ"), TEXT(""));
                     RawVal.ReplaceInline(TEXT("m2"), TEXT(""));
                     RawVal.TrimStartAndEndInline();
                     OutTotalAreaM2 += FCString::Atof(*RawVal);
@@ -2348,3 +2348,4 @@ bool AMaxiMallPreviewController::Server_BuildPreset4x4mRoom_Validate()
 {
 	return true;
 }
+

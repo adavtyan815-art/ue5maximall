@@ -1,0 +1,167 @@
+﻿// Copyright MaxiMall. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "ColorCatalogTypes.h"
+#include "ColorCatalogWidget.generated.h"
+
+class UTileView;
+class UEditableTextBox;
+class UButton;
+class UTextBlock;
+class AActor;
+class UPrimitiveComponent;
+class UColorCatalogSubsystem;
+class UColorCatalogItemObject;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnColorCatalogClosedSignature);
+
+/**
+ * Main UI Controller for the RAL & NCS Color Palette Catalog.
+ * Handles target mesh tinting, search filtering, and seamless navigation with WBP_PreviewWindow.
+ */
+UCLASS(Abstract)
+class MAXIMALL_API UColorCatalogWidget : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+
+	/**
+	 * Helper method to open WBP_ColorCatalog from WBP_PreviewWindow.
+	 * Collapses CallingWidget, sets target mesh, and automatically restores CallingWidget when Back is clicked.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller", meta = (DefaultToSelf = "CallingWidget"))
+	static UColorCatalogWidget* OpenColorCatalogForWidget(
+		UUserWidget* CallingWidget,
+		TSubclassOf<UColorCatalogWidget> CatalogWidgetClass,
+		UPrimitiveComponent* TargetMesh,
+		AActor* TargetActor = nullptr
+	);
+
+	/** Set parent widget to collapse on open and restore on Back button click */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void SetParentCallingWidget(UUserWidget* InParentWidget);
+
+	/** Set a single target 3D Primitive Component (mesh) to tint */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void SetTargetComponent(UPrimitiveComponent* InTargetComponent, FName InColorParameterName = FName("BaseColor"));
+
+	/** Set multiple target 3D Primitive Components (selected meshes) to tint */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void SetTargetComponents(const TArray<UPrimitiveComponent*>& InTargetComponents, FName InColorParameterName = FName("BaseColor"));
+
+	/** Set the target 3D actor whose material will be tinted when selecting/applying colors */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void SetTargetActor(AActor* InTargetActor, FName InColorParameterName = FName("BaseColor"));
+
+	/** Switch catalog tab (RAL vs NCS) */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void SetCatalogType(EColorCatalogType NewCatalogType);
+
+	/** Set active shade category orb */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void SetActiveCategory(EColorShadeCategory NewCategory);
+
+	/** Refresh grid items */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void RefreshGrid();
+
+	UPROPERTY(BlueprintAssignable, Category = "Color Catalog Controller")
+	FOnColorCatalogClosedSignature OnCatalogClosed;
+
+protected:
+
+	// --- BIND WIDGET COMPONENTS ---
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UTileView* TileView_Swatches;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UEditableTextBox* EditableText_Search;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UButton* Button_RAL;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UButton* Button_NCS;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UTextBlock* Text_ActiveColor;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UButton* Button_Back;
+
+	// Category Orb Buttons (Optional Binds)
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryAll;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryRed;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryOrange;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryYellow;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryGreen;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryBlue;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryViolet;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryGrey;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryWhite;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryBrown;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryBeige;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryBlack;
+	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryNeutral;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
+	TSubclassOf<UColorCatalogItemObject> ItemObjectClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
+	FName ColorParameterName = FName("BaseColor");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
+	UMaterialInterface* OverrideMaterial = nullptr;
+
+private:
+	UPROPERTY()
+	UUserWidget* ParentCallingWidget = nullptr;
+
+	UPROPERTY()
+	AActor* TargetActor = nullptr;
+
+	UPROPERTY()
+	UPrimitiveComponent* TargetComponent = nullptr;
+
+	UPROPERTY()
+	TArray<UPrimitiveComponent*> TargetComponents;
+
+	EColorCatalogType CurrentCatalogType = EColorCatalogType::RAL;
+	EColorShadeCategory CurrentCategory = EColorShadeCategory::All;
+	FString CurrentSearchQuery = TEXT("");
+
+	FColorCatalogItem ActiveSelectedColorItem;
+	bool bHasActiveSelection = false;
+
+	UFUNCTION() void OnSearchTextChanged(const FText& NewText);
+	UFUNCTION() void OnRALButtonClicked();
+	UFUNCTION() void OnNCSButtonClicked();
+	UFUNCTION() void OnBackButtonClicked();
+	UFUNCTION() void OnTileViewEntryClicked(UObject* Item);
+
+	// Category Click Handlers
+	UFUNCTION() void OnCatAllClicked() { SetActiveCategory(EColorShadeCategory::All); }
+	UFUNCTION() void OnCatRedClicked() { SetActiveCategory(EColorShadeCategory::Red); }
+	UFUNCTION() void OnCatOrangeClicked() { SetActiveCategory(EColorShadeCategory::Orange); }
+	UFUNCTION() void OnCatYellowClicked() { SetActiveCategory(EColorShadeCategory::Yellow); }
+	UFUNCTION() void OnCatGreenClicked() { SetActiveCategory(EColorShadeCategory::Green); }
+	UFUNCTION() void OnCatBlueClicked() { SetActiveCategory(EColorShadeCategory::Blue); }
+	UFUNCTION() void OnCatVioletClicked() { SetActiveCategory(EColorShadeCategory::Violet); }
+	UFUNCTION() void OnCatGreyClicked() { SetActiveCategory(EColorShadeCategory::Grey); }
+	UFUNCTION() void OnCatWhiteClicked() { SetActiveCategory(EColorShadeCategory::White); }
+	UFUNCTION() void OnCatBrownClicked() { SetActiveCategory(EColorShadeCategory::Brown); }
+	UFUNCTION() void OnCatBeigeClicked() { SetActiveCategory(EColorShadeCategory::Beige); }
+	UFUNCTION() void OnCatBlackClicked() { SetActiveCategory(EColorShadeCategory::Black); }
+	UFUNCTION() void OnCatNeutralClicked() { SetActiveCategory(EColorShadeCategory::Neutral); }
+
+	void BindCategoryButtons();
+	void ApplyColorToTargetMeshes(const FLinearColor& LinearColor);
+};
+

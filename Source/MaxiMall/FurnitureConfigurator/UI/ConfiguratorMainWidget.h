@@ -1,4 +1,4 @@
-// Copyright MaxiMall Project. All Rights Reserved.
+﻿// Copyright MaxiMall Project. All Rights Reserved.
 
 #pragma once
 
@@ -58,13 +58,16 @@ class MAXIMALL_API UConfiguratorMainWidget : public UUserWidget
 protected:
     virtual void NativeConstruct() override;
 
-    // ── STRICT WIDGET BINDINGS ───────────────────────────────────────────────
+    // в”Ђв”Ђ STRICT WIDGET BINDINGS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Btn_Viewmode;
 
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Btn_CloseUI;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> Btn_ColorCatalog;
 
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Txt_BtnURL;
@@ -84,13 +87,16 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> Txt_Warning;
 
-    // ── DELEGATE CALLBACKS ───────────────────────────────────────────────────
+    // в”Ђв”Ђ DELEGATE CALLBACKS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     UFUNCTION()
     void OnViewmodeClicked();
 
     UFUNCTION()
     void OnCloseUIClicked();
+
+    UFUNCTION()
+    void OnColorCatalogClicked();
 
     UFUNCTION()
     void OnURLButtonClicked();
@@ -108,7 +114,7 @@ public:
     void HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
     void HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
 
-    // ── SIZE CONTAINER CONFIGURATION ─────────────────────────────────────────
+    // в”Ђв”Ђ SIZE CONTAINER CONFIGURATION в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
     float SizeButtonWidth = 100.f;
 
@@ -157,7 +163,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
     FSlateFontInfo SizeTextFont;
 
-    // ── COLOR CONTAINER CONFIGURATION ────────────────────────────────────────
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Classes")
+    TSubclassOf<class UColorCatalogWidget> ColorCatalogWidgetClass;
+
+    // в”Ђв”Ђ COLOR CONTAINER CONFIGURATION в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
     float ColorButtonWidth = 100.f;
 
@@ -213,3 +222,4 @@ private:
     // Helper functions
     bool IsComponentMeshValid(AShowroomBooth* Booth, EFurnitureComponentType Component) const;
 };
+

@@ -603,6 +603,37 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         }
     }
     else if (IsValid(MirrorMesh)) { MirrorMesh->SetStaticMesh(nullptr); MirrorMesh->SetVisibility(false); }
+
+    // ── 5. Override Materials from SourceBooth ────────────────────────────
+    // This ensures any custom MIDs (like custom colors from the catalog) are copied into the preview.
+    if (IsValid(SourceBooth))
+    {
+        auto CopyMaterials = [](UStaticMeshComponent* Dst, UStaticMeshComponent* Src)
+        {
+            if (IsValid(Dst) && IsValid(Src))
+            {
+                const int32 NumMats = Src->GetNumMaterials();
+                for (int32 MatIdx = 0; MatIdx < NumMats; ++MatIdx)
+                {
+                    if (UMaterialInterface* Mat = Src->GetMaterial(MatIdx))
+                    {
+                        Dst->SetMaterial(MatIdx, Mat);
+                    }
+                }
+            }
+        };
+
+        CopyMaterials(CabinetMesh.Get(), SourceBooth->MainCabinet.Get());
+        CopyMaterials(ClosetMesh.Get(), SourceBooth->ClosetMesh.Get());
+        CopyMaterials(DoorMeshSlot0.Get(), SourceBooth->DoorMeshSlot0.Get());
+        CopyMaterials(DoorMeshSlot1.Get(), SourceBooth->DoorMeshSlot1.Get());
+        CopyMaterials(ClosetDoorMeshSlot0.Get(), SourceBooth->ClosetDoorMeshSlot0.Get());
+        CopyMaterials(ClosetDoorMeshSlot1.Get(), SourceBooth->ClosetDoorMeshSlot1.Get());
+        CopyMaterials(CountertopMesh.Get(), SourceBooth->CountertopMesh.Get());
+        CopyMaterials(SinkMesh.Get(), SourceBooth->SinkMesh.Get());
+        CopyMaterials(FaucetMesh.Get(), SourceBooth->FaucetMesh.Get());
+        CopyMaterials(MirrorMesh.Get(), SourceBooth->MirrorMesh.Get());
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
