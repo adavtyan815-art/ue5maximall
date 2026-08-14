@@ -58,4 +58,18 @@ private:
 	void GenerateQuad(TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs,
 	                  const FVector& V0, const FVector& V1, const FVector& V2, const FVector& V3,
 	                  const FVector& Normal, float UVScale = 100.f);
+
+	void GenerateQuadWithColor(TArray<FVector>& Vertices, TArray<int32>& Triangles,
+	                           TArray<FVector>& Normals, TArray<FVector2D>& UVs,
+	                           TArray<FColor>& VertexColors,
+	                           const FVector& V0, const FVector& V1,
+	                           const FVector& V2, const FVector& V3,
+	                           const FVector& Normal, const FColor& Color);
+
+	void BuildOpeningCADVisuals(UProceduralMeshComponent* MeshComp,
+	                            const FWallOpening& Opening,
+	                            const FVector2D& OpSL, const FVector2D& OpEL,
+	                            const FVector2D& OpSR, const FVector2D& OpER,
+	                            const FVector2D& Dir2D, const FVector2D& Normal2D,
+	                            float WallHeight);
 };
