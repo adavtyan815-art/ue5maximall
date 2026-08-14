@@ -492,7 +492,55 @@ void ARoomPlannerManager::RebuildRooms()
 		return;
 	}
 
-	// 1. Build Directed Half-Edges
+	// 1. Build adjacency map for 2-core degree pruning
+	TMap<int32, TSet<int32>> NodeNeighbors;
+	for (const auto& Pair : WallSegments)
+	{
+		const FWallSegment& Seg = Pair.Value;
+		if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
+		{
+			int32 u = Seg.StartNodeID;
+			int32 v = Seg.EndNodeID;
+			if (u != v)
+			{
+				NodeNeighbors.FindOrAdd(u).Add(v);
+				NodeNeighbors.FindOrAdd(v).Add(u);
+			}
+		}
+	}
+
+	// 2. Iteratively prune leaves and dead-end spurs (degree < 2)
+	// Open walls, standalone segments, and unclosed U-shapes are eliminated!
+	bool bPruned = true;
+	while (bPruned)
+	{
+		bPruned = false;
+		TArray<int32> ToPrune;
+		for (const auto& Pair : NodeNeighbors)
+		{
+			if (Pair.Value.Num() < 2)
+			{
+				ToPrune.Add(Pair.Key);
+			}
+		}
+		for (int32 NodeID : ToPrune)
+		{
+			for (int32 Neighbor : NodeNeighbors[NodeID])
+			{
+				NodeNeighbors[Neighbor].Remove(NodeID);
+			}
+			NodeNeighbors.Remove(NodeID);
+			bPruned = true;
+		}
+	}
+
+	// If no closed 2-core cycles exist in the graph, abort immediately (zero floors/ceilings for open walls)
+	if (NodeNeighbors.Num() < 3)
+	{
+		return;
+	}
+
+	// 3. Build Directed Half-Edges exclusively on the pruned closed 2-core graph
 	struct FDirectedHalfEdge
 	{
 		int32 FromNode;
@@ -505,12 +553,10 @@ void ARoomPlannerManager::RebuildRooms()
 	for (const auto& Pair : WallSegments)
 	{
 		const FWallSegment& Seg = Pair.Value;
-		if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
+		int32 u = Seg.StartNodeID;
+		int32 v = Seg.EndNodeID;
+		if (NodeNeighbors.Contains(u) && NodeNeighbors.Contains(v) && NodeNeighbors[u].Contains(v))
 		{
-			int32 u = Seg.StartNodeID;
-			int32 v = Seg.EndNodeID;
-			if (u == v) continue;
-
 			FVector2D PosU = Nodes[u].Position;
 			FVector2D PosV = Nodes[v].Position;
 
@@ -527,7 +573,7 @@ void ARoomPlannerManager::RebuildRooms()
 		}
 	}
 
-	// 2. Sort outgoing edges around each node counter-clockwise by polar angle
+	// 4. Sort outgoing edges around each node counter-clockwise by polar angle
 	for (auto& NodeEdgesPair : OutgoingEdges)
 	{
 		NodeEdgesPair.Value.Sort([](const FDirectedHalfEdge& A, const FDirectedHalfEdge& B) {
@@ -535,7 +581,7 @@ void ARoomPlannerManager::RebuildRooms()
 		});
 	}
 
-	// 3. Directed Edge Visited Tracking
+	// 5. Directed Edge Visited Tracking
 	TSet<uint64> VisitedDirectedEdges;
 	auto MakeEdgeKey = [](int32 From, int32 To) -> uint64 {
 		return ((uint64)(uint32)From << 32) | (uint64)(uint32)To;
@@ -543,7 +589,7 @@ void ARoomPlannerManager::RebuildRooms()
 
 	TArray<TArray<FVector2D>> DetectedRoomPolygons;
 
-	// 4. Trace all closed faces using the Left-Turn rule
+	// 6. Trace all closed faces using the Left-Turn rule
 	for (const auto& NodePair : OutgoingEdges)
 	{
 		for (const FDirectedHalfEdge& StartEdge : NodePair.Value)
@@ -609,8 +655,15 @@ void ARoomPlannerManager::RebuildRooms()
 				}
 			}
 
+			// Validate simple cycle (no duplicate vertices in face circuit)
 			if (bValidFace && FaceCycle.Num() >= 3)
 			{
+				TSet<int32> UniqueNodes(FaceCycle);
+				if (UniqueNodes.Num() != FaceCycle.Num())
+				{
+					continue; // Discard non-simple / self-intersecting loops
+				}
+
 				TArray<FVector2D> Poly;
 				for (int32 NodeID : FaceCycle)
 				{
@@ -647,8 +700,19 @@ void ARoomPlannerManager::RebuildRooms()
 						TwiceArea += (P1.X * P2.Y - P2.X * P1.Y);
 					}
 
+					// Bounding box size validation
+					FVector2D MinP = CleanPoly[0];
+					FVector2D MaxP = CleanPoly[0];
+					for (const FVector2D& Pt : CleanPoly)
+					{
+						MinP.X = FMath::Min(MinP.X, Pt.X);
+						MinP.Y = FMath::Min(MinP.Y, Pt.Y);
+						MaxP.X = FMath::Max(MaxP.X, Pt.X);
+						MaxP.Y = FMath::Max(MaxP.Y, Pt.Y);
+					}
+
 					// TwiceArea > 0 means CCW interior room face (TwiceArea < 0 is outer perimeter)
-					if (TwiceArea > 500.0f)
+					if (TwiceArea > 500.0f && (MaxP.X - MinP.X >= 25.f) && (MaxP.Y - MinP.Y >= 25.f))
 					{
 						DetectedRoomPolygons.Add(CleanPoly);
 					}
