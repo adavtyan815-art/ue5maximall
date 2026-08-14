@@ -282,8 +282,41 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 			FVector(OpEL.X, OpEL.Y, LintelZ), FVector(OpER.X, OpER.Y, LintelZ), EndNormalVector);
 
 		CurrentDist = OpenEnd;
+	}
 
-		// Generate 3D red translucent selection box for this opening
+	// Generate 3D red translucent selection boxes with guaranteed 1-to-1 index match to WallData.Openings
+	UMaterialInterface* OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
+	if (!OpeningMat)
+	{
+		OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
+	}
+
+	for (int32 OpIdx = 0; OpIdx < WallData.Openings.Num(); ++OpIdx)
+	{
+		const FWallOpening& Op = WallData.Openings[OpIdx];
+		float H_OpenStart = FMath::Clamp(Op.DistanceFromStart - Op.Width * 0.5f, 0.f, TotalLength);
+		float H_OpenEnd = FMath::Clamp(Op.DistanceFromStart + Op.Width * 0.5f, 0.f, TotalLength);
+		float H_AlphaStart = H_OpenStart / TotalLength;
+		float H_AlphaEnd = H_OpenEnd / TotalLength;
+
+		FVector2D H_SL = FMath::Lerp(SL2D, EL2D, H_AlphaStart);
+		FVector2D H_EL = FMath::Lerp(SL2D, EL2D, H_AlphaEnd);
+		FVector2D H_SR = FMath::Lerp(SR2D, ER2D, H_AlphaStart);
+		FVector2D H_ER = FMath::Lerp(SR2D, ER2D, H_AlphaEnd);
+
+		float H_SillZ = FMath::Max(0.f, Op.SillHeight - 2.0f);
+		float H_LintelZ = Op.SillHeight + Op.Height + 2.0f;
+
+		FVector2D OutLeft = FVector2D(LeftNormalVector.X, LeftNormalVector.Y) * 2.0f;
+		FVector2D OutRight = FVector2D(RightNormalVector.X, RightNormalVector.Y) * 2.0f;
+		FVector2D OutStart = FVector2D(StartNormalVector.X, StartNormalVector.Y) * 2.0f;
+		FVector2D OutEnd = FVector2D(EndNormalVector.X, EndNormalVector.Y) * 2.0f;
+
+		FVector2D Box_SL = H_SL + OutLeft + OutStart;
+		FVector2D Box_EL = H_EL + OutLeft + OutEnd;
+		FVector2D Box_SR = H_SR + OutRight + OutStart;
+		FVector2D Box_ER = H_ER + OutRight + OutEnd;
+
 		UProceduralMeshComponent* HighlightMesh = NewObject<UProceduralMeshComponent>(this);
 		HighlightMesh->CreationMethod = EComponentCreationMethod::Instance;
 		HighlightMesh->RegisterComponent();
@@ -300,51 +333,32 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		TArray<FVector> HNorms;
 		TArray<FVector2D> HUVs;
 
-		FVector2D OutLeft = FVector2D(LeftNormalVector.X, LeftNormalVector.Y) * 2.0f;
-		FVector2D OutRight = FVector2D(RightNormalVector.X, RightNormalVector.Y) * 2.0f;
-		FVector2D OutStart = FVector2D(StartNormalVector.X, StartNormalVector.Y) * 2.0f;
-		FVector2D OutEnd = FVector2D(EndNormalVector.X, EndNormalVector.Y) * 2.0f;
-
-		FVector2D H_OpSL = OpSL + OutLeft + OutStart;
-		FVector2D H_OpEL = OpEL + OutLeft + OutEnd;
-		FVector2D H_OpSR = OpSR + OutRight + OutStart;
-		FVector2D H_OpER = OpER + OutRight + OutEnd;
-		
-		float H_SillZ = SillZ - 2.0f;
-		float H_LintelZ = LintelZ + 2.0f;
-
 		// Front Face
 		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(H_OpSL.X, H_OpSL.Y, H_SillZ), FVector(H_OpEL.X, H_OpEL.Y, H_SillZ),
-			FVector(H_OpEL.X, H_OpEL.Y, H_LintelZ), FVector(H_OpSL.X, H_OpSL.Y, H_LintelZ), LeftNormalVector);
+			FVector(Box_SL.X, Box_SL.Y, H_SillZ), FVector(Box_EL.X, Box_EL.Y, H_SillZ),
+			FVector(Box_EL.X, Box_EL.Y, H_LintelZ), FVector(Box_SL.X, Box_SL.Y, H_LintelZ), LeftNormalVector);
 		// Back Face
 		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(H_OpER.X, H_OpER.Y, H_SillZ), FVector(H_OpSR.X, H_OpSR.Y, H_SillZ),
-			FVector(H_OpSR.X, H_OpSR.Y, H_LintelZ), FVector(H_OpER.X, H_OpER.Y, H_LintelZ), RightNormalVector);
+			FVector(Box_ER.X, Box_ER.Y, H_SillZ), FVector(Box_SR.X, Box_SR.Y, H_SillZ),
+			FVector(Box_SR.X, Box_SR.Y, H_LintelZ), FVector(Box_ER.X, Box_ER.Y, H_LintelZ), RightNormalVector);
 		// Left Face (Start Jamb)
 		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(H_OpSR.X, H_OpSR.Y, H_SillZ), FVector(H_OpSL.X, H_OpSL.Y, H_SillZ),
-			FVector(H_OpSL.X, H_OpSL.Y, H_LintelZ), FVector(H_OpSR.X, H_OpSR.Y, H_LintelZ), StartNormalVector);
+			FVector(Box_SR.X, Box_SR.Y, H_SillZ), FVector(Box_SL.X, Box_SL.Y, H_SillZ),
+			FVector(Box_SL.X, Box_SL.Y, H_LintelZ), FVector(Box_SR.X, Box_SR.Y, H_LintelZ), StartNormalVector);
 		// Right Face (End Jamb)
 		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(H_OpEL.X, H_OpEL.Y, H_SillZ), FVector(H_OpER.X, H_OpER.Y, H_SillZ),
-			FVector(H_OpER.X, H_OpER.Y, H_LintelZ), FVector(H_OpEL.X, H_OpEL.Y, H_LintelZ), EndNormalVector);
+			FVector(Box_EL.X, Box_EL.Y, H_SillZ), FVector(Box_ER.X, Box_ER.Y, H_SillZ),
+			FVector(Box_ER.X, Box_ER.Y, H_LintelZ), FVector(Box_EL.X, Box_EL.Y, H_LintelZ), EndNormalVector);
 		// Top Face
 		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(H_OpSL.X, H_OpSL.Y, H_LintelZ), FVector(H_OpEL.X, H_OpEL.Y, H_LintelZ),
-			FVector(H_OpER.X, H_OpER.Y, H_LintelZ), FVector(H_OpSR.X, H_OpSR.Y, H_LintelZ), UpVector);
+			FVector(Box_SL.X, Box_SL.Y, H_LintelZ), FVector(Box_EL.X, Box_EL.Y, H_LintelZ),
+			FVector(Box_ER.X, Box_ER.Y, H_LintelZ), FVector(Box_SR.X, Box_SR.Y, H_LintelZ), UpVector);
 		// Bottom Face
 		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(H_OpEL.X, H_OpEL.Y, H_SillZ), FVector(H_OpSL.X, H_OpSL.Y, H_SillZ),
-			FVector(H_OpSR.X, H_OpSR.Y, H_SillZ), FVector(H_OpER.X, H_OpER.Y, H_SillZ), -UpVector);
+			FVector(Box_EL.X, Box_EL.Y, H_SillZ), FVector(Box_SL.X, Box_SL.Y, H_SillZ),
+			FVector(Box_SR.X, Box_SR.Y, H_SillZ), FVector(Box_ER.X, Box_ER.Y, H_SillZ), -UpVector);
 
 		HighlightMesh->CreateMeshSection(0, HVerts, HTris, HNorms, HUVs, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
-		
-		UMaterialInterface* OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
-		if (!OpeningMat)
-		{
-			OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
-		}
 		if (OpeningMat)
 		{
 			HighlightMesh->SetMaterial(0, OpeningMat);

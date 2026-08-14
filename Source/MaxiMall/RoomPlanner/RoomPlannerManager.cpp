@@ -1448,6 +1448,7 @@ void ARoomPlannerManager::ClearWallSelection()
 		if (Pair.Value)
 		{
 			Pair.Value->SetSelectedHighlight(false);
+			Pair.Value->ClearAllOpeningHighlights();
 		}
 	}
 	OnWallSelected.Broadcast(-1, 0.f);
@@ -1582,6 +1583,7 @@ bool ARoomPlannerManager::SetWallLength(int32 SegmentID, float NewLengthMeters)
 		RebuildAllWalls();
 		RebuildRooms();
 		ReplicatedRoomJSON = ExportLayoutToJSON();
+		UpdateSelectionVisuals();
 		OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
 		return true;
 	}
@@ -1665,7 +1667,7 @@ bool ARoomPlannerManager::AddDoorToWall(int32 SegmentID, float WidthMeters, floa
 			DistFromStartCm = FindNonOverlappingOpeningDist(Seg, WidthCm, WallLengthCm);
 			if (DistFromStartCm < 0.f)
 			{
-				DistFromStartCm = FMath::Max(10.f, (WallLengthCm - WidthCm) * 0.5f);
+				return false;
 			}
 		}
 
@@ -1708,7 +1710,7 @@ bool ARoomPlannerManager::AddWindowToWall(int32 SegmentID, float WidthMeters, fl
 			DistFromStartCm = FindNonOverlappingOpeningDist(Seg, WidthCm, WallLengthCm);
 			if (DistFromStartCm < 0.f)
 			{
-				DistFromStartCm = FMath::Max(10.f, (WallLengthCm - WidthCm) * 0.5f);
+				return false;
 			}
 		}
 
@@ -1797,7 +1799,39 @@ bool ARoomPlannerManager::UpdateOpeningPosition(int32 SegmentID, int32 OpeningIn
 			float WallLen = FVector2D::Distance(P1, P2);
 			float HalfW = Seg.Openings[OpeningIndex].Width * 0.5f;
 
-			float ClampedDist = FMath::Clamp(NewDistFromStartCm, HalfW + 5.f, WallLen - HalfW - 5.f);
+			float MinDist = HalfW + 5.f;
+			float MaxDist = WallLen - HalfW - 5.f;
+			float CurrentDist = Seg.Openings[OpeningIndex].DistanceFromStart;
+
+			for (int32 i = 0; i < Seg.Openings.Num(); ++i)
+			{
+				if (i == OpeningIndex) continue;
+				const FWallOpening& Other = Seg.Openings[i];
+				float OtherHalfW = Other.Width * 0.5f;
+				if (Other.DistanceFromStart < CurrentDist)
+				{
+					float LeftBound = Other.DistanceFromStart + OtherHalfW + 5.f + HalfW;
+					if (LeftBound > MinDist)
+					{
+						MinDist = LeftBound;
+					}
+				}
+				else
+				{
+					float RightBound = Other.DistanceFromStart - OtherHalfW - 5.f - HalfW;
+					if (RightBound < MaxDist)
+					{
+						MaxDist = RightBound;
+					}
+				}
+			}
+
+			if (MinDist > MaxDist)
+			{
+				MinDist = FMath::Min(MinDist, MaxDist);
+			}
+
+			float ClampedDist = FMath::Clamp(NewDistFromStartCm, MinDist, MaxDist);
 			Seg.Openings[OpeningIndex].DistanceFromStart = ClampedDist;
 
 			if (TObjectPtr<AProceduralWallActor>* ActorPtr = WallActors.Find(SegmentID))
