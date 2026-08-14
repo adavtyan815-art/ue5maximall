@@ -16,23 +16,37 @@ void UColorCatalogSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 static bool LoadColorJsonFile(const FString& RelFileName, FString& OutJsonString)
 {
-	const TArray<FString> SearchPaths = {
-		FPaths::ProjectContentDir() / TEXT("Data/Colors") / RelFileName,
-		FPaths::ProjectContentDir() / TEXT("data/colors") / RelFileName,
-		FPaths::ProjectDir() / TEXT("Content/Data/Colors") / RelFileName,
-		FPaths::ProjectDir() / TEXT("content/data/colors") / RelFileName,
-		FPaths::ProjectDir() / TEXT("Data/Colors") / RelFileName,
-		FPaths::ProjectDir() / TEXT("Source/color") / RelFileName,
-		FPaths::LaunchDir() / TEXT("Content/Data/Colors") / RelFileName,
-		FPaths::LaunchDir() / TEXT("Data/Colors") / RelFileName
-	};
+	FString BaseDir = FPlatformProcess::BaseDir();
+	FString ContentDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir());
+	FString ProjDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 
-	for (const FString& TestPath : SearchPaths)
+	TArray<FString> SearchPaths;
+	SearchPaths.Add(FPaths::Combine(BaseDir, TEXT("../../Content/Data/Colors"), RelFileName));
+	SearchPaths.Add(FPaths::Combine(BaseDir, TEXT("../../../Content/Data/Colors"), RelFileName));
+	SearchPaths.Add(FPaths::Combine(BaseDir, TEXT("../../Content/data/colors"), RelFileName));
+	SearchPaths.Add(FPaths::Combine(ContentDir, TEXT("Data/Colors"), RelFileName));
+	SearchPaths.Add(FPaths::Combine(ContentDir, TEXT("data/colors"), RelFileName));
+	SearchPaths.Add(FPaths::Combine(ProjDir, TEXT("Content/Data/Colors"), RelFileName));
+	SearchPaths.Add(FPaths::Combine(ProjDir, TEXT("Data/Colors"), RelFileName));
+	SearchPaths.Add(FPaths::ProjectContentDir() / TEXT("Data/Colors") / RelFileName);
+	SearchPaths.Add(FPaths::ProjectDir() / TEXT("Content/Data/Colors") / RelFileName);
+	SearchPaths.Add(FString(TEXT("/home/ssm-user/client/awsTutorial/Content/Data/Colors/")) + RelFileName);
+	SearchPaths.Add(FString(TEXT("/home/ubuntu/client/awsTutorial/Content/Data/Colors/")) + RelFileName);
+	SearchPaths.Add(FString(TEXT("/local/game/awsTutorial/Content/Data/Colors/")) + RelFileName);
+
+	for (FString& Path : SearchPaths)
 	{
-		if (FFileHelper::LoadFileToString(OutJsonString, *TestPath) && !OutJsonString.IsEmpty())
+		FPaths::NormalizeFilename(Path);
+		FPaths::CollapseRelativeDirectories(Path);
+
+		if (FFileHelper::LoadFileToString(OutJsonString, *Path) && !OutJsonString.IsEmpty())
 		{
-			UE_LOG(LogTemp, Log, TEXT("[ColorCatalogSubsystem] Successfully loaded color catalog from: %s"), *TestPath);
+			UE_LOG(LogTemp, Warning, TEXT("[ColorCatalogSubsystem] SUCCESS: Loaded color catalog from: %s (Chars: %d)"), *Path, OutJsonString.Len());
 			return true;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("[ColorCatalogSubsystem] Tried path: %s (not found)"), *Path);
 		}
 	}
 
