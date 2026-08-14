@@ -492,99 +492,177 @@ void ARoomPlannerManager::RebuildRooms()
 		return;
 	}
 
-	TMap<int32, TArray<int32>> Adj;
+	// 1. Build Directed Half-Edges
+	struct FDirectedHalfEdge
+	{
+		int32 FromNode;
+		int32 ToNode;
+		float PolarAngle;
+	};
+
+	TMap<int32, TArray<FDirectedHalfEdge>> OutgoingEdges;
+
 	for (const auto& Pair : WallSegments)
 	{
 		const FWallSegment& Seg = Pair.Value;
 		if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
 		{
-			Adj.FindOrAdd(Seg.StartNodeID).AddUnique(Seg.EndNodeID);
-			Adj.FindOrAdd(Seg.EndNodeID).AddUnique(Seg.StartNodeID);
+			int32 u = Seg.StartNodeID;
+			int32 v = Seg.EndNodeID;
+			if (u == v) continue;
+
+			FVector2D PosU = Nodes[u].Position;
+			FVector2D PosV = Nodes[v].Position;
+
+			FVector2D VecUV = PosV - PosU;
+			FVector2D VecVU = PosU - PosV;
+
+			if (VecUV.SizeSquared() < 1.0f) continue;
+
+			float AngleUV = FMath::Atan2(VecUV.Y, VecUV.X);
+			float AngleVU = FMath::Atan2(VecVU.Y, VecVU.X);
+
+			OutgoingEdges.FindOrAdd(u).Add({ u, v, AngleUV });
+			OutgoingEdges.FindOrAdd(v).Add({ v, u, AngleVU });
 		}
 	}
 
-	TArray<int32> Path;
-	TArray<TArray<int32>> FoundCycles;
-	TSet<int32> VisitedGlobal;
-
-	TFunction<void(int32, int32)> DFS = [&](int32 Curr, int32 Parent)
+	// 2. Sort outgoing edges around each node counter-clockwise by polar angle
+	for (auto& NodeEdgesPair : OutgoingEdges)
 	{
-		VisitedGlobal.Add(Curr);
-		Path.Add(Curr);
+		NodeEdgesPair.Value.Sort([](const FDirectedHalfEdge& A, const FDirectedHalfEdge& B) {
+			return A.PolarAngle < B.PolarAngle;
+		});
+	}
 
-		if (Adj.Contains(Curr))
+	// 3. Directed Edge Visited Tracking
+	TSet<uint64> VisitedDirectedEdges;
+	auto MakeEdgeKey = [](int32 From, int32 To) -> uint64 {
+		return ((uint64)(uint32)From << 32) | (uint64)(uint32)To;
+	};
+
+	TArray<TArray<FVector2D>> DetectedRoomPolygons;
+
+	// 4. Trace all closed faces using the Left-Turn rule
+	for (const auto& NodePair : OutgoingEdges)
+	{
+		for (const FDirectedHalfEdge& StartEdge : NodePair.Value)
 		{
-			for (int32 Neighbor : Adj[Curr])
+			uint64 StartKey = MakeEdgeKey(StartEdge.FromNode, StartEdge.ToNode);
+			if (VisitedDirectedEdges.Contains(StartKey))
 			{
-				if (Neighbor == Parent) continue;
+				continue;
+			}
 
-				int32 CycleStartIdx = Path.IndexOfByKey(Neighbor);
-				if (CycleStartIdx != INDEX_NONE)
+			TArray<int32> FaceCycle;
+			int32 CurrU = StartEdge.FromNode;
+			int32 CurrV = StartEdge.ToNode;
+			bool bValidFace = false;
+
+			int32 MaxSteps = WallSegments.Num() * 4 + 16;
+			int32 StepCount = 0;
+
+			while (StepCount++ < MaxSteps)
+			{
+				uint64 CurrKey = MakeEdgeKey(CurrU, CurrV);
+				if (VisitedDirectedEdges.Contains(CurrKey))
 				{
-					TArray<int32> Cycle;
-					for (int32 k = CycleStartIdx; k < Path.Num(); ++k)
+					break;
+				}
+				VisitedDirectedEdges.Add(CurrKey);
+				FaceCycle.Add(CurrU);
+
+				if (!OutgoingEdges.Contains(CurrV))
+				{
+					break;
+				}
+
+				const TArray<FDirectedHalfEdge>& OutFromV = OutgoingEdges[CurrV];
+				int32 NumOut = OutFromV.Num();
+				if (NumOut == 0) break;
+
+				int32 IncomingIdx = INDEX_NONE;
+				for (int32 i = 0; i < NumOut; ++i)
+				{
+					if (OutFromV[i].ToNode == CurrU)
 					{
-						Cycle.Add(Path[k]);
-					}
-					if (Cycle.Num() >= 3)
-					{
-						FoundCycles.Add(Cycle);
+						IncomingIdx = i;
+						break;
 					}
 				}
-				else if (!VisitedGlobal.Contains(Neighbor))
+
+				if (IncomingIdx == INDEX_NONE)
 				{
-					DFS(Neighbor, Curr);
+					break;
+				}
+
+				int32 NextIdx = (IncomingIdx + 1) % NumOut;
+				const FDirectedHalfEdge& NextEdge = OutFromV[NextIdx];
+
+				CurrU = NextEdge.FromNode;
+				CurrV = NextEdge.ToNode;
+
+				if (CurrU == StartEdge.FromNode && CurrV == StartEdge.ToNode)
+				{
+					bValidFace = true;
+					break;
+				}
+			}
+
+			if (bValidFace && FaceCycle.Num() >= 3)
+			{
+				TArray<FVector2D> Poly;
+				for (int32 NodeID : FaceCycle)
+				{
+					if (Nodes.Contains(NodeID))
+					{
+						Poly.Add(Nodes[NodeID].Position);
+					}
+				}
+
+				// Clean consecutive duplicate vertices
+				TArray<FVector2D> CleanPoly;
+				for (int32 i = 0; i < Poly.Num(); ++i)
+				{
+					const FVector2D& P = Poly[i];
+					if (CleanPoly.Num() == 0 || FVector2D::DistSquared(P, CleanPoly.Last()) > 1.0f)
+					{
+						CleanPoly.Add(P);
+					}
+				}
+				if (CleanPoly.Num() >= 3 && FVector2D::DistSquared(CleanPoly[0], CleanPoly.Last()) < 1.0f)
+				{
+					CleanPoly.Pop();
+				}
+
+				if (CleanPoly.Num() >= 3)
+				{
+					// Shoelace Formula for signed area
+					float TwiceArea = 0.f;
+					int32 N = CleanPoly.Num();
+					for (int32 i = 0; i < N; ++i)
+					{
+						const FVector2D& P1 = CleanPoly[i];
+						const FVector2D& P2 = CleanPoly[(i + 1) % N];
+						TwiceArea += (P1.X * P2.Y - P2.X * P1.Y);
+					}
+
+					// TwiceArea > 0 means CCW interior room face (TwiceArea < 0 is outer perimeter)
+					if (TwiceArea > 500.0f)
+					{
+						DetectedRoomPolygons.Add(CleanPoly);
+					}
 				}
 			}
 		}
-		Path.Pop();
-	};
-
-	for (const auto& Pair : Nodes)
-	{
-		if (!VisitedGlobal.Contains(Pair.Key))
-		{
-			DFS(Pair.Key, -1);
-		}
 	}
 
-	if (FoundCycles.Num() == 0)
+	if (DetectedRoomPolygons.Num() == 0)
 	{
 		return;
 	}
 
-	const TArray<int32>& PrimaryCycle = FoundCycles[0];
-	FRoomData Room;
-	Room.RoomID = 1;
-	for (int32 NID : PrimaryCycle)
-	{
-		if (Nodes.Contains(NID))
-		{
-			Room.FloorPolygon.Add(Nodes[NID].Position);
-		}
-	}
-
-	int32 VertCount = Room.FloorPolygon.Num();
-	if (VertCount < 3) return;
-
-	float TwiceArea = 0.f;
-	for (int32 i = 0; i < VertCount; ++i)
-	{
-		const FVector2D& P1 = Room.FloorPolygon[i];
-		const FVector2D& P2 = Room.FloorPolygon[(i + 1) % VertCount];
-		TwiceArea += (P1.X * P2.Y - P2.X * P1.Y);
-	}
-	
-	// Ensure counter-clockwise winding
-	if (TwiceArea < 0.f)
-	{
-		Algo::Reverse(Room.FloorPolygon);
-		TwiceArea = -TwiceArea;
-	}
-
-	Room.AreaM2 = TwiceArea * 0.5f / 10000.f;
-	Rooms.Add(Room.RoomID, Room);
-
+	// 5. Materials Setup
 	UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
 	if (!BaseMat)
 	{
@@ -612,10 +690,6 @@ void ARoomPlannerManager::RebuildRooms()
 		BbMatInst->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(0.4f, 0.3f, 0.2f, 1.0f));
 	}
 
-	// Triangulate Room Polygon (Ear Clipping)
-	TArray<int32> Indices;
-	for (int32 i = 0; i < VertCount; ++i) Indices.Add(i);
-
 	auto IsPointInTriangle = [](const FVector2D& P, const FVector2D& A, const FVector2D& B, const FVector2D& C) {
 		auto Sign = [](const FVector2D& P1, const FVector2D& P2, const FVector2D& P3) {
 			return (P1.X - P3.X) * (P2.Y - P3.Y) - (P2.X - P3.X) * (P1.Y - P3.Y);
@@ -626,203 +700,228 @@ void ARoomPlannerManager::RebuildRooms()
 		return ((b1 == b2) && (b2 == b3));
 	};
 
-	TArray<int32> TriangulatedIndices;
-	int32 IterationCount = 0;
-	while (Indices.Num() > 3 && IterationCount < 1000)
+	// 6. Generate Procedural Meshes for every detected room
+	for (int32 RoomIdx = 0; RoomIdx < DetectedRoomPolygons.Num(); ++RoomIdx)
 	{
-		IterationCount++;
-		bool bEarFound = false;
-		for (int32 i = 0; i < Indices.Num(); ++i)
+		const TArray<FVector2D>& FloorPolygon = DetectedRoomPolygons[RoomIdx];
+		int32 VertCount = FloorPolygon.Num();
+		if (VertCount < 3) continue;
+
+		// Calculate room area
+		float TwiceArea = 0.f;
+		for (int32 i = 0; i < VertCount; ++i)
 		{
-			int32 PrevIdx = (i == 0) ? Indices.Num() - 1 : i - 1;
-			int32 NextIdx = (i == Indices.Num() - 1) ? 0 : i + 1;
+			const FVector2D& P1 = FloorPolygon[i];
+			const FVector2D& P2 = FloorPolygon[(i + 1) % VertCount];
+			TwiceArea += (P1.X * P2.Y - P2.X * P1.Y);
+		}
 
-			int32 V0 = Indices[PrevIdx];
-			int32 V1 = Indices[i];
-			int32 V2 = Indices[NextIdx];
+		FRoomData Room;
+		Room.RoomID = RoomIdx + 1;
+		Room.FloorPolygon = FloorPolygon;
+		Room.AreaM2 = TwiceArea * 0.5f / 10000.f;
+		Rooms.Add(Room.RoomID, Room);
 
-			const FVector2D& P0 = Room.FloorPolygon[V0];
-			const FVector2D& P1 = Room.FloorPolygon[V1];
-			const FVector2D& P2 = Room.FloorPolygon[V2];
+		// Ear Clipping Triangulation
+		TArray<int32> Indices;
+		for (int32 i = 0; i < VertCount; ++i) Indices.Add(i);
 
-			// Cross > 0 indicates convex corner (since winding is CCW)
-			float Cross = (P1.X - P0.X) * (P2.Y - P1.Y) - (P1.Y - P0.Y) * (P2.X - P1.X);
-			if (Cross >= -0.01f)
+		TArray<int32> TriangulatedIndices;
+		int32 IterationCount = 0;
+		while (Indices.Num() > 3 && IterationCount < 1000)
+		{
+			IterationCount++;
+			bool bEarFound = false;
+			for (int32 i = 0; i < Indices.Num(); ++i)
 			{
-				bool bValid = true;
-				for (int32 j = 0; j < Indices.Num(); ++j)
+				int32 PrevIdx = (i == 0) ? Indices.Num() - 1 : i - 1;
+				int32 NextIdx = (i == Indices.Num() - 1) ? 0 : i + 1;
+
+				int32 V0 = Indices[PrevIdx];
+				int32 V1 = Indices[i];
+				int32 V2 = Indices[NextIdx];
+
+				const FVector2D& P0 = FloorPolygon[V0];
+				const FVector2D& P1 = FloorPolygon[V1];
+				const FVector2D& P2 = FloorPolygon[V2];
+
+				float Cross = (P1.X - P0.X) * (P2.Y - P1.Y) - (P1.Y - P0.Y) * (P2.X - P1.X);
+				if (Cross >= -0.01f)
 				{
-					if (j == PrevIdx || j == i || j == NextIdx) continue;
-					if (IsPointInTriangle(Room.FloorPolygon[Indices[j]], P0, P1, P2))
+					bool bValid = true;
+					for (int32 j = 0; j < Indices.Num(); ++j)
 					{
-						bValid = false;
+						if (j == PrevIdx || j == i || j == NextIdx) continue;
+						if (IsPointInTriangle(FloorPolygon[Indices[j]], P0, P1, P2))
+						{
+							bValid = false;
+							break;
+						}
+					}
+
+					if (bValid)
+					{
+						TriangulatedIndices.Add(V0);
+						TriangulatedIndices.Add(V1);
+						TriangulatedIndices.Add(V2);
+						Indices.RemoveAt(i);
+						bEarFound = true;
 						break;
 					}
 				}
-
-				if (bValid)
-				{
-					TriangulatedIndices.Add(V0);
-					TriangulatedIndices.Add(V1);
-					TriangulatedIndices.Add(V2);
-					Indices.RemoveAt(i);
-					bEarFound = true;
-					break;
-				}
+			}
+			if (!bEarFound) 
+			{
+				TriangulatedIndices.Add(Indices[0]);
+				TriangulatedIndices.Add(Indices[1]);
+				TriangulatedIndices.Add(Indices[2]);
+				Indices.RemoveAt(1);
 			}
 		}
-		if (!bEarFound) 
+		if (Indices.Num() == 3)
 		{
-			// Fallback to guarantee triangulation never fully aborts
 			TriangulatedIndices.Add(Indices[0]);
 			TriangulatedIndices.Add(Indices[1]);
 			TriangulatedIndices.Add(Indices[2]);
-			Indices.RemoveAt(1);
+		}
+
+		// Reverse for Clockwise front-face rendering in Unreal
+		Algo::Reverse(TriangulatedIndices);
+
+		// 6.1. Generate Floor Mesh Section
+		if (FloorProceduralMesh)
+		{
+			TArray<FVector> Vertices;
+			TArray<int32> Triangles;
+			TArray<FVector> Normals;
+			TArray<FVector2D> UVs;
+			TArray<FColor> FloorColors;
+
+			// Top face (Z=1.f)
+			for (int32 i = 0; i < VertCount; ++i)
+			{
+				Vertices.Add(FVector(FloorPolygon[i].X, FloorPolygon[i].Y, 1.f));
+				Normals.Add(FVector::UpVector);
+				UVs.Add(FloorPolygon[i] / 100.f);
+				FloorColors.Add(FColor(255, 255, 255, 255));
+			}
+			Triangles = TriangulatedIndices;
+
+			// Bottom face (Z=0.f)
+			int32 StartIdx = Vertices.Num();
+			for (int32 i = 0; i < VertCount; ++i)
+			{
+				Vertices.Add(FVector(FloorPolygon[i].X, FloorPolygon[i].Y, 0.f));
+				Normals.Add(-FVector::UpVector);
+				UVs.Add(FloorPolygon[i] / 100.f);
+				FloorColors.Add(FColor(255, 255, 255, 255));
+			}
+			for (int32 i = 0; i < TriangulatedIndices.Num(); i += 3)
+			{
+				Triangles.Add(StartIdx + TriangulatedIndices[i]);
+				Triangles.Add(StartIdx + TriangulatedIndices[i + 2]);
+				Triangles.Add(StartIdx + TriangulatedIndices[i + 1]);
+			}
+
+			// Side faces for 1cm thickness
+			for (int32 i = 0; i < VertCount; ++i)
+			{
+				FVector2D P1 = FloorPolygon[i];
+				FVector2D P2 = FloorPolygon[(i + 1) % VertCount];
+				FVector2D EdgeDir = (P2 - P1).GetSafeNormal();
+				FVector2D EdgeNorm(EdgeDir.Y, -EdgeDir.X);
+				FVector OutNormal(EdgeNorm.X, EdgeNorm.Y, 0.f);
+
+				int32 SIdx = Vertices.Num();
+				Vertices.Add(FVector(P2.X, P2.Y, 0.f));
+				Vertices.Add(FVector(P1.X, P1.Y, 0.f));
+				Vertices.Add(FVector(P1.X, P1.Y, 1.f));
+				Vertices.Add(FVector(P2.X, P2.Y, 1.f));
+				
+				for(int k=0; k<4; k++) { Normals.Add(OutNormal); UVs.Add(FVector2D::ZeroVector); FloorColors.Add(FColor(255, 255, 255, 255)); }
+				
+				Triangles.Add(SIdx + 0); Triangles.Add(SIdx + 1); Triangles.Add(SIdx + 2);
+				Triangles.Add(SIdx + 0); Triangles.Add(SIdx + 2); Triangles.Add(SIdx + 3);
+			}
+
+			FloorProceduralMesh->CreateMeshSection(RoomIdx, Vertices, Triangles, Normals, UVs, FloorColors, TArray<FProcMeshTangent>(), true);
+			FloorProceduralMesh->SetMaterial(RoomIdx, FloorMatInst ? FloorMatInst : BaseMat);
+		}
+
+		// 6.2. Generate Ceiling Mesh Section
+		if (CeilingProceduralMesh)
+		{
+			TArray<FVector> CeilVerts;
+			TArray<int32> CeilTris;
+			TArray<FVector> CeilNorms;
+			TArray<FVector2D> CeilUVs;
+			TArray<FColor> CeilColors;
+
+			float CeilZ = 280.f;
+			for (int32 i = 0; i < VertCount; ++i)
+			{
+				CeilVerts.Add(FVector(FloorPolygon[i].X, FloorPolygon[i].Y, CeilZ));
+				CeilNorms.Add(-FVector::UpVector);
+				CeilUVs.Add(FloorPolygon[i] / 100.f);
+				CeilColors.Add(FColor(240, 240, 240, 255));
+			}
+
+			for (int32 i = 0; i < TriangulatedIndices.Num(); i += 3)
+			{
+				CeilTris.Add(TriangulatedIndices[i]);
+				CeilTris.Add(TriangulatedIndices[i + 2]);
+				CeilTris.Add(TriangulatedIndices[i + 1]);
+			}
+
+			CeilingProceduralMesh->CreateMeshSection(RoomIdx, CeilVerts, CeilTris, CeilNorms, CeilUVs, CeilColors, TArray<FProcMeshTangent>(), true);
+			CeilingProceduralMesh->SetMaterial(RoomIdx, CeilMatInst ? CeilMatInst : BaseMat);
+		}
+
+		// 6.3. Generate Baseboard Mesh Section
+		if (BaseboardProceduralMesh)
+		{
+			TArray<FVector> BbVerts;
+			TArray<int32> BbTris;
+			TArray<FVector> BbNorms;
+			TArray<FVector2D> BbUVs;
+			TArray<FColor> BbColors;
+
+			float BbHeight = 10.f;
+			for (int32 i = 0; i < VertCount; ++i)
+			{
+				FVector2D P1 = FloorPolygon[i];
+				FVector2D P2 = FloorPolygon[(i + 1) % VertCount];
+				FVector2D EdgeDir = (P2 - P1).GetSafeNormal();
+				FVector2D EdgeNorm(-EdgeDir.Y, EdgeDir.X);
+				FVector OutNormal(EdgeNorm.X, EdgeNorm.Y, 0.f);
+
+				FVector V0(P1.X, P1.Y, 1.f);
+				FVector V1(P2.X, P2.Y, 1.f);
+				FVector V2(P2.X, P2.Y, 1.f + BbHeight);
+				FVector V3(P1.X, P1.Y, 1.f + BbHeight);
+
+				int32 StartIdx = BbVerts.Num();
+				BbVerts.Add(V0); BbVerts.Add(V1); BbVerts.Add(V2); BbVerts.Add(V3);
+				BbNorms.Add(OutNormal); BbNorms.Add(OutNormal); BbNorms.Add(OutNormal); BbNorms.Add(OutNormal);
+				BbUVs.Add(FVector2D(0.f, 0.f)); BbUVs.Add(FVector2D(1.f, 0.f)); BbUVs.Add(FVector2D(1.f, 1.f)); BbUVs.Add(FVector2D(0.f, 1.f));
+
+				FColor BbColor(100, 75, 50, 255);
+				BbColors.Add(BbColor); BbColors.Add(BbColor); BbColors.Add(BbColor); BbColors.Add(BbColor);
+
+				BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 1); BbTris.Add(StartIdx + 2);
+				BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 2); BbTris.Add(StartIdx + 3);
+				BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 2); BbTris.Add(StartIdx + 1);
+				BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 3); BbTris.Add(StartIdx + 2);
+			}
+
+			BaseboardProceduralMesh->CreateMeshSection(RoomIdx, BbVerts, BbTris, BbNorms, BbUVs, BbColors, TArray<FProcMeshTangent>(), false);
+			BaseboardProceduralMesh->SetMaterial(RoomIdx, BbMatInst ? BbMatInst : BaseMat);
 		}
 	}
-	if (Indices.Num() == 3)
-	{
-		TriangulatedIndices.Add(Indices[0]);
-		TriangulatedIndices.Add(Indices[1]);
-		TriangulatedIndices.Add(Indices[2]);
-	}
 
-	// Reverse to make it Clockwise for Unreal's default front-face culling
-	Algo::Reverse(TriangulatedIndices);
-
-	// 1. Generate Procedural Floor Mesh
-	if (FloorProceduralMesh)
-	{
-		TArray<FVector> Vertices;
-		TArray<int32> Triangles;
-		TArray<FVector> Normals;
-		TArray<FVector2D> UVs;
-		TArray<FColor> FloorColors;
-
-		// Top face (Z=1.f)
-		for (int32 i = 0; i < VertCount; ++i)
-		{
-			Vertices.Add(FVector(Room.FloorPolygon[i].X, Room.FloorPolygon[i].Y, 1.f));
-			Normals.Add(FVector::UpVector);
-			UVs.Add(Room.FloorPolygon[i] / 100.f);
-			FloorColors.Add(FColor(255, 255, 255, 255));
-		}
-		Triangles = TriangulatedIndices;
-
-		// Bottom face (Z=0.f)
-		int32 StartIdx = Vertices.Num();
-		for (int32 i = 0; i < VertCount; ++i)
-		{
-			Vertices.Add(FVector(Room.FloorPolygon[i].X, Room.FloorPolygon[i].Y, 0.f));
-			Normals.Add(-FVector::UpVector);
-			UVs.Add(Room.FloorPolygon[i] / 100.f);
-			FloorColors.Add(FColor(255, 255, 255, 255));
-		}
-		for (int32 i = 0; i < TriangulatedIndices.Num(); i+=3)
-		{
-			Triangles.Add(StartIdx + TriangulatedIndices[i]);
-			Triangles.Add(StartIdx + TriangulatedIndices[i+2]);
-			Triangles.Add(StartIdx + TriangulatedIndices[i+1]);
-		}
-
-		// Side faces for 1cm thickness
-		for (int32 i = 0; i < VertCount; ++i)
-		{
-			FVector2D P1 = Room.FloorPolygon[i];
-			FVector2D P2 = Room.FloorPolygon[(i + 1) % VertCount];
-			FVector2D EdgeDir = (P2 - P1).GetSafeNormal();
-			FVector2D EdgeNorm(EdgeDir.Y, -EdgeDir.X);
-			FVector OutNormal(EdgeNorm.X, EdgeNorm.Y, 0.f);
-
-			int32 SIdx = Vertices.Num();
-			Vertices.Add(FVector(P2.X, P2.Y, 0.f));
-			Vertices.Add(FVector(P1.X, P1.Y, 0.f));
-			Vertices.Add(FVector(P1.X, P1.Y, 1.f));
-			Vertices.Add(FVector(P2.X, P2.Y, 1.f));
-			
-			for(int k=0; k<4; k++) { Normals.Add(OutNormal); UVs.Add(FVector2D::ZeroVector); FloorColors.Add(FColor(255, 255, 255, 255)); }
-			
-			Triangles.Add(SIdx + 0); Triangles.Add(SIdx + 1); Triangles.Add(SIdx + 2);
-			Triangles.Add(SIdx + 0); Triangles.Add(SIdx + 2); Triangles.Add(SIdx + 3);
-		}
-
-		FloorProceduralMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, FloorColors, TArray<FProcMeshTangent>(), true);
-		FloorProceduralMesh->SetMaterial(0, FloorMatInst ? FloorMatInst : BaseMat);
-		FloorProceduralMesh->SetVisibility(true);
-	}
-
-	// 2. Generate Procedural Ceiling Mesh
-	if (CeilingProceduralMesh)
-	{
-		TArray<FVector> CeilVerts;
-		TArray<int32> CeilTris;
-		TArray<FVector> CeilNorms;
-		TArray<FVector2D> CeilUVs;
-		TArray<FColor> CeilColors;
-
-		float CeilZ = 280.f;
-		for (int32 i = 0; i < VertCount; ++i)
-		{
-			CeilVerts.Add(FVector(Room.FloorPolygon[i].X, Room.FloorPolygon[i].Y, CeilZ));
-			CeilNorms.Add(-FVector::UpVector);
-			CeilUVs.Add(Room.FloorPolygon[i] / 100.f);
-			CeilColors.Add(FColor(240, 240, 240, 255));
-		}
-
-		for (int32 i = 0; i < TriangulatedIndices.Num(); i += 3)
-		{
-			CeilTris.Add(TriangulatedIndices[i]);
-			CeilTris.Add(TriangulatedIndices[i + 2]);
-			CeilTris.Add(TriangulatedIndices[i + 1]);
-		}
-
-		CeilingProceduralMesh->CreateMeshSection(0, CeilVerts, CeilTris, CeilNorms, CeilUVs, CeilColors, TArray<FProcMeshTangent>(), true);
-		CeilingProceduralMesh->SetMaterial(0, CeilMatInst ? CeilMatInst : BaseMat);
-		bool bShowCeil = bCeilingVisible && !b2DViewMode;
-		CeilingProceduralMesh->SetVisibility(bShowCeil);
-	}
-
-	// 3. Generate Procedural 3D Baseboards
-	if (BaseboardProceduralMesh)
-	{
-		TArray<FVector> BbVerts;
-		TArray<int32> BbTris;
-		TArray<FVector> BbNorms;
-		TArray<FVector2D> BbUVs;
-		TArray<FColor> BbColors;
-
-		float BbHeight = 10.f;
-		for (int32 i = 0; i < VertCount; ++i)
-		{
-			FVector2D P1 = Room.FloorPolygon[i];
-			FVector2D P2 = Room.FloorPolygon[(i + 1) % VertCount];
-			FVector2D EdgeDir = (P2 - P1).GetSafeNormal();
-			FVector2D EdgeNorm(-EdgeDir.Y, EdgeDir.X);
-			FVector OutNormal(EdgeNorm.X, EdgeNorm.Y, 0.f);
-
-			FVector V0(P1.X, P1.Y, 1.f);
-			FVector V1(P2.X, P2.Y, 1.f);
-			FVector V2(P2.X, P2.Y, 1.f + BbHeight);
-			FVector V3(P1.X, P1.Y, 1.f + BbHeight);
-
-			int32 StartIdx = BbVerts.Num();
-			BbVerts.Add(V0); BbVerts.Add(V1); BbVerts.Add(V2); BbVerts.Add(V3);
-			BbNorms.Add(OutNormal); BbNorms.Add(OutNormal); BbNorms.Add(OutNormal); BbNorms.Add(OutNormal);
-			BbUVs.Add(FVector2D(0.f, 0.f)); BbUVs.Add(FVector2D(1.f, 0.f)); BbUVs.Add(FVector2D(1.f, 1.f)); BbUVs.Add(FVector2D(0.f, 1.f));
-
-			FColor BbColor(100, 75, 50, 255);
-			BbColors.Add(BbColor); BbColors.Add(BbColor); BbColors.Add(BbColor); BbColors.Add(BbColor);
-
-			BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 1); BbTris.Add(StartIdx + 2);
-			BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 2); BbTris.Add(StartIdx + 3);
-			BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 2); BbTris.Add(StartIdx + 1);
-			BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 3); BbTris.Add(StartIdx + 2);
-		}
-
-		BaseboardProceduralMesh->CreateMeshSection(0, BbVerts, BbTris, BbNorms, BbUVs, BbColors, TArray<FProcMeshTangent>(), false);
-		BaseboardProceduralMesh->SetMaterial(0, BbMatInst ? BbMatInst : BaseMat);
-		BaseboardProceduralMesh->SetVisibility(true);
-	}
+	if (FloorProceduralMesh) FloorProceduralMesh->SetVisibility(true);
+	if (CeilingProceduralMesh) CeilingProceduralMesh->SetVisibility(bCeilingVisible && !b2DViewMode);
+	if (BaseboardProceduralMesh) BaseboardProceduralMesh->SetVisibility(true);
 }
 
 
