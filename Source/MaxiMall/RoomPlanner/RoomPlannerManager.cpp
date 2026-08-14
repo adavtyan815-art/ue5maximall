@@ -188,22 +188,170 @@ ARoomPlannerManager* ARoomPlannerManager::GetOrCreateInstance(UWorld* World)
 
 int32 ARoomPlannerManager::AddNode(const FVector2D& Position)
 {
-	// Check for snapping to existing node (50cm tolerance)
-	const float SnapToleranceSq = 2500.f; // 50cm * 50cm
+	return GetOrCreateNodeAtPosition(Position, 25.f, 20.f);
+}
+
+int32 ARoomPlannerManager::GetOrCreateNodeAtPosition(const FVector2D& Position, float NodeSnapRadiusCm, float WallSnapRadiusCm)
+{
+	// 1. Check for snapping to existing node
+	float BestNodeDistSq = NodeSnapRadiusCm * NodeSnapRadiusCm;
+	int32 ClosestNodeID = INDEX_NONE;
 	for (const TPair<int32, FWallNode>& Pair : Nodes)
 	{
-		if (FVector2D::DistSquared(Pair.Value.Position, Position) <= SnapToleranceSq)
+		float DistSq = FVector2D::DistSquared(Pair.Value.Position, Position);
+		if (DistSq <= BestNodeDistSq)
 		{
-			return Pair.Key;
+			BestNodeDistSq = DistSq;
+			ClosestNodeID = Pair.Key;
+		}
+	}
+	if (ClosestNodeID != INDEX_NONE)
+	{
+		return ClosestNodeID;
+	}
+
+	// 2. Check for mid-wall T-junction intersection along existing wall segments
+	float BestWallDist = WallSnapRadiusCm;
+	int32 TargetSegID = INDEX_NONE;
+	FVector2D TargetSplitPoint = Position;
+
+	for (const TPair<int32, FWallSegment>& Pair : WallSegments)
+	{
+		const FWallSegment& Seg = Pair.Value;
+		if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
+		{
+			FVector2D P1 = Nodes[Seg.StartNodeID].Position;
+			FVector2D P2 = Nodes[Seg.EndNodeID].Position;
+			FVector2D SegVec = P2 - P1;
+			float SegLen = SegVec.Size();
+			if (SegLen < 1.0f) continue;
+
+			FVector2D SegDir = SegVec / SegLen;
+			float t = FVector2D::DotProduct(Position - P1, SegDir);
+
+			// Keep at least 20cm away from endpoints to avoid microscopic slivers
+			if (t >= 20.f && t <= (SegLen - 20.f))
+			{
+				FVector2D ProjPoint = P1 + SegDir * t;
+				float DistToCenterline = FVector2D::Distance(Position, ProjPoint);
+				float MaxSnapDist = (Seg.Thickness * 0.5f) + WallSnapRadiusCm;
+
+				if (DistToCenterline <= MaxSnapDist && DistToCenterline < BestWallDist)
+				{
+					BestWallDist = DistToCenterline;
+					TargetSegID = Pair.Key;
+					TargetSplitPoint = ProjPoint;
+				}
+			}
 		}
 	}
 
+	if (TargetSegID != INDEX_NONE)
+	{
+		return SplitWallSegment(TargetSegID, TargetSplitPoint);
+	}
+
+	// 3. Create brand new standalone node
 	int32 NewID = NextNodeID++;
 	FWallNode Node;
 	Node.NodeID = NewID;
 	Node.Position = Position;
 	Nodes.Add(NewID, Node);
 	return NewID;
+}
+
+int32 ARoomPlannerManager::SplitWallSegment(int32 SegmentID, const FVector2D& SplitPos)
+{
+	if (!WallSegments.Contains(SegmentID))
+	{
+		return INDEX_NONE;
+	}
+
+	FWallSegment OldSeg = WallSegments[SegmentID];
+	if (!Nodes.Contains(OldSeg.StartNodeID) || !Nodes.Contains(OldSeg.EndNodeID))
+	{
+		return INDEX_NONE;
+	}
+
+	int32 NodeA = OldSeg.StartNodeID;
+	int32 NodeB = OldSeg.EndNodeID;
+	FVector2D PosA = Nodes[NodeA].Position;
+	float SplitDist = FVector2D::Distance(PosA, SplitPos);
+
+	// 1. Create the Junction Node J
+	int32 JunctionNodeID = NextNodeID++;
+	FWallNode JNode;
+	JNode.NodeID = JunctionNodeID;
+	JNode.Position = SplitPos;
+	Nodes.Add(JunctionNodeID, JNode);
+
+	// 2. Separate existing openings between Segment 1 (A -> J) and Segment 2 (J -> B)
+	TArray<FWallOpening> Openings1;
+	TArray<FWallOpening> Openings2;
+
+	for (const FWallOpening& Op : OldSeg.Openings)
+	{
+		if (Op.DistanceFromStart < SplitDist)
+		{
+			Openings1.Add(Op);
+		}
+		else
+		{
+			FWallOpening ShiftedOp = Op;
+			ShiftedOp.DistanceFromStart = FMath::Max(10.f, Op.DistanceFromStart - SplitDist);
+			Openings2.Add(ShiftedOp);
+		}
+	}
+
+	// 3. Modify existing segment to become (NodeA -> JunctionNodeID)
+	FWallSegment& Seg1 = WallSegments[SegmentID];
+	Seg1.EndNodeID = JunctionNodeID;
+	Seg1.Openings = Openings1;
+
+	// Update node connectivity
+	Nodes[NodeB].ConnectedSegmentIDs.Remove(SegmentID);
+	Nodes[JunctionNodeID].ConnectedSegmentIDs.AddUnique(SegmentID);
+
+	// Update actor for Seg1
+	if (TObjectPtr<AProceduralWallActor>* Actor1Ptr = WallActors.Find(SegmentID))
+	{
+		if (*Actor1Ptr)
+		{
+			(*Actor1Ptr)->WallData = Seg1;
+		}
+	}
+
+	// 4. Create new segment (JunctionNodeID -> NodeB)
+	int32 Seg2ID = NextSegmentID++;
+	FWallSegment Seg2;
+	Seg2.SegmentID = Seg2ID;
+	Seg2.StartNodeID = JunctionNodeID;
+	Seg2.EndNodeID = NodeB;
+	Seg2.Thickness = OldSeg.Thickness;
+	Seg2.Height = OldSeg.Height;
+	Seg2.Openings = Openings2;
+
+	WallSegments.Add(Seg2ID, Seg2);
+	Nodes[JunctionNodeID].ConnectedSegmentIDs.AddUnique(Seg2ID);
+	Nodes[NodeB].ConnectedSegmentIDs.AddUnique(Seg2ID);
+
+	// Spawn actor for Seg2
+	if (GetWorld())
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		AProceduralWallActor* WallActor2 = GetWorld()->SpawnActor<AProceduralWallActor>(AProceduralWallActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
+		if (WallActor2)
+		{
+			WallActor2->WallData = Seg2;
+			WallActors.Add(Seg2ID, WallActor2);
+		}
+	}
+
+	RebuildAllWalls();
+	RebuildRooms();
+
+	return JunctionNodeID;
 }
 
 int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thickness, float Height)
@@ -1348,11 +1496,33 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 	}
 }
 
-bool ARoomPlannerManager::FindWallEndpointSnap2D(const FVector2D& Point2D, float SnapRadiusCm, FVector2D& OutSnapPos) const
+bool ARoomPlannerManager::FindWallSnapPoint2D(const FVector2D& Point2D, float SnapRadiusCm, FVector2D& OutSnapPos, int32& OutSnappedSegmentID, bool& bOutIsEndpoint) const
 {
+	bOutIsEndpoint = false;
+	OutSnappedSegmentID = INDEX_NONE;
 	float BestDistSq = SnapRadiusCm * SnapRadiusCm;
 	bool bFoundSnap = false;
 
+	// 1. First, check if Point2D is near ANY corner endpoint node (within SnapRadiusCm)
+	for (const auto& Pair : Nodes)
+	{
+		float DistSq = FVector2D::DistSquared(Point2D, Pair.Value.Position);
+		if (DistSq <= BestDistSq)
+		{
+			BestDistSq = DistSq;
+			OutSnapPos = Pair.Value.Position;
+			bOutIsEndpoint = true;
+			bFoundSnap = true;
+		}
+	}
+
+	if (bFoundSnap)
+	{
+		return true;
+	}
+
+	// 2. Check if Point2D is hovering along any wall centerline
+	float BestWallDist = SnapRadiusCm + 15.f;
 	for (const auto& Pair : WallSegments)
 	{
 		const FWallSegment& Seg = Pair.Value;
@@ -1360,36 +1530,52 @@ bool ARoomPlannerManager::FindWallEndpointSnap2D(const FVector2D& Point2D, float
 		{
 			FVector2D P1 = Nodes[Seg.StartNodeID].Position;
 			FVector2D P2 = Nodes[Seg.EndNodeID].Position;
-			FVector2D Dir = (P2 - P1);
-			float TotalLen = Dir.Size();
-			if (TotalLen < 0.1f) continue;
-			Dir /= TotalLen;
-			FVector2D Norm(-Dir.Y, Dir.X);
-			float H = Seg.Thickness * 0.5f;
+			FVector2D SegVec = P2 - P1;
+			float SegLen = SegVec.Size();
+			if (SegLen < 1.0f) continue;
 
-			// 6 Endpoint & Corner Vertices (Start/End Center & 4 Outer Cap Corners)
-			FVector2D Vertices[6];
-			Vertices[0] = P1 + Norm * H; // Start Left Corner
-			Vertices[1] = P1 - Norm * H; // Start Right Corner
-			Vertices[2] = P2 + Norm * H; // End Left Corner
-			Vertices[3] = P2 - Norm * H; // End Right Corner
-			Vertices[4] = P1;            // Center Start Node
-			Vertices[5] = P2;            // Center End Node
+			FVector2D SegDir = SegVec / SegLen;
+			float t = FVector2D::DotProduct(Point2D - P1, SegDir);
 
-			for (int32 i = 0; i < 6; ++i)
+			float ClampedT = FMath::Clamp(t, 0.f, SegLen);
+			FVector2D ProjPoint = P1 + SegDir * ClampedT;
+			float DistToCenterline = FVector2D::Distance(Point2D, ProjPoint);
+
+			float HoverTolerance = (Seg.Thickness * 0.5f) + SnapRadiusCm;
+			if (DistToCenterline <= HoverTolerance && DistToCenterline < BestWallDist)
 			{
-				float DistSq = FVector2D::DistSquared(Point2D, Vertices[i]);
-				if (DistSq <= BestDistSq)
+				BestWallDist = DistToCenterline;
+				OutSnappedSegmentID = Pair.Key;
+
+				// Magnetic snapping threshold to corner endpoints (25cm)
+				if (ClampedT <= 25.f)
 				{
-					BestDistSq = DistSq;
-					OutSnapPos = Vertices[i];
-					bFoundSnap = true;
+					OutSnapPos = P1;
+					bOutIsEndpoint = true;
 				}
+				else if (ClampedT >= (SegLen - 25.f))
+				{
+					OutSnapPos = P2;
+					bOutIsEndpoint = true;
+				}
+				else
+				{
+					OutSnapPos = ProjPoint; // Always on Centerline!
+					bOutIsEndpoint = false;
+				}
+				bFoundSnap = true;
 			}
 		}
 	}
 
 	return bFoundSnap;
+}
+
+bool ARoomPlannerManager::FindWallEndpointSnap2D(const FVector2D& Point2D, float SnapRadiusCm, FVector2D& OutSnapPos) const
+{
+	int32 DummySegID = INDEX_NONE;
+	bool bDummyIsEndpoint = false;
+	return FindWallSnapPoint2D(Point2D, SnapRadiusCm, OutSnapPos, DummySegID, bDummyIsEndpoint);
 }
 
 void ARoomPlannerManager::CheckHoverSnapHint(const FVector& WorldPos)
@@ -1463,8 +1649,8 @@ void ARoomPlannerManager::UpdateInteractiveWallDraw(const FVector& WorldPos)
 	FVector2D SnapP2;
 	bool bSnappedToOtherWall = false;
 
-	// Only attempt to snap P2 to other walls if P2 has moved far enough from P1 (> 50cm)
-	if (CurrentLengthCm > 50.f)
+	// Only attempt to snap P2 to other walls if P2 has moved far enough from P1 (> 30cm)
+	if (CurrentLengthCm > 30.f)
 	{
 		bSnappedToOtherWall = FindWallEndpointSnap2D(P2, 30.f, SnapP2);
 		// Don't snap P2 back to P1's position
@@ -1543,9 +1729,12 @@ void ARoomPlannerManager::CommitInteractiveWallDraw()
 	{
 		if (HasAuthority())
 		{
-			int32 N1 = AddNode(P1);
-			int32 N2 = AddNode(P2);
-			AddWall(N1, N2, 20.f, 280.f);
+			int32 N1 = GetOrCreateNodeAtPosition(P1);
+			int32 N2 = GetOrCreateNodeAtPosition(P2);
+			if (N1 != INDEX_NONE && N2 != INDEX_NONE && N1 != N2)
+			{
+				AddWall(N1, N2, 20.f, 280.f);
+			}
 			ReplicatedRoomJSON = ExportLayoutToJSON();
 			OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
 		}

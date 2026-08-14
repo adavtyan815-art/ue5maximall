@@ -139,7 +139,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void CheckHoverSnapHint(const FVector& WorldPos);
 
+	bool FindWallSnapPoint2D(const FVector2D& Point2D, float SnapRadiusCm, FVector2D& OutSnapPos, int32& OutSnappedSegmentID, bool& bOutIsEndpoint) const;
 	bool FindWallEndpointSnap2D(const FVector2D& Point2D, float SnapRadiusCm, FVector2D& OutSnapPos) const;
+	int32 GetOrCreateNodeAtPosition(const FVector2D& Position, float NodeSnapRadiusCm = 25.f, float WallSnapRadiusCm = 20.f);
+	int32 SplitWallSegment(int32 SegmentID, const FVector2D& SplitPos);
 
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
 	FVector CurrentHoverSnapWorldPos;
