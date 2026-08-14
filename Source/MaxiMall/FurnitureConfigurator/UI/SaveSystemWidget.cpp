@@ -3,7 +3,7 @@
 #include "FurnitureConfigurator/UI/SaveSystemWidget.h"
 #include "FurnitureConfigurator/UI/SaveHistoryItemWidget.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
-#include "FurnitureConfigurator/Preview/FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
+#include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
 #include "Components/Button.h"
 #include "Components/EditableTextBox.h"
 #include "Components/ScrollBox.h"
