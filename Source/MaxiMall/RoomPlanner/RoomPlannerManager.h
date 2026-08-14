@@ -1,4 +1,4 @@
-// Copyright 2026 MaxiMall. All Rights Reserved.
+﻿// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #pragma once
 
@@ -187,10 +187,22 @@ public:
 	bool DeleteSelectedOpening();
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool DeleteOpening(int32 SegmentID, int32 OpeningIndex);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool AddDoorToSelectedWall(float WidthMeters = 0.9f, float HeightMeters = 2.1f);
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool AddWindowToSelectedWall(float WidthMeters = 1.2f, float HeightMeters = 1.2f, float SillHeightMeters = 0.9f);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool AddDoorToWall(int32 SegmentID, float WidthMeters = 0.9f, float HeightMeters = 2.1f, float DistFromStartCm = -1.f);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool AddWindowToWall(int32 SegmentID, float WidthMeters = 1.2f, float HeightMeters = 1.2f, float SillHeightMeters = 0.9f, float DistFromStartCm = -1.f);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	void BuildPreset4x4mRoom();
 
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
 	int32 SelectedOpeningIndex = -1;
@@ -200,6 +212,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool GetOpeningDetails(int32 SegmentID, int32 OpeningIndex, float& OutWidthMeters, float& OutHeightMeters, float& OutSillHeightMeters) const;
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool GetOpeningDistance(int32 SegmentID, int32 OpeningIndex, float& OutDistFromStartCm) const;
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm);
@@ -217,42 +232,6 @@ public:
 
 	UFUNCTION()
 	void OnRep_ReplicatedRoomJSON();
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_CommitWall(FVector2D StartPos, FVector2D EndPos, float Thickness = 20.f, float Height = 280.f);
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_ClearLayout();
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_BuildPreset4x4mRoom();
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_SetWallLength(int32 SegmentID, float NewLengthMeters);
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_RemoveWall(int32 SegmentID);
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_DeleteSelectedWall(int32 SegmentID);
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_DeleteSelectedOpening(int32 SegmentID, int32 OpeningIndex);
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_AddDoorToSelectedWall(int32 SegmentID, float WidthMeters, float HeightMeters);
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_AddWindowToSelectedWall(int32 SegmentID, float WidthMeters, float HeightMeters, float SillHeightMeters);
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_UpdateOpeningDimensions(int32 SegmentID, int32 OpeningIndex, float WidthMeters, float HeightMeters, float SillHeightMeters);
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm);
-
-	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_AddOpeningToWall(int32 SegmentID, EOpeningType Type, float DistFromStart, float Width = 90.f, float Height = 210.f, float SillHeight = 0.f);
 
 private:
 	int32 NextNodeID = 1;

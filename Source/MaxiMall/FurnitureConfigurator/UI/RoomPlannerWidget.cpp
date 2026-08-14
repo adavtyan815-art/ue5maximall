@@ -39,6 +39,7 @@ void URoomPlannerWidget::NativeConstruct()
 		{
 			PlannerManager->OnInteractiveWallDragProgress.AddUniqueDynamic(this, &URoomPlannerWidget::HandleWallDragProgress);
 			PlannerManager->OnWallSelected.AddUniqueDynamic(this, &URoomPlannerWidget::OnWallSelected);
+			PlannerManager->OnRoomPlannerUpdated.AddUniqueDynamic(this, &URoomPlannerWidget::HandleRoomPlannerUpdated);
 		}
 	}
 
@@ -56,6 +57,20 @@ void URoomPlannerWidget::NativeConstruct()
 void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (!PlannerManager && GetWorld())
+	{
+		PlannerManager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+		if (PlannerManager)
+		{
+			PlannerManager->OnInteractiveWallDragProgress.AddUniqueDynamic(this, &URoomPlannerWidget::HandleWallDragProgress);
+			PlannerManager->OnWallSelected.AddUniqueDynamic(this, &URoomPlannerWidget::OnWallSelected);
+			PlannerManager->OnRoomPlannerUpdated.AddUniqueDynamic(this, &URoomPlannerWidget::HandleRoomPlannerUpdated);
+			UpdateSummaryStatsUI();
+			UpdateViewModeButtonStyles();
+			UpdateDynamicPropertiesPanel();
+		}
+	}
 
 	if (PlannerManager)
 	{
@@ -170,6 +185,18 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 	// BtnSelectTool is handled by NativeTick, but we can also force it here
 }
 
+AMaxiMallPreviewController* URoomPlannerWidget::GetPreviewController() const
+{
+	return Cast<AMaxiMallPreviewController>(GetOwningPlayer());
+}
+
+void URoomPlannerWidget::HandleRoomPlannerUpdated(const FString& JSONState)
+{
+	UpdateSummaryStatsUI();
+	UpdateDynamicPropertiesPanel();
+	UpdateToolModeButtonStyles();
+}
+
 void URoomPlannerWidget::On2DViewClicked() { SetViewMode(ERoomPlannerViewMode::View2D); }
 void URoomPlannerWidget::On3DViewClicked() { SetViewMode(ERoomPlannerViewMode::View3D); }
 void URoomPlannerWidget::OnSelectToolClicked() 
@@ -186,15 +213,17 @@ void URoomPlannerWidget::OnDeleteToolClicked()
 	{
 		if (PlannerManager->SelectedSegmentID != -1)
 		{
-			if (PlannerManager->SelectedOpeningIndex != -1)
+			if (AMaxiMallPreviewController* PC = GetPreviewController())
 			{
-				PlannerManager->DeleteSelectedOpening();
+				if (PlannerManager->SelectedOpeningIndex != -1)
+				{
+					PC->Server_DeleteOpening(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex);
+				}
+				else
+				{
+					PC->Server_DeleteWall(PlannerManager->SelectedSegmentID);
+				}
 			}
-			else
-			{
-				PlannerManager->DeleteSelectedWall();
-			}
-			UpdateSummaryStatsUI();
 		}
 		else
 		{
@@ -205,28 +234,34 @@ void URoomPlannerWidget::OnDeleteToolClicked()
 
 void URoomPlannerWidget::OnAddDoorClicked()
 {
-	if (!PlannerManager) return;
+	if (!PlannerManager || PlannerManager->SelectedSegmentID == -1) return;
 	float W = 0.9f;
 	float H = 2.1f;
 	if (EditableTxtOpeningWidth && !EditableTxtOpeningWidth->GetText().IsEmpty()) W = FCString::Atof(*EditableTxtOpeningWidth->GetText().ToString()) / 100.f;
 	if (EditableTxtOpeningHeight && !EditableTxtOpeningHeight->GetText().IsEmpty()) H = FCString::Atof(*EditableTxtOpeningHeight->GetText().ToString()) / 100.f;
-	PlannerManager->AddDoorToSelectedWall(W, H);
+	if (AMaxiMallPreviewController* PC = GetPreviewController())
+	{
+		PC->Server_AddDoor(PlannerManager->SelectedSegmentID, W, H);
+	}
 }
 
 void URoomPlannerWidget::OnAddWindowClicked()
 {
-	if (!PlannerManager) return;
+	if (!PlannerManager || PlannerManager->SelectedSegmentID == -1) return;
 	float W = 1.2f;
 	float H = 1.2f;
 	float S = 0.9f;
 	if (EditableTxtOpeningWidth_1 && !EditableTxtOpeningWidth_1->GetText().IsEmpty()) W = FCString::Atof(*EditableTxtOpeningWidth_1->GetText().ToString()) / 100.f;
 	if (EditableTxtOpeningHeight_1 && !EditableTxtOpeningHeight_1->GetText().IsEmpty()) H = FCString::Atof(*EditableTxtOpeningHeight_1->GetText().ToString()) / 100.f;
 	if (EditableTxtOpeningSillHeight && !EditableTxtOpeningSillHeight->GetText().IsEmpty()) S = FCString::Atof(*EditableTxtOpeningSillHeight->GetText().ToString()) / 100.f;
-	PlannerManager->AddWindowToSelectedWall(W, H, S);
+	if (AMaxiMallPreviewController* PC = GetPreviewController())
+	{
+		PC->Server_AddWindow(PlannerManager->SelectedSegmentID, W, H, S);
+	}
 }
 
-void URoomPlannerWidget::OnPresetRoomClicked() { BuildPreset4x4mRoom(); UpdateSummaryStatsUI(); }
-void URoomPlannerWidget::OnClearLayoutClicked() { ClearLayout(); UpdateSummaryStatsUI(); }
+void URoomPlannerWidget::OnPresetRoomClicked() { BuildPreset4x4mRoom(); }
+void URoomPlannerWidget::OnClearLayoutClicked() { ClearLayout(); }
 void URoomPlannerWidget::OnToggleCeilingClicked() { if (PlannerManager) PlannerManager->ToggleCeilingVisibility(); UpdateViewModeButtonStyles(); }
 
 void URoomPlannerWidget::OnWallSelected(int32 SegmentID, float LengthMeters)
@@ -323,6 +358,9 @@ void URoomPlannerWidget::OnApplyPropertiesClicked()
 {
 	if (!PlannerManager || PlannerManager->SelectedSegmentID == -1) return;
 
+	AMaxiMallPreviewController* PC = GetPreviewController();
+	if (!PC) return;
+
 	if (PlannerManager->SelectedOpeningIndex != -1)
 	{
 		// Modify Opening
@@ -340,7 +378,7 @@ void URoomPlannerWidget::OnApplyPropertiesClicked()
 				S = FCString::Atof(*EditableTxtProp3->GetText().ToString());
 			}
 
-			PlannerManager->UpdateOpeningDimensions(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, W / 100.f, H / 100.f, S / 100.f);
+			PC->Server_UpdateOpeningDimensions(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, W / 100.f, H / 100.f, S / 100.f);
 		}
 	}
 	else
@@ -349,7 +387,7 @@ void URoomPlannerWidget::OnApplyPropertiesClicked()
 		if (EditableTxtProp1)
 		{
 			float NewLenMeters = FCString::Atof(*EditableTxtProp1->GetText().ToString()) / 100.f;
-			PlannerManager->SetWallLength(PlannerManager->SelectedSegmentID, NewLenMeters);
+			PC->Server_SetWallLength(PlannerManager->SelectedSegmentID, NewLenMeters);
 		}
 	}
 }
@@ -379,20 +417,22 @@ static float ParseLengthDimensionInput(const FString& InText, float DefaultIfInv
 
 void URoomPlannerWidget::OnWallLengthCommitted(const FText& Text, ETextCommit::Type CommitMethod)
 {
-	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager)
+	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager && PlannerManager->SelectedSegmentID != -1)
 	{
 		float NewLengthMeters = ParseLengthDimensionInput(Text.ToString(), 4.0f);
 		if (NewLengthMeters > 0.1f)
 		{
-			PlannerManager->SetWallLength(PlannerManager->SelectedSegmentID, NewLengthMeters);
-			UpdateSummaryStatsUI();
+			if (AMaxiMallPreviewController* PC = GetPreviewController())
+			{
+				PC->Server_SetWallLength(PlannerManager->SelectedSegmentID, NewLengthMeters);
+			}
 		}
 	}
 }
 
 void URoomPlannerWidget::OnOpeningWidthCommitted(const FText& Text, ETextCommit::Type CommitMethod)
 {
-	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager)
+	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager && PlannerManager->SelectedSegmentID != -1)
 	{
 		int32 SegID = PlannerManager->SelectedSegmentID;
 		int32 OpIdx = PlannerManager->SelectedOpeningIndex;
@@ -404,14 +444,17 @@ void URoomPlannerWidget::OnOpeningWidthCommitted(const FText& Text, ETextCommit:
 		float NewWidthMeters = ParseLengthDimensionInput(Text.ToString(), CurWidthM);
 		if (NewWidthMeters > 0.1f)
 		{
-			PlannerManager->UpdateOpeningDimensions(SegID, OpIdx, NewWidthMeters, CurHeightM, CurSillM);
+			if (AMaxiMallPreviewController* PC = GetPreviewController())
+			{
+				PC->Server_UpdateOpeningDimensions(SegID, OpIdx, NewWidthMeters, CurHeightM, CurSillM);
+			}
 		}
 	}
 }
 
 void URoomPlannerWidget::OnOpeningHeightCommitted(const FText& Text, ETextCommit::Type CommitMethod)
 {
-	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager)
+	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager && PlannerManager->SelectedSegmentID != -1)
 	{
 		int32 SegID = PlannerManager->SelectedSegmentID;
 		int32 OpIdx = PlannerManager->SelectedOpeningIndex;
@@ -423,14 +466,17 @@ void URoomPlannerWidget::OnOpeningHeightCommitted(const FText& Text, ETextCommit
 		float NewHeightMeters = ParseLengthDimensionInput(Text.ToString(), CurHeightM);
 		if (NewHeightMeters > 0.1f)
 		{
-			PlannerManager->UpdateOpeningDimensions(SegID, OpIdx, CurWidthM, NewHeightMeters, CurSillM);
+			if (AMaxiMallPreviewController* PC = GetPreviewController())
+			{
+				PC->Server_UpdateOpeningDimensions(SegID, OpIdx, CurWidthM, NewHeightMeters, CurSillM);
+			}
 		}
 	}
 }
 
 void URoomPlannerWidget::OnOpeningSillHeightCommitted(const FText& Text, ETextCommit::Type CommitMethod)
 {
-	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager)
+	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager && PlannerManager->SelectedSegmentID != -1)
 	{
 		int32 SegID = PlannerManager->SelectedSegmentID;
 		int32 OpIdx = PlannerManager->SelectedOpeningIndex;
@@ -440,7 +486,10 @@ void URoomPlannerWidget::OnOpeningSillHeightCommitted(const FText& Text, ETextCo
 		PlannerManager->GetOpeningDetails(SegID, OpIdx, CurWidthM, CurHeightM, CurSillM);
 
 		float NewSillMeters = ParseLengthDimensionInput(Text.ToString(), CurSillM);
-		PlannerManager->UpdateOpeningDimensions(SegID, OpIdx, CurWidthM, CurHeightM, NewSillMeters);
+		if (AMaxiMallPreviewController* PC = GetPreviewController())
+		{
+			PC->Server_UpdateOpeningDimensions(SegID, OpIdx, CurWidthM, CurHeightM, NewSillMeters);
+		}
 	}
 }
 
@@ -502,75 +551,33 @@ FString URoomPlannerWidget::GetFormattedDragLengthText() const
 
 void URoomPlannerWidget::BuildPreset4x4mRoom()
 {
-	if (!PlannerManager && GetWorld())
+	if (AMaxiMallPreviewController* PC = GetPreviewController())
 	{
-		PlannerManager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
-	}
-
-	if (APlayerController* PC = GetOwningPlayer())
-	{
-		if (!PC->HasAuthority())
-		{
-			if (AMaxiMallPreviewController* MaxiPC = Cast<AMaxiMallPreviewController>(PC))
-			{
-				MaxiPC->Server_BuildPreset4x4mRoom();
-				return;
-			}
-		}
-	}
-
-	if (PlannerManager)
-	{
-		PlannerManager->ClearLayout();
-		int32 N1 = PlannerManager->AddNode(FVector2D(-200.f, -200.f));
-		int32 N2 = PlannerManager->AddNode(FVector2D(200.f, -200.f));
-		int32 N3 = PlannerManager->AddNode(FVector2D(200.f, 200.f));
-		int32 N4 = PlannerManager->AddNode(FVector2D(-200.f, 200.f));
-		PlannerManager->AddWall(N1, N2);
-		PlannerManager->AddWall(N2, N3);
-		PlannerManager->AddWall(N3, N4);
-		PlannerManager->AddWall(N4, N1);
-		PlannerManager->RebuildRooms();
-		PlannerManager->ReplicatedRoomJSON = PlannerManager->ExportLayoutToJSON();
+		PC->Server_BuildPreset4x4mRoom();
 	}
 }
 
 void URoomPlannerWidget::ClearLayout()
 {
-	if (APlayerController* PC = GetOwningPlayer())
+	if (AMaxiMallPreviewController* PC = GetPreviewController())
 	{
-		if (!PC->HasAuthority())
-		{
-			if (AMaxiMallPreviewController* MaxiPC = Cast<AMaxiMallPreviewController>(PC))
-			{
-				MaxiPC->Server_ClearLayout();
-				return;
-			}
-		}
-	}
-
-	if (PlannerManager)
-	{
-		PlannerManager->ClearLayout();
-		PlannerManager->ReplicatedRoomJSON = PlannerManager->ExportLayoutToJSON();
+		PC->Server_ClearLayout();
 	}
 }
 
 void URoomPlannerWidget::InsertDoor(int32 WallSegmentID, float DistanceAlongWallCm)
 {
-	if (PlannerManager)
+	if (AMaxiMallPreviewController* PC = GetPreviewController())
 	{
-		FString Cmd = FString::Printf(TEXT("{\"cmd\":\"add_opening\",\"segment_id\":%d,\"type\":\"door\",\"dist\":%.2f,\"width\":90,\"height\":210,\"sill\":0}"), WallSegmentID, DistanceAlongWallCm);
-		PlannerManager->ProcessCommandJSON(Cmd);
+		PC->Server_AddDoor(WallSegmentID, 0.9f, 2.1f, DistanceAlongWallCm);
 	}
 }
 
 void URoomPlannerWidget::InsertWindow(int32 WallSegmentID, float DistanceAlongWallCm)
 {
-	if (PlannerManager)
+	if (AMaxiMallPreviewController* PC = GetPreviewController())
 	{
-		FString Cmd = FString::Printf(TEXT("{\"cmd\":\"add_opening\",\"segment_id\":%d,\"type\":\"window\",\"dist\":%.2f,\"width\":120,\"height\":120,\"sill\":90}"), WallSegmentID, DistanceAlongWallCm);
-		PlannerManager->ProcessCommandJSON(Cmd);
+		PC->Server_AddWindow(WallSegmentID, 1.2f, 1.2f, 0.9f, DistanceAlongWallCm);
 	}
 }
 

@@ -299,12 +299,9 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
                         FVector2D P2(PlannerManager->GetDragCurrentPoint().X, PlannerManager->GetDragCurrentPoint().Y);
                         PlannerManager->CommitInteractiveWallDraw();
 
-                        if (!HasAuthority())
+                        if (FVector2D::Distance(P1, P2) >= 10.f)
                         {
-                            if (FVector2D::Distance(P1, P2) >= 10.f)
-                            {
-                                Server_CommitWall(P1, P2);
-                            }
+                            Server_CommitWall(P1, P2);
                         }
                     }
                     else
@@ -322,12 +319,24 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
                     {
                         PlannerManager->DragSelectedOpeningToWorldPos(GroundPos);
                     }
+                    else if (WasInputKeyJustReleased(EKeys::LeftMouseButton) && PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
+                    {
+                        float OpeningDist = 0.f;
+                        if (PlannerManager->GetOpeningDistance(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, OpeningDist))
+                        {
+                            Server_UpdateOpeningPosition(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, OpeningDist);
+                        }
+                    }
                 }
                 else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Erase)
                 {
                     if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
                     {
-                        PlannerManager->DeleteWallAtWorldPos(GroundPos);
+                        int32 TargetSeg = PlannerManager->SelectWallAtWorldPos(GroundPos);
+                        if (TargetSeg != -1)
+                        {
+                            Server_DeleteWall(TargetSeg);
+                        }
                     }
                 }
 
@@ -335,7 +344,14 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
                 {
                     if (PlannerManager->SelectedSegmentID != -1)
                     {
-                        PlannerManager->DeleteSelectedWall();
+                        if (PlannerManager->SelectedOpeningIndex != -1)
+                        {
+                            Server_DeleteOpening(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex);
+                        }
+                        else
+                        {
+                            Server_DeleteWall(PlannerManager->SelectedSegmentID);
+                        }
                     }
                 }
             }
@@ -2359,22 +2375,110 @@ void AMaxiMallPreviewController::Server_BuildPreset4x4mRoom_Implementation()
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->ClearLayout();
-		int32 N1 = Manager->AddNode(FVector2D(-200.f, -200.f));
-		int32 N2 = Manager->AddNode(FVector2D(200.f, -200.f));
-		int32 N3 = Manager->AddNode(FVector2D(200.f, 200.f));
-		int32 N4 = Manager->AddNode(FVector2D(-200.f, 200.f));
-		Manager->AddWall(N1, N2);
-		Manager->AddWall(N2, N3);
-		Manager->AddWall(N3, N4);
-		Manager->AddWall(N4, N1);
-		Manager->RebuildRooms();
-		Manager->ReplicatedRoomJSON = Manager->ExportLayoutToJSON();
+		Manager->BuildPreset4x4mRoom();
 		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 
 bool AMaxiMallPreviewController::Server_BuildPreset4x4mRoom_Validate()
+{
+	return true;
+}
+
+void AMaxiMallPreviewController::Server_SetWallLength_Implementation(int32 SegmentID, float NewLengthMeters)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetWallLength(SegmentID, NewLengthMeters);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+
+bool AMaxiMallPreviewController::Server_SetWallLength_Validate(int32 SegmentID, float NewLengthMeters)
+{
+	return true;
+}
+
+void AMaxiMallPreviewController::Server_DeleteWall_Implementation(int32 SegmentID)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->RemoveWall(SegmentID);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+
+bool AMaxiMallPreviewController::Server_DeleteWall_Validate(int32 SegmentID)
+{
+	return true;
+}
+
+void AMaxiMallPreviewController::Server_DeleteOpening_Implementation(int32 SegmentID, int32 OpeningIndex)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->DeleteOpening(SegmentID, OpeningIndex);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+
+bool AMaxiMallPreviewController::Server_DeleteOpening_Validate(int32 SegmentID, int32 OpeningIndex)
+{
+	return true;
+}
+
+void AMaxiMallPreviewController::Server_AddDoor_Implementation(int32 SegmentID, float WidthMeters, float HeightMeters, float DistFromStartCm)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->AddDoorToWall(SegmentID, WidthMeters, HeightMeters, DistFromStartCm);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+
+bool AMaxiMallPreviewController::Server_AddDoor_Validate(int32 SegmentID, float WidthMeters, float HeightMeters, float DistFromStartCm)
+{
+	return true;
+}
+
+void AMaxiMallPreviewController::Server_AddWindow_Implementation(int32 SegmentID, float WidthMeters, float HeightMeters, float SillHeightMeters, float DistFromStartCm)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->AddWindowToWall(SegmentID, WidthMeters, HeightMeters, SillHeightMeters, DistFromStartCm);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+
+bool AMaxiMallPreviewController::Server_AddWindow_Validate(int32 SegmentID, float WidthMeters, float HeightMeters, float SillHeightMeters, float DistFromStartCm)
+{
+	return true;
+}
+
+void AMaxiMallPreviewController::Server_UpdateOpeningDimensions_Implementation(int32 SegmentID, int32 OpeningIndex, float WidthMeters, float HeightMeters, float SillHeightMeters)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->UpdateOpeningDimensions(SegmentID, OpeningIndex, WidthMeters, HeightMeters, SillHeightMeters);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+
+bool AMaxiMallPreviewController::Server_UpdateOpeningDimensions_Validate(int32 SegmentID, int32 OpeningIndex, float WidthMeters, float HeightMeters, float SillHeightMeters)
+{
+	return true;
+}
+
+void AMaxiMallPreviewController::Server_UpdateOpeningPosition_Implementation(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->UpdateOpeningPosition(SegmentID, OpeningIndex, NewDistFromStartCm);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+
+bool AMaxiMallPreviewController::Server_UpdateOpeningPosition_Validate(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm)
 {
 	return true;
 }

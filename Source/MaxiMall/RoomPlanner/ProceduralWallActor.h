@@ -1,4 +1,4 @@
-// Copyright 2026 MaxiMall. All Rights Reserved.
+﻿// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #pragma once
 

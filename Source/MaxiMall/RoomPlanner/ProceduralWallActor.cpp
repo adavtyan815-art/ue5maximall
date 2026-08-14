@@ -1,4 +1,4 @@
-// Copyright 2026 MaxiMall. All Rights Reserved.
+﻿// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #include "ProceduralWallActor.h"
 #include "Materials/Material.h"
@@ -9,7 +9,7 @@
 AProceduralWallActor::AProceduralWallActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
-	bReplicates = true;
+	bReplicates = false;
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);

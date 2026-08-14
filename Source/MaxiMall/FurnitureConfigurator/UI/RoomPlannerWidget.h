@@ -1,4 +1,4 @@
-// Copyright 2026 MaxiMall. All Rights Reserved.
+﻿// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #pragma once
 
@@ -7,6 +7,7 @@
 #include "RoomPlannerWidget.generated.h"
 
 class ARoomPlannerManager;
+class AMaxiMallPreviewController;
 class UButton;
 class UTextBlock;
 class UEditableTextBox;
@@ -186,6 +187,11 @@ protected:
 
 	UFUNCTION()
 	void HandleWallDragProgress(float LengthMeters, FVector MidpointWorld, float AngleDeg, bool bIsSnapped);
+
+	UFUNCTION()
+	void HandleRoomPlannerUpdated(const FString& JSONState);
+
+	AMaxiMallPreviewController* GetPreviewController() const;
 
 private:
 	UFUNCTION()

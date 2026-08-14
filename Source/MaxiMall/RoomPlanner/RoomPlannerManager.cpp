@@ -964,6 +964,28 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 		}
 	}
 
+	RebuildAllWalls();
+	RebuildRooms();
+
+	if (SelectedSegmentID != -1 && !WallSegments.Contains(SelectedSegmentID))
+	{
+		SelectedSegmentID = -1;
+		SelectedOpeningIndex = -1;
+	}
+	else if (SelectedSegmentID != -1 && SelectedOpeningIndex != -1)
+	{
+		if (!WallSegments[SelectedSegmentID].Openings.IsValidIndex(SelectedOpeningIndex))
+		{
+			SelectedOpeningIndex = -1;
+		}
+	}
+	UpdateSelectionVisuals();
+	OnRoomPlannerUpdated.Broadcast(JSONString);
+	if (SelectedSegmentID != -1)
+	{
+		OnWallSelected.Broadcast(SelectedSegmentID, GetWallLength(SelectedSegmentID));
+	}
+
 	return true;
 }
 
@@ -991,8 +1013,9 @@ FString ARoomPlannerManager::ProcessCommandJSON(const FString& JSONString)
 		int32 N1 = AddNode(FVector2D(X1, Y1));
 		int32 N2 = AddNode(FVector2D(X2, Y2));
 		int32 SegID = AddWall(N1, N2);
+		ReplicatedRoomJSON = ExportLayoutToJSON();
 
-		FString ResponseJSON = FString::Printf(TEXT("{\"status\":\"ok\",\"cmd\":\"add_wall\",\"segment_id\":%d,\"state\":%s}"), SegID, *ExportLayoutToJSON());
+		FString ResponseJSON = FString::Printf(TEXT("{\"status\":\"ok\",\"cmd\":\"add_wall\",\"segment_id\":%d,\"state\":%s}"), SegID, *ReplicatedRoomJSON);
 		OnRoomPlannerUpdated.Broadcast(ResponseJSON);
 		return ResponseJSON;
 	}
@@ -1007,13 +1030,15 @@ FString ARoomPlannerManager::ProcessCommandJSON(const FString& JSONString)
 		float Sill = CommandObject->HasField(TEXT("sill")) ? CommandObject->GetNumberField(TEXT("sill")) : (Type == EOpeningType::Window ? 90.f : 0.f);
 
 		bool bSuccess = AddOpeningToWall(SegID, Type, Dist, Width, Height, Sill);
-		FString ResponseJSON = FString::Printf(TEXT("{\"status\":\"%s\",\"cmd\":\"add_opening\",\"state\":%s}"), bSuccess ? TEXT("ok") : TEXT("error"), *ExportLayoutToJSON());
+		ReplicatedRoomJSON = ExportLayoutToJSON();
+		FString ResponseJSON = FString::Printf(TEXT("{\"status\":\"%s\",\"cmd\":\"add_opening\",\"state\":%s}"), bSuccess ? TEXT("ok") : TEXT("error"), *ReplicatedRoomJSON);
 		OnRoomPlannerUpdated.Broadcast(ResponseJSON);
 		return ResponseJSON;
 	}
 	else if (Cmd.Equals(TEXT("clear"), ESearchCase::IgnoreCase))
 	{
 		ClearLayout();
+		ReplicatedRoomJSON = ExportLayoutToJSON();
 		FString ResponseJSON = TEXT("{\"status\":\"ok\",\"cmd\":\"clear\",\"state\":{\"nodes\":[],\"walls\":[],\"rooms\":[]}}");
 		OnRoomPlannerUpdated.Broadcast(ResponseJSON);
 		return ResponseJSON;
@@ -1323,10 +1348,7 @@ void ARoomPlannerManager::CommitInteractiveWallDraw()
 			int32 N2 = AddNode(P2);
 			AddWall(N1, N2, 20.f, 280.f);
 			ReplicatedRoomJSON = ExportLayoutToJSON();
-		}
-		else
-		{
-			Server_CommitWall(P1, P2, 20.f, 280.f);
+			OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
 		}
 	}
 }
@@ -1350,64 +1372,6 @@ void ARoomPlannerManager::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 void ARoomPlannerManager::OnRep_ReplicatedRoomJSON()
 {
 	ImportLayoutFromJSON(ReplicatedRoomJSON);
-}
-
-void ARoomPlannerManager::Server_CommitWall_Implementation(FVector2D StartPos, FVector2D EndPos, float Thickness, float Height)
-{
-	int32 N1 = AddNode(StartPos);
-	int32 N2 = AddNode(EndPos);
-	AddWall(N1, N2, Thickness, Height);
-	ReplicatedRoomJSON = ExportLayoutToJSON();
-}
-
-bool ARoomPlannerManager::Server_CommitWall_Validate(FVector2D StartPos, FVector2D EndPos, float Thickness, float Height)
-{
-	return true;
-}
-
-void ARoomPlannerManager::Server_ClearLayout_Implementation()
-{
-	ClearLayout();
-	ReplicatedRoomJSON = ExportLayoutToJSON();
-}
-
-bool ARoomPlannerManager::Server_ClearLayout_Validate()
-{
-	return true;
-}
-
-void ARoomPlannerManager::Server_BuildPreset4x4mRoom_Implementation()
-{
-	ClearLayout();
-
-	int32 N1 = AddNode(FVector2D(-200.f, -200.f));
-	int32 N2 = AddNode(FVector2D(200.f, -200.f));
-	int32 N3 = AddNode(FVector2D(200.f, 200.f));
-	int32 N4 = AddNode(FVector2D(-200.f, 200.f));
-
-	AddWall(N1, N2);
-	AddWall(N2, N3);
-	AddWall(N3, N4);
-	AddWall(N4, N1);
-
-	RebuildRooms();
-	ReplicatedRoomJSON = ExportLayoutToJSON();
-}
-
-bool ARoomPlannerManager::Server_BuildPreset4x4mRoom_Validate()
-{
-	return true;
-}
-
-void ARoomPlannerManager::Server_AddOpeningToWall_Implementation(int32 SegmentID, EOpeningType Type, float DistFromStart, float Width, float Height, float SillHeight)
-{
-	AddOpeningToWall(SegmentID, Type, DistFromStart, Width, Height, SillHeight);
-	ReplicatedRoomJSON = ExportLayoutToJSON();
-}
-
-bool ARoomPlannerManager::Server_AddOpeningToWall_Validate(int32 SegmentID, EOpeningType Type, float DistFromStart, float Width, float Height, float SillHeight)
-{
-	return true;
 }
 
 
@@ -1550,27 +1514,20 @@ bool ARoomPlannerManager::SetWallLength(int32 SegmentID, float NewLengthMeters)
 {
 	if (NewLengthMeters <= 0.1f || !WallSegments.Contains(SegmentID)) return false;
 
-	if (HasAuthority())
+	FWallSegment& Seg = WallSegments[SegmentID];
+	if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
 	{
-		FWallSegment& Seg = WallSegments[SegmentID];
-		if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
-		{
-			FVector2D P1 = Nodes[Seg.StartNodeID].Position;
-			FVector2D P2 = Nodes[Seg.EndNodeID].Position;
-			FVector2D Dir = (P2 - P1).GetSafeNormal();
-			float NewLengthCm = NewLengthMeters * 100.f;
+		FVector2D P1 = Nodes[Seg.StartNodeID].Position;
+		FVector2D P2 = Nodes[Seg.EndNodeID].Position;
+		FVector2D Dir = (P2 - P1).GetSafeNormal();
+		float NewLengthCm = NewLengthMeters * 100.f;
 
-			Nodes[Seg.EndNodeID].Position = P1 + Dir * NewLengthCm;
+		Nodes[Seg.EndNodeID].Position = P1 + Dir * NewLengthCm;
 
-			RebuildAllWalls();
-			RebuildRooms();
-			ReplicatedRoomJSON = ExportLayoutToJSON();
-			return true;
-		}
-	}
-	else
-	{
-		Server_SetWallLength(SegmentID, NewLengthMeters);
+		RebuildAllWalls();
+		RebuildRooms();
+		ReplicatedRoomJSON = ExportLayoutToJSON();
+		OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
 		return true;
 	}
 	return false;
@@ -1581,42 +1538,11 @@ bool ARoomPlannerManager::DeleteWallAtWorldPos(const FVector& WorldPos)
 	int32 TargetSeg = SelectWallAtWorldPos(WorldPos);
 	if (TargetSeg != -1)
 	{
-		if (HasAuthority())
-		{
-			RemoveWall(TargetSeg);
-			ReplicatedRoomJSON = ExportLayoutToJSON();
-			return true;
-		}
-		else
-		{
-			Server_RemoveWall(TargetSeg);
-			return true;
-		}
+		RemoveWall(TargetSeg);
+		return true;
 	}
 	return false;
 }
-
-void ARoomPlannerManager::Server_SetWallLength_Implementation(int32 SegmentID, float NewLengthMeters)
-{
-	SetWallLength(SegmentID, NewLengthMeters);
-}
-
-bool ARoomPlannerManager::Server_SetWallLength_Validate(int32 SegmentID, float NewLengthMeters)
-{
-	return true;
-}
-
-void ARoomPlannerManager::Server_RemoveWall_Implementation(int32 SegmentID)
-{
-	RemoveWall(SegmentID);
-	ReplicatedRoomJSON = ExportLayoutToJSON();
-}
-
-bool ARoomPlannerManager::Server_RemoveWall_Validate(int32 SegmentID)
-{
-	return true;
-}
-
 
 static float FindNonOverlappingOpeningDist(const FWallSegment& Seg, float NewWidthCm, float WallLengthCm)
 {
@@ -1665,37 +1591,80 @@ static float FindNonOverlappingOpeningDist(const FWallSegment& Seg, float NewWid
 	return -1.0f;
 }
 
-bool ARoomPlannerManager::AddDoorToSelectedWall(float WidthMeters, float HeightMeters)
+bool ARoomPlannerManager::AddDoorToWall(int32 SegmentID, float WidthMeters, float HeightMeters, float DistFromStartCm)
 {
-	if (SelectedSegmentID == -1 || !WallSegments.Contains(SelectedSegmentID)) return false;
+	if (!WallSegments.Contains(SegmentID)) return false;
 
-	if (HasAuthority())
+	const FWallSegment& Seg = WallSegments[SegmentID];
+	if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
 	{
-		const FWallSegment& Seg = WallSegments[SelectedSegmentID];
-		if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
+		FVector2D P1 = Nodes[Seg.StartNodeID].Position;
+		FVector2D P2 = Nodes[Seg.EndNodeID].Position;
+		float WallLengthCm = FVector2D::Distance(P1, P2);
+
+		float WidthCm = WidthMeters * 100.f;
+		float HeightCm = HeightMeters * 100.f;
+
+		if (DistFromStartCm < 0.f)
 		{
-			FVector2D P1 = Nodes[Seg.StartNodeID].Position;
-			FVector2D P2 = Nodes[Seg.EndNodeID].Position;
-			float WallLengthCm = FVector2D::Distance(P1, P2);
-
-			float WidthCm = WidthMeters * 100.f;
-			float HeightCm = HeightMeters * 100.f;
-			float DistFromStartCm = FindNonOverlappingOpeningDist(Seg, WidthCm, WallLengthCm);
-
+			DistFromStartCm = FindNonOverlappingOpeningDist(Seg, WidthCm, WallLengthCm);
 			if (DistFromStartCm < 0.f)
 			{
-				return false; // Not enough space for a new door
+				DistFromStartCm = FMath::Max(10.f, (WallLengthCm - WidthCm) * 0.5f);
 			}
-
-			AddOpeningToWall(SelectedSegmentID, EOpeningType::Door, DistFromStartCm, WidthCm, HeightCm, 0.f);
-			SelectedOpeningIndex = WallSegments[SelectedSegmentID].Openings.Num() - 1;
-			ReplicatedRoomJSON = ExportLayoutToJSON();
-			return true;
 		}
+
+		AddOpeningToWall(SegmentID, EOpeningType::Door, DistFromStartCm, WidthCm, HeightCm, 0.f);
+		if (SelectedSegmentID == SegmentID)
+		{
+			SelectedOpeningIndex = WallSegments[SegmentID].Openings.Num() - 1;
+			UpdateSelectionVisuals();
+		}
+		ReplicatedRoomJSON = ExportLayoutToJSON();
+		OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+		return true;
 	}
-	else
+	return false;
+}
+
+bool ARoomPlannerManager::AddDoorToSelectedWall(float WidthMeters, float HeightMeters)
+{
+	if (SelectedSegmentID == -1) return false;
+	return AddDoorToWall(SelectedSegmentID, WidthMeters, HeightMeters, -1.f);
+}
+
+bool ARoomPlannerManager::AddWindowToWall(int32 SegmentID, float WidthMeters, float HeightMeters, float SillHeightMeters, float DistFromStartCm)
+{
+	if (!WallSegments.Contains(SegmentID)) return false;
+
+	const FWallSegment& Seg = WallSegments[SegmentID];
+	if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
 	{
-		Server_AddDoorToSelectedWall(SelectedSegmentID, WidthMeters, HeightMeters);
+		FVector2D P1 = Nodes[Seg.StartNodeID].Position;
+		FVector2D P2 = Nodes[Seg.EndNodeID].Position;
+		float WallLengthCm = FVector2D::Distance(P1, P2);
+
+		float WidthCm = WidthMeters * 100.f;
+		float HeightCm = HeightMeters * 100.f;
+		float SillCm = SillHeightMeters * 100.f;
+
+		if (DistFromStartCm < 0.f)
+		{
+			DistFromStartCm = FindNonOverlappingOpeningDist(Seg, WidthCm, WallLengthCm);
+			if (DistFromStartCm < 0.f)
+			{
+				DistFromStartCm = FMath::Max(10.f, (WallLengthCm - WidthCm) * 0.5f);
+			}
+		}
+
+		AddOpeningToWall(SegmentID, EOpeningType::Window, DistFromStartCm, WidthCm, HeightCm, SillCm);
+		if (SelectedSegmentID == SegmentID)
+		{
+			SelectedOpeningIndex = WallSegments[SegmentID].Openings.Num() - 1;
+			UpdateSelectionVisuals();
+		}
+		ReplicatedRoomJSON = ExportLayoutToJSON();
+		OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
 		return true;
 	}
 	return false;
@@ -1703,39 +1672,27 @@ bool ARoomPlannerManager::AddDoorToSelectedWall(float WidthMeters, float HeightM
 
 bool ARoomPlannerManager::AddWindowToSelectedWall(float WidthMeters, float HeightMeters, float SillHeightMeters)
 {
-	if (SelectedSegmentID == -1 || !WallSegments.Contains(SelectedSegmentID)) return false;
+	if (SelectedSegmentID == -1) return false;
+	return AddWindowToWall(SelectedSegmentID, WidthMeters, HeightMeters, SillHeightMeters, -1.f);
+}
 
-	if (HasAuthority())
-	{
-		const FWallSegment& Seg = WallSegments[SelectedSegmentID];
-		if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
-		{
-			FVector2D P1 = Nodes[Seg.StartNodeID].Position;
-			FVector2D P2 = Nodes[Seg.EndNodeID].Position;
-			float WallLengthCm = FVector2D::Distance(P1, P2);
+void ARoomPlannerManager::BuildPreset4x4mRoom()
+{
+	ClearLayout();
 
-			float WidthCm = WidthMeters * 100.f;
-			float HeightCm = HeightMeters * 100.f;
-			float SillCm = SillHeightMeters * 100.f;
-			float DistFromStartCm = FindNonOverlappingOpeningDist(Seg, WidthCm, WallLengthCm);
+	int32 N1 = AddNode(FVector2D(-200.f, -200.f));
+	int32 N2 = AddNode(FVector2D(200.f, -200.f));
+	int32 N3 = AddNode(FVector2D(200.f, 200.f));
+	int32 N4 = AddNode(FVector2D(-200.f, 200.f));
 
-			if (DistFromStartCm < 0.f)
-			{
-				return false; // Not enough space for a new window
-			}
+	AddWall(N1, N2);
+	AddWall(N2, N3);
+	AddWall(N3, N4);
+	AddWall(N4, N1);
 
-			AddOpeningToWall(SelectedSegmentID, EOpeningType::Window, DistFromStartCm, WidthCm, HeightCm, SillCm);
-			SelectedOpeningIndex = WallSegments[SelectedSegmentID].Openings.Num() - 1;
-			ReplicatedRoomJSON = ExportLayoutToJSON();
-			return true;
-		}
-	}
-	else
-	{
-		Server_AddWindowToSelectedWall(SelectedSegmentID, WidthMeters, HeightMeters, SillHeightMeters);
-		return true;
-	}
-	return false;
+	RebuildRooms();
+	ReplicatedRoomJSON = ExportLayoutToJSON();
+	OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
 }
 
 bool ARoomPlannerManager::GetOpeningDetails(int32 SegmentID, int32 OpeningIndex, float& OutWidthMeters, float& OutHeightMeters, float& OutSillHeightMeters) const
@@ -1756,44 +1713,52 @@ bool ARoomPlannerManager::GetOpeningDetails(int32 SegmentID, int32 OpeningIndex,
 	return false;
 }
 
+bool ARoomPlannerManager::GetOpeningDistance(int32 SegmentID, int32 OpeningIndex, float& OutDistFromStartCm) const
+{
+	if (WallSegments.Contains(SegmentID))
+	{
+		const FWallSegment& Seg = WallSegments[SegmentID];
+		int32 OpIdx = (OpeningIndex == -1) ? 0 : OpeningIndex;
+		if (Seg.Openings.IsValidIndex(OpIdx))
+		{
+			OutDistFromStartCm = Seg.Openings[OpIdx].DistanceFromStart;
+			return true;
+		}
+	}
+	return false;
+}
+
 bool ARoomPlannerManager::UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm)
 {
 	if (!WallSegments.Contains(SegmentID)) return false;
 
-	if (HasAuthority())
+	FWallSegment& Seg = WallSegments[SegmentID];
+	if (Seg.Openings.IsValidIndex(OpeningIndex))
 	{
-		FWallSegment& Seg = WallSegments[SegmentID];
-		if (Seg.Openings.IsValidIndex(OpeningIndex))
+		if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
 		{
-			if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
+			FVector2D P1 = Nodes[Seg.StartNodeID].Position;
+			FVector2D P2 = Nodes[Seg.EndNodeID].Position;
+			float WallLen = FVector2D::Distance(P1, P2);
+			float HalfW = Seg.Openings[OpeningIndex].Width * 0.5f;
+
+			float ClampedDist = FMath::Clamp(NewDistFromStartCm, HalfW + 5.f, WallLen - HalfW - 5.f);
+			Seg.Openings[OpeningIndex].DistanceFromStart = ClampedDist;
+
+			if (TObjectPtr<AProceduralWallActor>* ActorPtr = WallActors.Find(SegmentID))
 			{
-				FVector2D P1 = Nodes[Seg.StartNodeID].Position;
-				FVector2D P2 = Nodes[Seg.EndNodeID].Position;
-				float WallLen = FVector2D::Distance(P1, P2);
-				float HalfW = Seg.Openings[OpeningIndex].Width * 0.5f;
-
-				float ClampedDist = FMath::Clamp(NewDistFromStartCm, HalfW + 5.f, WallLen - HalfW - 5.f);
-				Seg.Openings[OpeningIndex].DistanceFromStart = ClampedDist;
-
-				if (TObjectPtr<AProceduralWallActor>* ActorPtr = WallActors.Find(SegmentID))
+				if (*ActorPtr)
 				{
-					if (*ActorPtr)
-					{
-						(*ActorPtr)->WallData = Seg;
-					}
+					(*ActorPtr)->WallData = Seg;
 				}
-
-				RebuildAllWalls();
-				ReplicatedRoomJSON = ExportLayoutToJSON();
-				UpdateSelectionVisuals();
-				return true;
 			}
+
+			RebuildAllWalls();
+			ReplicatedRoomJSON = ExportLayoutToJSON();
+			UpdateSelectionVisuals();
+			OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+			return true;
 		}
-	}
-	else
-	{
-		Server_UpdateOpeningPosition(SegmentID, OpeningIndex, NewDistFromStartCm);
-		return true;
 	}
 	return false;
 }
@@ -1817,88 +1782,35 @@ bool ARoomPlannerManager::DragSelectedOpeningToWorldPos(const FVector& WorldPos)
 	return false;
 }
 
-void ARoomPlannerManager::Server_UpdateOpeningPosition_Implementation(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm)
-{
-	UpdateOpeningPosition(SegmentID, OpeningIndex, NewDistFromStartCm);
-}
-
-bool ARoomPlannerManager::Server_UpdateOpeningPosition_Validate(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm)
-{
-	return true;
-}
-
 bool ARoomPlannerManager::UpdateOpeningDimensions(int32 SegmentID, int32 OpeningIndex, float WidthMeters, float HeightMeters, float SillHeightMeters)
 {
 	if (!WallSegments.Contains(SegmentID)) return false;
 
-	if (HasAuthority())
+	FWallSegment& Seg = WallSegments[SegmentID];
+	if (Seg.Openings.IsValidIndex(OpeningIndex))
 	{
-		FWallSegment& Seg = WallSegments[SegmentID];
-		if (Seg.Openings.IsValidIndex(OpeningIndex))
-		{
-			FWallOpening& Op = Seg.Openings[OpeningIndex];
-			Op.Width = WidthMeters * 100.f;
-			Op.Height = HeightMeters * 100.f;
-			Op.SillHeight = SillHeightMeters * 100.f;
+		FWallOpening& Op = Seg.Openings[OpeningIndex];
+		Op.Width = WidthMeters * 100.f;
+		Op.Height = HeightMeters * 100.f;
+		Op.SillHeight = SillHeightMeters * 100.f;
 
-			if (TObjectPtr<AProceduralWallActor>* ActorPtr = WallActors.Find(SegmentID))
+		if (TObjectPtr<AProceduralWallActor>* ActorPtr = WallActors.Find(SegmentID))
+		{
+			if (*ActorPtr)
 			{
-				if (*ActorPtr)
-				{
-					(*ActorPtr)->WallData = Seg;
-					FVector2D P1 = Nodes[Seg.StartNodeID].Position;
-					FVector2D P2 = Nodes[Seg.EndNodeID].Position;
-					(*ActorPtr)->RebuildWallMesh(P1, P2);
-				}
+				(*ActorPtr)->WallData = Seg;
+				FVector2D P1 = Nodes[Seg.StartNodeID].Position;
+				FVector2D P2 = Nodes[Seg.EndNodeID].Position;
+				(*ActorPtr)->RebuildWallMesh(P1, P2);
 			}
-			ReplicatedRoomJSON = ExportLayoutToJSON();
-			return true;
 		}
-	}
-	else
-	{
-		Server_UpdateOpeningDimensions(SegmentID, OpeningIndex, WidthMeters, HeightMeters, SillHeightMeters);
+		RebuildAllWalls();
+		ReplicatedRoomJSON = ExportLayoutToJSON();
+		OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
 		return true;
 	}
 	return false;
 }
-
-void ARoomPlannerManager::Server_AddDoorToSelectedWall_Implementation(int32 SegmentID, float WidthMeters, float HeightMeters)
-{
-	int32 SavedSelected = SelectedSegmentID;
-	SelectedSegmentID = SegmentID;
-	AddDoorToSelectedWall(WidthMeters, HeightMeters);
-	SelectedSegmentID = SavedSelected;
-}
-
-bool ARoomPlannerManager::Server_AddDoorToSelectedWall_Validate(int32 SegmentID, float WidthMeters, float HeightMeters)
-{
-	return true;
-}
-
-void ARoomPlannerManager::Server_AddWindowToSelectedWall_Implementation(int32 SegmentID, float WidthMeters, float HeightMeters, float SillHeightMeters)
-{
-	int32 SavedSelected = SelectedSegmentID;
-	SelectedSegmentID = SegmentID;
-	AddWindowToSelectedWall(WidthMeters, HeightMeters, SillHeightMeters);
-	SelectedSegmentID = SavedSelected;
-}
-
-bool ARoomPlannerManager::Server_AddWindowToSelectedWall_Validate(int32 SegmentID, float WidthMeters, float HeightMeters, float SillHeightMeters)
-{
-	return true;
-}
-
-void ARoomPlannerManager::Server_UpdateOpeningDimensions_Implementation(int32 SegmentID, int32 OpeningIndex, float WidthMeters, float HeightMeters, float SillHeightMeters)
-{
-	UpdateOpeningDimensions(SegmentID, OpeningIndex, WidthMeters, HeightMeters, SillHeightMeters);
-}
-
-bool ARoomPlannerManager::Server_UpdateOpeningDimensions_Validate(int32 SegmentID, int32 OpeningIndex, float WidthMeters, float HeightMeters, float SillHeightMeters)
-{
-	return true;
-}
-
 
 bool ARoomPlannerManager::DeleteSelectedWall()
 {
@@ -1906,74 +1818,36 @@ bool ARoomPlannerManager::DeleteSelectedWall()
 
 	int32 TargetSeg = SelectedSegmentID;
 	SelectedSegmentID = -1;
-
-	if (HasAuthority())
-	{
-		RemoveWall(TargetSeg);
-		ReplicatedRoomJSON = ExportLayoutToJSON();
-		return true;
-	}
-	else
-	{
-		Server_DeleteSelectedWall(TargetSeg);
-		return true;
-	}
+	SelectedOpeningIndex = -1;
+	RemoveWall(TargetSeg);
+	return true;
 }
 
-void ARoomPlannerManager::Server_DeleteSelectedWall_Implementation(int32 SegmentID)
+bool ARoomPlannerManager::DeleteOpening(int32 SegmentID, int32 OpeningIndex)
 {
-	RemoveWall(SegmentID);
+	if (!WallSegments.Contains(SegmentID)) return false;
+	if (!WallSegments[SegmentID].Openings.IsValidIndex(OpeningIndex)) return false;
+
+	WallSegments[SegmentID].Openings.RemoveAt(OpeningIndex);
+	RebuildAllWalls();
+	if (SelectedSegmentID == SegmentID && SelectedOpeningIndex == OpeningIndex)
+	{
+		SelectedOpeningIndex = -1;
+	}
+	else if (SelectedSegmentID == SegmentID && SelectedOpeningIndex > OpeningIndex)
+	{
+		SelectedOpeningIndex--;
+	}
+	UpdateSelectionVisuals();
 	ReplicatedRoomJSON = ExportLayoutToJSON();
-}
-
-bool ARoomPlannerManager::Server_DeleteSelectedWall_Validate(int32 SegmentID)
-{
+	OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+	OnWallSelected.Broadcast(SelectedSegmentID, GetWallLength(SelectedSegmentID));
 	return true;
 }
 
 bool ARoomPlannerManager::DeleteSelectedOpening()
 {
-	if (SelectedSegmentID == -1 || SelectedOpeningIndex == -1 || !WallSegments.Contains(SelectedSegmentID)) return false;
-
-	int32 TargetSeg = SelectedSegmentID;
-	int32 TargetOpening = SelectedOpeningIndex;
-	SelectedOpeningIndex = -1;
-
-	if (HasAuthority())
-	{
-		WallSegments[TargetSeg].Openings.RemoveAt(TargetOpening);
-		RebuildAllWalls();
-		ReplicatedRoomJSON = ExportLayoutToJSON();
-		UpdateSelectionVisuals();
-		OnWallSelected.Broadcast(TargetSeg, GetWallLength(TargetSeg));
-		return true;
-	}
-	else
-	{
-		Server_DeleteSelectedOpening(TargetSeg, TargetOpening);
-		UpdateSelectionVisuals();
-		OnWallSelected.Broadcast(TargetSeg, GetWallLength(TargetSeg));
-		return true;
-	}
-}
-
-void ARoomPlannerManager::Server_DeleteSelectedOpening_Implementation(int32 SegmentID, int32 OpeningIndex)
-{
-	if (!WallSegments.Contains(SegmentID)) return;
-	if (!WallSegments[SegmentID].Openings.IsValidIndex(OpeningIndex)) return;
-	
-	int32 SavedSelected = SelectedSegmentID;
-	int32 SavedOpening = SelectedOpeningIndex;
-	SelectedSegmentID = SegmentID;
-	SelectedOpeningIndex = OpeningIndex;
-	DeleteSelectedOpening();
-	SelectedSegmentID = SavedSelected;
-	SelectedOpeningIndex = -1;
-	OnWallSelected.Broadcast(SelectedSegmentID, GetWallLength(SelectedSegmentID));
-}
-
-bool ARoomPlannerManager::Server_DeleteSelectedOpening_Validate(int32 SegmentID, int32 OpeningIndex)
-{
-	return true;
+	if (SelectedSegmentID == -1 || SelectedOpeningIndex == -1) return false;
+	return DeleteOpening(SelectedSegmentID, SelectedOpeningIndex);
 }
 
