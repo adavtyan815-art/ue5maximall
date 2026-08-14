@@ -1,11 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "MaxiMallLoginPlayerController.h"
+#include "FurnitureConfigurator/Preview/MaxiMallLoginPlayerController.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "UObject/UObjectIterator.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -27,29 +28,28 @@ void AMaxiMallLoginPlayerController::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] ===== BeginPlay START =====  IsLocalController: %s"),
 		IsLocalController() ? TEXT("YES") : TEXT("NO"));
 
-	if (!IsLocalController())
+	if (IsLocalController())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] Not a local controller — skipping PS binding."));
-		return;
-	}
+		if (!CachedPSInput)
+		{
+			CachedPSInput = GetComponentByClass<UPixelStreamingInput>();
+		}
 
-	CachedPSInput = GetComponentByClass<UPixelStreamingInput>();
+		if (CachedPSInput)
+		{
+			CachedPSInput->OnInputEvent.AddUniqueDynamic(
+				this, &AMaxiMallLoginPlayerController::OnPixelStreamingInput);
 
-	if (CachedPSInput)
-	{
-		CachedPSInput->OnInputEvent.AddUniqueDynamic(
-			this, &AMaxiMallLoginPlayerController::OnPixelStreamingInput);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[MaxiMall|Login] PS Input component bound in BeginPlay."));
 
-		UE_LOG(LogTemp, Warning,
-			TEXT("[MaxiMall|Login] PS Input component found in BeginPlay and bound."));
-
-		SendDiag(TEXT("[Login] BeginPlay OK | PS component bound in BeginPlay | Awaiting user Login click."));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[MaxiMall|Login] PS Input NOT found in BeginPlay — will retry in PlayerTick."));
-	}
+			SendDiag(TEXT("[Login] BeginPlay OK | PS component bound in BeginPlay | Awaiting user Login click."));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[MaxiMall|Login] PS Input NOT found in BeginPlay — will retry in PlayerTick via TObjectIterator."));
+		}
 
 		FInputModeGameAndUI InputMode;
 		InputMode.SetHideCursorDuringCapture(true);
@@ -59,7 +59,8 @@ void AMaxiMallLoginPlayerController::BeginPlay()
 		bEnableClickEvents = true;
 		bEnableMouseOverEvents = true;
 
-	UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] ===== BeginPlay END ====="));
+		UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] ===== BeginPlay END ====="));
+	}
 }
 
 void AMaxiMallLoginPlayerController::PlayerTick(float DeltaTime)
@@ -71,16 +72,22 @@ void AMaxiMallLoginPlayerController::PlayerTick(float DeltaTime)
 		return;
 	}
 
+	// ── PS Input late-bind retry ───────────────────────────────────────────
 	if (!CachedPSInput)
 	{
-		CachedPSInput = GetComponentByClass<UPixelStreamingInput>();
-		if (CachedPSInput)
+		for (TObjectIterator<UPixelStreamingInput> It; It; ++It)
 		{
-			CachedPSInput->OnInputEvent.AddUniqueDynamic(
-				this, &AMaxiMallLoginPlayerController::OnPixelStreamingInput);
-			UE_LOG(LogTemp, Warning,
-				TEXT("[MaxiMall|Login] PS Input component found in PlayerTick and bound (late-bind)."));
-			SendDiag(TEXT("[Login] PS Input late-bound in PlayerTick — input and clipboard active."));
+			if (UPixelStreamingInput* PSInput = *It)
+			{
+				CachedPSInput = PSInput;
+				CachedPSInput->OnInputEvent.AddUniqueDynamic(
+					this, &AMaxiMallLoginPlayerController::OnPixelStreamingInput);
+
+				UE_LOG(LogTemp, Warning,
+					TEXT("[MaxiMall|Login] PS Input late-bound in PlayerTick via TObjectIterator."));
+				SendDiag(TEXT("[Login] PS Input late-bound in PlayerTick via TObjectIterator — ready."));
+				break;
+			}
 		}
 	}
 
@@ -108,21 +115,18 @@ void AMaxiMallLoginPlayerController::PlayerTick(float DeltaTime)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SendDiag — helper to send a diagnostic string to the browser via PS.
-// Works in Shipping builds (no UE_LOG dependency for browser visibility).
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AMaxiMallLoginPlayerController::SendDiag(const FString& Message) const
 {
 	if (!CachedPSInput)
 	{
-		return; // PS not active — silently skip.
+		return;
 	}
 
-	// Prefix with "DIAG:" so the browser interceptor snippet can filter it.
 	const FString Payload = FString::Printf(TEXT("DIAG: %s"), *Message);
 	CachedPSInput->SendPixelStreamingResponse(Payload);
 
-	// Also log to file in Development/Debug builds (stripped in Shipping).
 	UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login|DIAG] %s"), *Message);
 }
 
@@ -134,7 +138,7 @@ void AMaxiMallLoginPlayerController::OnPixelStreamingInput(const FString& Descri
 {
 	UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] OnPixelStreamingInput fired. Raw descriptor length: %d"), Descriptor.Len());
 
-	// Legacy format: MaxiMallPaste <text>
+	// ── 0. Check legacy prefix (MaxiMallPaste <text>) ────────────────────
 	static const FString LegacyPrefix = TEXT("MaxiMallPaste ");
 	if (Descriptor.StartsWith(LegacyPrefix))
 	{
@@ -144,6 +148,7 @@ void AMaxiMallLoginPlayerController::OnPixelStreamingInput(const FString& Descri
 		UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] [LEGACY] ClipboardPaste received. Chars: %d"), PasteText.Len());
 
 		FPlatformApplicationMisc::ClipboardCopy(*PasteText);
+		LastKnownClipboardContent = PasteText;
 
 		if (FSlateApplication::IsInitialized())
 		{
@@ -158,8 +163,20 @@ void AMaxiMallLoginPlayerController::OnPixelStreamingInput(const FString& Descri
 		return;
 	}
 
+	// ── 1. Parse JSON descriptor ─────────────────────────────────────────
+	FString CleanDescriptor = Descriptor;
+	CleanDescriptor.ReplaceInline(TEXT("\0"), TEXT(""));
+	if (CleanDescriptor.StartsWith(TEXT("UIInteraction:")))
+	{
+		CleanDescriptor = CleanDescriptor.Mid(14).TrimStart();
+	}
+	else if (CleanDescriptor.StartsWith(TEXT("UIInteraction")))
+	{
+		CleanDescriptor = CleanDescriptor.Mid(13).TrimStart();
+	}
+
 	TSharedPtr<FJsonObject> JsonObject;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Descriptor);
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(CleanDescriptor);
 
 	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
 	{
@@ -167,8 +184,8 @@ void AMaxiMallLoginPlayerController::OnPixelStreamingInput(const FString& Descri
 		return;
 	}
 
-	// Check if the payload is double-JSON-encoded (e.g. from some frontend wrappers: {"descriptor": "{...}"})
-	FString EffectiveJSON = Descriptor;
+	// Unwrap PixelStreaming UIInteraction descriptor field if present
+	FString EffectiveJSON = CleanDescriptor;
 	if (JsonObject->HasField(TEXT("descriptor")))
 	{
 		EffectiveJSON = JsonObject->GetStringField(TEXT("descriptor"));
@@ -196,7 +213,7 @@ void AMaxiMallLoginPlayerController::OnPixelStreamingInput(const FString& Descri
 	{
 		FString PasteText = JsonObject->GetStringField(TEXT("Text"));
 
-		// Strip embedded null terminators (can appear in some browsers)
+		// Strip embedded null terminators
 		PasteText.ReplaceInline(TEXT("\0"), TEXT(""));
 
 		UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] ClipboardPaste received. Character count: %d"), PasteText.Len());
@@ -205,26 +222,25 @@ void AMaxiMallLoginPlayerController::OnPixelStreamingInput(const FString& Descri
 		FPlatformApplicationMisc::ClipboardCopy(*PasteText);
 		LastKnownClipboardContent = PasteText;
 
-		if (!FSlateApplication::IsInitialized())
+		// 2. Direct injection via Slate Character Events
+		if (FSlateApplication::IsInitialized())
+		{
+			FSlateApplication& SlateApp = FSlateApplication::Get();
+			for (int32 i = 0; i < PasteText.Len(); ++i)
+			{
+				FCharacterEvent CharEvent(PasteText[i], FModifierKeysState(), 0, false);
+				SlateApp.ProcessKeyCharEvent(CharEvent);
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] ClipboardPaste: injected %d characters via Slate CharacterEvent."), PasteText.Len());
+
+			SendDiag(FString::Printf(
+				TEXT("[Login] ClipboardPaste OK — injected %d chars via Slate."), PasteText.Len()));
+		}
+		else
 		{
 			UE_LOG(LogTemp, Error, TEXT("[MaxiMall|Login] ClipboardPaste FAILED: SlateApplication not initialized."));
 			SendDiag(TEXT("[Login] ERROR: ClipboardPaste failed — Slate not initialized."));
-			return;
 		}
-
-		// Inject each character as a Slate CharacterEvent.
-		// This bypasses the headless-OS clipboard limitation on Linux EC2.
-		FSlateApplication& SlateApp = FSlateApplication::Get();
-		for (int32 i = 0; i < PasteText.Len(); ++i)
-		{
-			FCharacterEvent CharEvent(PasteText[i], FModifierKeysState(), 0, false);
-			SlateApp.ProcessKeyCharEvent(CharEvent);
-		}
-
-		UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] ClipboardPaste: injected %d characters via Slate CharacterEvent."), PasteText.Len());
-
-		// ── BROWSER DIAGNOSTIC ──────────────────────────────────────────
-		SendDiag(FString::Printf(
-			TEXT("[Login] ClipboardPaste OK — injected %d chars via Slate."), PasteText.Len()));
 	}
 }
