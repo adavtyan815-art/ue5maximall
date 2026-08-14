@@ -2,6 +2,7 @@
 
 #include "RoomPlanner/RoomPlannerManager.h"
 #include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Net/UnrealNetwork.h"
@@ -347,92 +348,74 @@ void ARoomPlannerManager::ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FV
                                                      TMap<int32, FVector2D>& OutEndRightOffsets)
 {
 	const FWallNode* Node = Nodes.Find(NodeID);
-	if (!Node || Node->ConnectedSegmentIDs.Num() < 2)
+	if (!Node || Node->ConnectedSegmentIDs.Num() != 2)
 	{
 		return;
 	}
 
-	if (Node->ConnectedSegmentIDs.Num() == 2)
+	int32 SegA_ID = Node->ConnectedSegmentIDs[0];
+	int32 SegB_ID = Node->ConnectedSegmentIDs[1];
+
+	FWallSegment* SegA = WallSegments.Find(SegA_ID);
+	FWallSegment* SegB = WallSegments.Find(SegB_ID);
+
+	if (!SegA || !SegB) return;
+
+	bool bNodeIsStartA = (SegA->StartNodeID == NodeID);
+	bool bNodeIsStartB = (SegB->StartNodeID == NodeID);
+
+	FVector2D PosNode = Node->Position;
+	FVector2D OtherA = bNodeIsStartA ? Nodes[SegA->EndNodeID].Position : Nodes[SegA->StartNodeID].Position;
+	FVector2D OtherB = bNodeIsStartB ? Nodes[SegB->EndNodeID].Position : Nodes[SegB->StartNodeID].Position;
+
+	FVector2D DirA = (OtherA - PosNode).GetSafeNormal();
+	FVector2D DirB = (OtherB - PosNode).GetSafeNormal();
+
+	float Cross = DirA.X * DirB.Y - DirA.Y * DirB.X;
+	float Dot = DirA.X * DirB.X + DirA.Y * DirB.Y;
+
+	// If not collinear or nearly parallel
+	if (FMath::Abs(Cross) > 0.05f)
 	{
-		int32 SegA_ID = Node->ConnectedSegmentIDs[0];
-		int32 SegB_ID = Node->ConnectedSegmentIDs[1];
+		float hA = SegA->Thickness * 0.5f;
+		float hB = SegB->Thickness * 0.5f;
 
-		FWallSegment* SegA = WallSegments.Find(SegA_ID);
-		FWallSegment* SegB = WallSegments.Find(SegB_ID);
+		float LenA = FVector2D::Distance(PosNode, OtherA);
+		float LenB = FVector2D::Distance(PosNode, OtherB);
+		float MaxMiterA = FMath::Min(SegA->Thickness * 2.0f, LenA * 0.45f);
+		float MaxMiterB = FMath::Min(SegB->Thickness * 2.0f, LenB * 0.45f);
 
-		if (!SegA || !SegB) return;
+		// Intersection distances along DirA and DirB
+		float tL = (hB + hA * Dot) / Cross;
+		float sL = (hA + hB * Dot) / Cross;
 
-		bool bNodeIsStartA = (SegA->StartNodeID == NodeID);
-		bool bNodeIsStartB = (SegB->StartNodeID == NodeID);
+		tL = FMath::Clamp(tL, -MaxMiterA, MaxMiterA);
+		sL = FMath::Clamp(sL, -MaxMiterB, MaxMiterB);
 
-		FVector2D PosNode = Node->Position;
-		FVector2D OtherA = bNodeIsStartA ? Nodes[SegA->EndNodeID].Position : Nodes[SegA->StartNodeID].Position;
-		FVector2D OtherB = bNodeIsStartB ? Nodes[SegB->EndNodeID].Position : Nodes[SegB->StartNodeID].Position;
+		float tR = -tL;
+		float sR = -sL;
 
-		FVector2D DirA = (OtherA - PosNode).GetSafeNormal();
-		FVector2D DirB = (OtherB - PosNode).GetSafeNormal();
-
-		auto Cross2D = [](const FVector2D& V1, const FVector2D& V2) {
-			return V1.X * V2.Y - V1.Y * V2.X;
-		};
-
-		float Cross = Cross2D(DirA, DirB);
-
-		// If not collinear
-		if (FMath::Abs(Cross) > 0.01f)
+		// Map to segment Start/End corners
+		if (bNodeIsStartA)
 		{
-			FVector2D N1(-DirA.Y, DirA.X);
-			FVector2D N2(-DirB.Y, DirB.X);
-			
-			float WA = SegA->Thickness * 0.5f;
-			float WB = SegB->Thickness * 0.5f;
+			OutStartLeftOffsets.Add(SegA_ID, DirA * tL);
+			OutStartRightOffsets.Add(SegA_ID, DirA * tR);
+		}
+		else
+		{
+			OutEndRightOffsets.Add(SegA_ID, DirA * tL);
+			OutEndLeftOffsets.Add(SegA_ID, DirA * tR);
+		}
 
-			auto IntersectLines = [&](FVector2D P1, FVector2D D1, FVector2D P2, FVector2D D2, float& OutT1, float& OutT2) {
-				float Denom = Cross2D(D1, D2);
-				if (FMath::Abs(Denom) < 0.001f) return false;
-				FVector2D Diff = P2 - P1;
-				OutT1 = Cross2D(Diff, D2) / Denom;
-				OutT2 = Cross2D(Diff, D1) / Denom;
-				return true;
-			};
-
-			float MaxMiter = FMath::Max(SegA->Thickness, SegB->Thickness) * 2.0f;
-			float LenA = FVector2D::Distance(PosNode, OtherA);
-			float LenB = FVector2D::Distance(PosNode, OtherB);
-			float MaxMiterA = FMath::Min(MaxMiter, LenA * 0.45f);
-			float MaxMiterB = FMath::Min(MaxMiter, LenB * 0.45f);
-
-			float tA_Left, tB_Right;
-			if (IntersectLines(PosNode + N1 * WA, DirA, PosNode - N2 * WB, DirB, tA_Left, tB_Right))
-			{
-				tA_Left = FMath::Clamp(tA_Left, -MaxMiterA, MaxMiterA);
-				tB_Right = FMath::Clamp(tB_Right, -MaxMiterB, MaxMiterB);
-
-				FVector2D OffsetA_Left = DirA * tA_Left;
-				FVector2D OffsetB_Right = DirB * tB_Right;
-				
-				if (bNodeIsStartA) OutStartLeftOffsets.Add(SegA_ID, OffsetA_Left);
-				else OutEndRightOffsets.Add(SegA_ID, OffsetA_Left); // If node is End, N1 is flipped, wait.
-
-				if (bNodeIsStartB) OutStartRightOffsets.Add(SegB_ID, OffsetB_Right);
-				else OutEndLeftOffsets.Add(SegB_ID, OffsetB_Right);
-			}
-
-			float tA_Right, tB_Left;
-			if (IntersectLines(PosNode - N1 * WA, DirA, PosNode + N2 * WB, DirB, tA_Right, tB_Left))
-			{
-				tA_Right = FMath::Clamp(tA_Right, -MaxMiterA, MaxMiterA);
-				tB_Left = FMath::Clamp(tB_Left, -MaxMiterB, MaxMiterB);
-
-				FVector2D OffsetA_Right = DirA * tA_Right;
-				FVector2D OffsetB_Left = DirB * tB_Left;
-				
-				if (bNodeIsStartA) OutStartRightOffsets.Add(SegA_ID, OffsetA_Right);
-				else OutEndLeftOffsets.Add(SegA_ID, OffsetA_Right);
-
-				if (bNodeIsStartB) OutStartLeftOffsets.Add(SegB_ID, OffsetB_Left);
-				else OutEndRightOffsets.Add(SegB_ID, OffsetB_Left);
-			}
+		if (bNodeIsStartB)
+		{
+			OutStartRightOffsets.Add(SegB_ID, DirB * sL);
+			OutStartLeftOffsets.Add(SegB_ID, DirB * sR);
+		}
+		else
+		{
+			OutEndLeftOffsets.Add(SegB_ID, DirB * sL);
+			OutEndRightOffsets.Add(SegB_ID, DirB * sR);
 		}
 	}
 }
@@ -1108,7 +1091,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 					FActorSpawnParameters SpawnParams;
 					SpawnParams.Owner = this;
 					SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-					FVector CamLoc(0.f, 0.f, 1500.f);
+					FVector CamLoc(0.f, 0.f, 2000.f);
 					if (Pawn)
 					{
 						CamLoc.X = Pawn->GetActorLocation().X;
@@ -1116,11 +1099,29 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 					}
 					FRotator CamRot(-90.f, 0.f, 0.f);
 					TopDownCameraActor = World->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), CamLoc, CamRot, SpawnParams);
+					if (TopDownCameraActor)
+					{
+						if (UCameraComponent* CamComp = TopDownCameraActor->GetCameraComponent())
+						{
+							CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
+							CamComp->OrthoWidth = 2500.f;
+							CamComp->OrthoNearClipPlane = -5000.f;
+							CamComp->OrthoFarClipPlane = 20000.f;
+						}
+					}
+				}
+				else
+				{
+					if (UCameraComponent* CamComp = TopDownCameraActor->GetCameraComponent())
+					{
+						CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
+						CamComp->OrthoWidth = 2500.f;
+					}
 				}
 
 				if (TopDownCameraActor)
 				{
-					PC->SetViewTargetWithBlend(TopDownCameraActor, 0.3f);
+					PC->SetViewTargetWithBlend(TopDownCameraActor, 0.25f);
 				}
 
 				FInputModeGameAndUI InputMode;

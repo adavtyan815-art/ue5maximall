@@ -83,7 +83,7 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 
 			if (!bHasWalls)
 			{
-				BtnSelectTool->SetToolTipText(FText::FromString(TEXT("РџРѕРєР° РЅРµС‚ СЃС‚РµРЅ РґР»СЏ СЂР°Р±РѕС‚С‹")));
+				BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Пока нет стен для работы")));
 			}
 			else
 			{
@@ -312,12 +312,12 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 						EditableTxtProp3->SetVisibility(ESlateVisibility::Visible);
 						EditableTxtProp3->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), S_cm)));
 					}
-					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("РР·РјРµРЅРёС‚СЊ СЂР°Р·РјРµСЂ РѕРєРЅР°")));
+					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер окна")));
 				}
 				else // It's a door
 				{
 					if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
-					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("РР·РјРµРЅРёС‚СЊ СЂР°Р·РјРµСЂ РґРІРµСЂРё")));
+					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер двери")));
 				}
 			}
 		}
@@ -333,7 +333,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 			}
 			if (EditableTxtProp2) EditableTxtProp2->SetVisibility(ESlateVisibility::Hidden);
 			if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
-			if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("РР·РјРµРЅРёС‚СЊ СЂР°Р·РјРµСЂ СЃС‚РµРЅС‹")));
+			if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер стены")));
 		}
 
 		if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Visible);
@@ -346,7 +346,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 		if (EditableTxtProp1) EditableTxtProp1->SetVisibility(ESlateVisibility::Hidden);
 		if (EditableTxtProp2) EditableTxtProp2->SetVisibility(ESlateVisibility::Hidden);
 		if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
-		if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Р Р°Р·РјРµСЂ СЃС‚РµРЅС‹")));
+		if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Размер стены")));
 
 		if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Collapsed);
 		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(ESlateVisibility::Collapsed);
@@ -536,17 +536,17 @@ void URoomPlannerWidget::UpdateSummaryStatsUI()
 {
 	if (TxtFloorArea)
 	{
-		TxtFloorArea->SetText(FText::FromString(FString::Printf(TEXT("%.2f mВІ"), GetFloorAreaM2())));
+		TxtFloorArea->SetText(FText::FromString(FString::Printf(TEXT("%.2f м²"), GetFloorAreaM2())));
 	}
 	if (TxtPerimeter)
 	{
-		TxtPerimeter->SetText(FText::FromString(FString::Printf(TEXT("%.2f m"), GetPerimeterLengthM())));
+		TxtPerimeter->SetText(FText::FromString(FString::Printf(TEXT("%.2f м"), GetPerimeterLengthM())));
 	}
 }
 
 FString URoomPlannerWidget::GetFormattedDragLengthText() const
 {
-	return FString::Printf(TEXT("%.2f m"), CurrentDragLengthMeters);
+	return FString::Printf(TEXT("%.2f м"), CurrentDragLengthMeters);
 }
 
 void URoomPlannerWidget::BuildPreset4x4mRoom()

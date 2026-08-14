@@ -147,6 +147,13 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	float HalfThickness = WallData.Thickness * 0.5f;
 	float WallHeight = WallData.Height;
 
+	// Clamp incoming miter offsets to avoid runaway geometry spikes
+	float MaxOffset = FMath::Min(WallData.Thickness * 2.0f, TotalLength * 0.45f);
+	if (StartLeftMiterOffset.Size() > MaxOffset) StartLeftMiterOffset = StartLeftMiterOffset.GetSafeNormal() * MaxOffset;
+	if (StartRightMiterOffset.Size() > MaxOffset) StartRightMiterOffset = StartRightMiterOffset.GetSafeNormal() * MaxOffset;
+	if (EndLeftMiterOffset.Size() > MaxOffset) EndLeftMiterOffset = EndLeftMiterOffset.GetSafeNormal() * MaxOffset;
+	if (EndRightMiterOffset.Size() > MaxOffset) EndRightMiterOffset = EndRightMiterOffset.GetSafeNormal() * MaxOffset;
+
 	// Calculate 2D corner vertices
 	FVector2D SL2D = StartPos + Normal2D * HalfThickness + StartLeftMiterOffset;
 	FVector2D SR2D = StartPos - Normal2D * HalfThickness + StartRightMiterOffset;
@@ -376,7 +383,7 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	}
 
 	// Start Cap Face (if no connected miter)
-	if (StartLeftMiterOffset.IsZero() && StartRightMiterOffset.IsZero())
+	if (StartLeftMiterOffset.IsNearlyZero() && StartRightMiterOffset.IsNearlyZero())
 	{
 		GenerateQuad(Vertices, Triangles, Normals, UVs,
 			FVector(SR2D.X, SR2D.Y, 0.f), FVector(SL2D.X, SL2D.Y, 0.f),
@@ -384,7 +391,7 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	}
 
 	// End Cap Face (if no connected miter)
-	if (EndLeftMiterOffset.IsZero() && EndRightMiterOffset.IsZero())
+	if (EndLeftMiterOffset.IsNearlyZero() && EndRightMiterOffset.IsNearlyZero())
 	{
 		GenerateQuad(Vertices, Triangles, Normals, UVs,
 			FVector(EL2D.X, EL2D.Y, 0.f), FVector(ER2D.X, ER2D.Y, 0.f),
