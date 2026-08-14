@@ -441,13 +441,26 @@ void ARoomPlannerManager::RemoveWall(int32 SegmentID)
 		return;
 	}
 
+	if (SelectedSegmentID == SegmentID)
+	{
+		ClearWallSelection();
+	}
+
 	if (FWallNode* StartNode = Nodes.Find(Seg.StartNodeID))
 	{
 		StartNode->ConnectedSegmentIDs.Remove(SegmentID);
+		if (StartNode->ConnectedSegmentIDs.Num() == 0)
+		{
+			Nodes.Remove(Seg.StartNodeID);
+		}
 	}
 	if (FWallNode* EndNode = Nodes.Find(Seg.EndNodeID))
 	{
 		EndNode->ConnectedSegmentIDs.Remove(SegmentID);
+		if (EndNode->ConnectedSegmentIDs.Num() == 0)
+		{
+			Nodes.Remove(Seg.EndNodeID);
+		}
 	}
 
 	if (TObjectPtr<AProceduralWallActor>* ActorPtr = WallActors.Find(SegmentID))
@@ -467,6 +480,9 @@ void ARoomPlannerManager::RemoveWall(int32 SegmentID)
 
 	RebuildAllWalls();
 	RebuildRooms();
+	ReplicatedRoomJSON = ExportLayoutToJSON();
+	OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+	OnWallSelected.Broadcast(-1, 0.f);
 }
 
 void ARoomPlannerManager::ClearLayout()
@@ -2151,40 +2167,56 @@ bool ARoomPlannerManager::UpdateOpeningPosition(int32 SegmentID, int32 OpeningIn
 			float WallLen = FVector2D::Distance(P1, P2);
 			float HalfW = Seg.Openings[OpeningIndex].Width * 0.5f;
 
-			float MinDist = HalfW + 5.f;
-			float MaxDist = WallLen - HalfW - 5.f;
-			float CurrentDist = Seg.Openings[OpeningIndex].DistanceFromStart;
+			float WallMinDist = HalfW + 5.f;
+			float WallMaxDist = WallLen - HalfW - 5.f;
+			if (WallMinDist > WallMaxDist)
+			{
+				WallMinDist = WallLen * 0.5f;
+				WallMaxDist = WallMinDist;
+			}
 
+			float CandidateDist = FMath::Clamp(NewDistFromStartCm, WallMinDist, WallMaxDist);
+			FString DraggedOpID = Seg.Openings[OpeningIndex].OpeningID;
+
+			// Handle snap-through collision against other openings to allow swapping sides
 			for (int32 i = 0; i < Seg.Openings.Num(); ++i)
 			{
 				if (i == OpeningIndex) continue;
 				const FWallOpening& Other = Seg.Openings[i];
 				float OtherHalfW = Other.Width * 0.5f;
-				if (Other.DistanceFromStart < CurrentDist)
+				float MinClearance = HalfW + OtherHalfW + 5.f;
+
+				if (FMath::Abs(CandidateDist - Other.DistanceFromStart) < MinClearance)
 				{
-					float LeftBound = Other.DistanceFromStart + OtherHalfW + 5.f + HalfW;
-					if (LeftBound > MinDist)
+					if (CandidateDist >= Other.DistanceFromStart)
 					{
-						MinDist = LeftBound;
+						// Snap to the right side of Other
+						CandidateDist = FMath::Min(WallMaxDist, Other.DistanceFromStart + MinClearance);
 					}
-				}
-				else
-				{
-					float RightBound = Other.DistanceFromStart - OtherHalfW - 5.f - HalfW;
-					if (RightBound < MaxDist)
+					else
 					{
-						MaxDist = RightBound;
+						// Snap to the left side of Other
+						CandidateDist = FMath::Max(WallMinDist, Other.DistanceFromStart - MinClearance);
 					}
 				}
 			}
 
-			if (MinDist > MaxDist)
+			Seg.Openings[OpeningIndex].DistanceFromStart = CandidateDist;
+
+			// Sort openings by distance from start to maintain topological order
+			Seg.Openings.Sort([](const FWallOpening& A, const FWallOpening& B) {
+				return A.DistanceFromStart < B.DistanceFromStart;
+			});
+
+			// Re-acquire index of the dragged opening after sorting
+			int32 NewDraggedIndex = Seg.Openings.IndexOfByPredicate([&](const FWallOpening& Op) {
+				return Op.OpeningID == DraggedOpID;
+			});
+
+			if (NewDraggedIndex != INDEX_NONE && SelectedSegmentID == SegmentID)
 			{
-				MinDist = FMath::Min(MinDist, MaxDist);
+				SelectedOpeningIndex = NewDraggedIndex;
 			}
-
-			float ClampedDist = FMath::Clamp(NewDistFromStartCm, MinDist, MaxDist);
-			Seg.Openings[OpeningIndex].DistanceFromStart = ClampedDist;
 
 			if (TObjectPtr<AProceduralWallActor>* ActorPtr = WallActors.Find(SegmentID))
 			{

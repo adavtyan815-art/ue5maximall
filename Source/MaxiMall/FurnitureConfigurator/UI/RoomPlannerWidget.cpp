@@ -236,6 +236,9 @@ void URoomPlannerWidget::OnDeleteToolClicked()
 					PC->Server_DeleteWall(PlannerManager->SelectedSegmentID);
 				}
 			}
+			PlannerManager->ClearWallSelection();
+			if (OpeningPropertiesPanel) OpeningPropertiesPanel->SetVisibility(ESlateVisibility::Collapsed);
+			if (WallPropertiesPanel) WallPropertiesPanel->SetVisibility(ESlateVisibility::Collapsed);
 		}
 		else
 		{
