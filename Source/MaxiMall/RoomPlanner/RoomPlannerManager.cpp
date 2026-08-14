@@ -347,77 +347,7 @@ void ARoomPlannerManager::ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FV
                                                      TMap<int32, FVector2D>& OutEndLeftOffsets,
                                                      TMap<int32, FVector2D>& OutEndRightOffsets)
 {
-	const FWallNode* Node = Nodes.Find(NodeID);
-	if (!Node || Node->ConnectedSegmentIDs.Num() != 2)
-	{
-		return;
-	}
-
-	int32 SegA_ID = Node->ConnectedSegmentIDs[0];
-	int32 SegB_ID = Node->ConnectedSegmentIDs[1];
-
-	FWallSegment* SegA = WallSegments.Find(SegA_ID);
-	FWallSegment* SegB = WallSegments.Find(SegB_ID);
-
-	if (!SegA || !SegB) return;
-
-	bool bNodeIsStartA = (SegA->StartNodeID == NodeID);
-	bool bNodeIsStartB = (SegB->StartNodeID == NodeID);
-
-	FVector2D PosNode = Node->Position;
-	FVector2D OtherA = bNodeIsStartA ? Nodes[SegA->EndNodeID].Position : Nodes[SegA->StartNodeID].Position;
-	FVector2D OtherB = bNodeIsStartB ? Nodes[SegB->EndNodeID].Position : Nodes[SegB->StartNodeID].Position;
-
-	FVector2D DirA = (OtherA - PosNode).GetSafeNormal();
-	FVector2D DirB = (OtherB - PosNode).GetSafeNormal();
-
-	float Cross = DirA.X * DirB.Y - DirA.Y * DirB.X;
-	float Dot = DirA.X * DirB.X + DirA.Y * DirB.Y;
-
-	// If not collinear or nearly parallel
-	if (FMath::Abs(Cross) > 0.05f)
-	{
-		float hA = SegA->Thickness * 0.5f;
-		float hB = SegB->Thickness * 0.5f;
-
-		float LenA = FVector2D::Distance(PosNode, OtherA);
-		float LenB = FVector2D::Distance(PosNode, OtherB);
-		float MaxMiterA = FMath::Min(SegA->Thickness * 2.0f, LenA * 0.45f);
-		float MaxMiterB = FMath::Min(SegB->Thickness * 2.0f, LenB * 0.45f);
-
-		// Intersection distances along DirA and DirB
-		float tL = (hB + hA * Dot) / Cross;
-		float sL = (hA + hB * Dot) / Cross;
-
-		tL = FMath::Clamp(tL, -MaxMiterA, MaxMiterA);
-		sL = FMath::Clamp(sL, -MaxMiterB, MaxMiterB);
-
-		float tR = -tL;
-		float sR = -sL;
-
-		// Map to segment Start/End corners
-		if (bNodeIsStartA)
-		{
-			OutStartLeftOffsets.Add(SegA_ID, DirA * tL);
-			OutStartRightOffsets.Add(SegA_ID, DirA * tR);
-		}
-		else
-		{
-			OutEndRightOffsets.Add(SegA_ID, DirA * tL);
-			OutEndLeftOffsets.Add(SegA_ID, DirA * tR);
-		}
-
-		if (bNodeIsStartB)
-		{
-			OutStartRightOffsets.Add(SegB_ID, DirB * sL);
-			OutStartLeftOffsets.Add(SegB_ID, DirB * sR);
-		}
-		else
-		{
-			OutEndLeftOffsets.Add(SegB_ID, DirB * sL);
-			OutEndRightOffsets.Add(SegB_ID, DirB * sR);
-		}
-	}
+	// Rectangular CAD wall prisms are used with solid end caps to maintain uniform wall cross-sections and prevent trapezoidal corner distortion.
 }
 
 void ARoomPlannerManager::RebuildAllWalls()
