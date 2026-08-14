@@ -29,7 +29,6 @@ public class MaxiMall : ModuleRules
 			"JsonUtilities",
 			"ApplicationCore",
 			"RenderCore",
-			"DatasmithContent",
 			"ProceduralMeshComponent",
 		});
 

@@ -129,8 +129,12 @@ private:
     TArray<FString> MockDatesList;
     TArray<TSharedPtr<class FJsonObject>> LoadedSaves;
 
+    FString PendingSaveId;
     FString PendingSaveName;
+    FTimerHandle ScreenshotTimeoutTimerHandle;
+    bool bWaitingForScreenshot = false;
+    void OnScreenshotTimeout();
     void OnScreenshotCapturedHandler(int32 Width, int32 Height, const TArray<FColor>& Colors);
-    void ExecuteSaveGame(const FString& InSaveName, const FString& Base64Thumbnail);
+    void ExecuteSaveGame(const FString& InSaveId, const FString& InSaveName, const FString& Base64Thumbnail);
     UTexture2D* LoadTextureFromBase64(const FString& Base64String);
 };

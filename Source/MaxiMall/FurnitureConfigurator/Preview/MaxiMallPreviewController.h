@@ -1,4 +1,4 @@
-﻿//
+//
 // Created by Siqi Wu on 1/17/25.
 //
 
@@ -102,20 +102,6 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Trace Furniture Component"))
     bool TraceFurnitureComponent(AShowroomBooth*& OutBooth, EFurnitureComponentType& OutComponentType, UPrimitiveComponent*& OutHitComponent);
 
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | BIM", meta = (DisplayName = "Has BIM Metadata"))
-    static bool HasBIMMetadata(UPrimitiveComponent* Component);
-
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | BIM", meta = (DisplayName = "Get BIM Element Data"))
-    static bool GetBIMElementData(UPrimitiveComponent* Component, FBIMElementData& OutData);
-
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | BIM", meta = (DisplayName = "Select All Components of Category"))
-    int32 SelectAllComponentsOfCategory(const FString& CategoryName);
-
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | BIM", meta = (DisplayName = "Calculate Selected Quantity"))
-    void CalculateSelectedQuantity(float& OutTotalAreaM2, float& OutTotalLengthM) const;
-
-    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | BIM")
-    TArray<TObjectPtr<UPrimitiveComponent>> MultiSelectedComponents;
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Handle Double-Click Interaction"))
     void HandleDoubleClickInteraction();
@@ -149,21 +135,6 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction", meta = (DisplayName = "Select Component"))
     void SelectComponent(UPrimitiveComponent* ComponentToSelect);
 
-    /**
-     * Toggles the broadcast of this player's currently selected mesh to all
-     * other connected clients. All clients apply CustomDepthStencilValue=3
-     * (shared-selection outline) to that mesh.
-     * Calling again, or closing the BIM Inspector, deactivates the broadcast.
-     * Wired to the Share button in WBP_BIMInspector.
-     */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Interaction",
-              meta = (DisplayName = "Toggle Shared Selection"))
-    bool ToggleSharedSelection();
-
-    /** True while this controller has an active shared-selection broadcast. */
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Interaction",
-              meta = (DisplayName = "Is Shared Selection Active"))
-    bool IsSharedSelectionActive() const { return bSharedSelectionActive; }
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Interaction", meta = (DisplayName = "Get Selected Component"))
     UPrimitiveComponent* GetSelectedComponent() const;
@@ -206,9 +177,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     TSubclassOf<UUserWidget> ViewmodeOverlayClass;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
-    TSubclassOf<UUserWidget> BIMInspectorClass;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
     TSubclassOf<UUserWidget> RoomPlannerClass;
 
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
@@ -219,9 +187,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
 
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> ViewmodeOverlayInstance;
-
-    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
-    TObjectPtr<UUserWidget> BIMInspectorInstance;
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
@@ -247,22 +212,6 @@ protected:
     bool Server_RequestBoothCustomColorChange_Validate(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
     void Server_RequestBoothCustomColorChange_Implementation(AShowroomBooth* TargetBooth, EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial);
 
-    /**
-     * Server RPC: tells the server to broadcast a shared-selection highlight
-     * for ComponentName on ComponentOwner to all clients.
-     * bActivate=true  в†’ apply stencil 3 on all clients.
-     * bActivate=false в†’ clear stencil 3 on all clients (restoring local state).
-     */
-    UFUNCTION(Server, Reliable, WithValidation)
-    void Server_SetSharedSelection(AActor* ComponentOwner,
-                                   const FString& ComponentName,
-                                   bool bActivate);
-
-    /** Client RPC: received by each client controller; applies/clears stencil 3. */
-    UFUNCTION(Client, Reliable)
-    void Client_ApplySharedSelection(AActor* ComponentOwner,
-                                      const FString& ComponentName,
-                                      bool bActivate);
 
 private:
     UPROPERTY()
@@ -310,23 +259,6 @@ private:
     float ClipboardCheckInterval = 0.2f;
     float ClipboardCheckTimer = 0.0f;
 
-    // в”Ђв”Ђ Shared-Selection State в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-
-    /** True while this controller has broadcast its selection to all others. */
-    bool bSharedSelectionActive = false;
-
-    /**
-     * The component currently being broadcast. Tracked so we know what to
-     * clear when sharing stops (SelectComponent(nullptr) auto-deactivates).
-     */
-    TWeakObjectPtr<UPrimitiveComponent> SharedSelectionComponent;
-
-    /**
-     * Components that OTHER players (or this player) are sharing with us.
-     * Populated by Multicast_ApplySharedSelection.
-     * Used to restore stencil=3 after local hover clears it.
-     */
-    TSet<TWeakObjectPtr<UPrimitiveComponent>> SharedHighlights;
 
     UFUNCTION()
     void OnPixelStreamingInput(const FString& Descriptor);

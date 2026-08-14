@@ -2,6 +2,8 @@
 
 #include "FurnitureConfigurator/UI/SaveSystemWidget.h"
 #include "FurnitureConfigurator/UI/SaveHistoryItemWidget.h"
+#include "FurnitureConfigurator/ShowroomBooth.h"
+#include "FurnitureConfigurator/Preview/MaxiMallPreviewController.h"
 #include "Components/Button.h"
 #include "Components/EditableTextBox.h"
 #include "Components/ScrollBox.h"
@@ -18,6 +20,10 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Kismet/GameplayStatics.h"
+#include "ImageUtils.h"
+#include "Misc/Base64.h"
+#include "UnrealClient.h"
 
 void USaveSystemWidget::NativeConstruct()
 {
@@ -76,49 +82,238 @@ void USaveSystemWidget::OnSaveClicked()
             return;
         }
 
-        FString UserName = GetActiveUserName();
-        FString SaveId = FGuid::NewGuid().ToString();
-        FString CurrentDate = FDateTime::Now().ToString(TEXT("%d.%m.%Y")); // e.g. "14.07.2026"
+        PendingSaveId = FGuid::NewGuid().ToString();
+        PendingSaveName = SaveName;
 
-        UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][POST] Initiating save request: Name='%s', User='%s', SaveId='%s', Date='%s'"), 
-            *SaveName, *UserName, *SaveId, *CurrentDate);
+        // 1. Save the layout state immediately with an empty/default thumbnail
+        UE_LOG(LogTemp, Warning, TEXT("[SaveSystem] Executing initial save request immediately."));
+        ExecuteSaveGame(PendingSaveId, PendingSaveName, TEXT(""));
 
-        // Construct JSON request body
-        TSharedPtr<FJsonObject> JsonObject = MakeShareable(new FJsonObject());
-        JsonObject->SetStringField(TEXT("username"), UserName);
-        JsonObject->SetStringField(TEXT("saveId"), SaveId);
-        JsonObject->SetStringField(TEXT("saveName"), SaveName);
-        JsonObject->SetStringField(TEXT("date"), CurrentDate);
-
-        FString RequestBody;
-        TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBody);
-        FJsonSerializer::Serialize(JsonObject.ToSharedRef(), Writer);
-
-        // HTTP POST request
-        TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-        Request->SetURL(FString::Printf(TEXT("%s/api/saves"), *GetBackendBaseURL()));
-        Request->SetVerb(TEXT("POST"));
-        Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-        Request->SetContentAsString(RequestBody);
-
-        Request->OnProcessRequestComplete().BindUObject(this, &USaveSystemWidget::OnPostSaveComplete);
-        Request->ProcessRequest();
-
-        UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][POST] HTTP request dispatched to /api/saves."));
+        // 2. Request viewport capture in the background to update the thumbnail later
+        UGameViewportClient* ViewportClient = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+        if (ViewportClient)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][Screenshot] Requesting background viewport capture."));
+            ViewportClient->OnScreenshotCaptured().AddUObject(this, &USaveSystemWidget::OnScreenshotCapturedHandler);
+            FScreenshotRequest::RequestScreenshot(false);
+        }
 
         // Clear input box
         SaveNameInput->SetText(FText::GetEmpty());
     }
 }
 
+void USaveSystemWidget::OnScreenshotTimeout()
+{
+    // Obsolete: timeout is no longer needed as saving is immediate.
+}
+
+void USaveSystemWidget::OnScreenshotCapturedHandler(int32 Width, int32 Height, const TArray<FColor>& Colors)
+{
+    if (GEngine && GEngine->GameViewport)
+    {
+        GEngine->GameViewport->OnScreenshotCaptured().RemoveAll(this);
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][Screenshot] Background capture callback received: %dx%d"), Width, Height);
+
+    // Calculate crop dimensions to crop the largest possible square from the center of the viewport
+    int32 CropSize = FMath::Min(Width, Height);
+    int32 StartX = (Width - CropSize) / 2;
+    int32 StartY = (Height - CropSize) / 2;
+
+    int32 TargetWidth = 256;
+    int32 TargetHeight = 256;
+    TArray<FColor> ResizedColors;
+    ResizedColors.AddUninitialized(TargetWidth * TargetHeight);
+
+    for (int32 y = 0; y < TargetHeight; ++y)
+    {
+        for (int32 x = 0; x < TargetWidth; ++x)
+        {
+            // Map target square coordinate back to cropped viewport source coordinates
+            int32 SourceX = StartX + FMath::Clamp(x * CropSize / TargetWidth, 0, CropSize - 1);
+            int32 SourceY = StartY + FMath::Clamp(y * CropSize / TargetHeight, 0, CropSize - 1);
+
+            FColor Pixel = Colors[SourceY * Width + SourceX];
+            
+            // Force Alpha to 255 to ensure full opacity and prevent transparent rendering issues
+            Pixel.A = 255;
+
+            ResizedColors[y * TargetWidth + x] = Pixel;
+        }
+    }
+
+    TArray<uint8> CompressedBytes;
+    FImageUtils::CompressImageArray(TargetWidth, TargetHeight, ResizedColors, CompressedBytes);
+
+    FString Base64Thumbnail = FBase64::Encode(CompressedBytes);
+    UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][Screenshot] Base64 compressed thumbnail string size: %d characters."), Base64Thumbnail.Len());
+
+    // 3. Update the existing save with the captured thumbnail
+    ExecuteSaveGame(PendingSaveId, PendingSaveName, Base64Thumbnail);
+}
+
+void USaveSystemWidget::ExecuteSaveGame(const FString& InSaveId, const FString& InSaveName, const FString& Base64Thumbnail)
+{
+    FString UserName = GetActiveUserName();
+    FString SaveId = InSaveId;
+    FString CurrentDate = FDateTime::Now().ToString(TEXT("%d.%m.%Y")); // e.g. "14.07.2026"
+
+    UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][POST] Dispatching save request: Name='%s', User='%s', SaveId='%s', Date='%s'"), 
+        *InSaveName, *UserName, *SaveId, *CurrentDate);
+
+    // Construct JSON request body
+    TSharedPtr<FJsonObject> JsonObject = MakeShareable(new FJsonObject());
+    JsonObject->SetStringField(TEXT("username"), UserName);
+    JsonObject->SetStringField(TEXT("saveId"), SaveId);
+    JsonObject->SetStringField(TEXT("saveName"), InSaveName);
+    JsonObject->SetStringField(TEXT("date"), CurrentDate);
+    JsonObject->SetStringField(TEXT("thumbnail"), Base64Thumbnail);
+
+    // Gather all Showroom Booth states currently in the level
+    TArray<TSharedPtr<FJsonValue>> BoothStatesJsonArray;
+    TArray<AActor*> FoundBooths;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AShowroomBooth::StaticClass(), FoundBooths);
+
+    UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][POST] Capturing configuration states for %d ShowroomBooths."), FoundBooths.Num());
+
+    for (AActor* Actor : FoundBooths)
+    {
+        AShowroomBooth* Booth = Cast<AShowroomBooth>(Actor);
+        if (Booth)
+        {
+            TSharedPtr<FJsonObject> BoothJson = MakeShareable(new FJsonObject());
+            BoothJson->SetStringField(TEXT("boothName"), Booth->GetName());
+
+            TSharedPtr<FJsonObject> StateJson = MakeShareable(new FJsonObject());
+            StateJson->SetStringField(TEXT("productID"), Booth->ActiveState.ProductID.ToString());
+            StateJson->SetNumberField(TEXT("activeSizeIndex"), Booth->ActiveState.ActiveSizeIndex);
+            StateJson->SetNumberField(TEXT("activeColorIndex"), Booth->ActiveState.ActiveColorIndex);
+            StateJson->SetNumberField(TEXT("countertopSizeIndex"), Booth->ActiveState.CountertopSizeIndex);
+            StateJson->SetNumberField(TEXT("activeCountertopColorIndex"), Booth->ActiveState.ActiveCountertopColorIndex);
+            StateJson->SetNumberField(TEXT("closetSizeIndex"), Booth->ActiveState.ClosetSizeIndex);
+            StateJson->SetNumberField(TEXT("closetColorIndex"), Booth->ActiveState.ClosetColorIndex);
+            StateJson->SetNumberField(TEXT("sinkSizeIndex"), Booth->ActiveState.SinkSizeIndex);
+            StateJson->SetNumberField(TEXT("sinkColorIndex"), Booth->ActiveState.SinkColorIndex);
+            StateJson->SetNumberField(TEXT("faucetSizeIndex"), Booth->ActiveState.FaucetSizeIndex);
+            StateJson->SetNumberField(TEXT("faucetColorIndex"), Booth->ActiveState.FaucetColorIndex);
+            StateJson->SetNumberField(TEXT("mirrorSizeIndex"), Booth->ActiveState.MirrorSizeIndex);
+            StateJson->SetNumberField(TEXT("mirrorColorIndex"), Booth->ActiveState.MirrorColorIndex);
+
+            BoothJson->SetObjectField(TEXT("state"), StateJson);
+            BoothStatesJsonArray.Add(MakeShareable(new FJsonValueObject(BoothJson)));
+        }
+    }
+    JsonObject->SetArrayField(TEXT("boothStates"), BoothStatesJsonArray);
+
+    FString RequestBody;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBody);
+    FJsonSerializer::Serialize(JsonObject.ToSharedRef(), Writer);
+
+    // HTTP POST request
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(FString::Printf(TEXT("%s/api/saves"), *GetBackendBaseURL()));
+    Request->SetVerb(TEXT("POST"));
+    Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    Request->SetTimeout(5.0f);
+    Request->SetContentAsString(RequestBody);
+
+    Request->OnProcessRequestComplete().BindUObject(this, &USaveSystemWidget::OnPostSaveComplete);
+    Request->ProcessRequest();
+
+    UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][POST] HTTP request dispatched to /api/saves."));
+}
+
 void USaveSystemWidget::OnLastSaveLoadClicked()
 {
-    UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][LOAD] Clicked Load on last save panel. Loading trigger pending."));
+    if (MockNamesList.Num() > 0 && LoadedSaves.Num() > 0)
+    {
+        FString LastSaveId = LoadedSaves[LoadedSaves.Num() - 1]->GetStringField(TEXT("saveId"));
+        UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][LOAD] Loading most recent save. ID='%s'"), *LastSaveId);
+        HandleLoadSaveItem(LastSaveId);
+    }
 }
 
 void USaveSystemWidget::HandleLoadSaveItem(FString SaveId)
 {
     UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][LOAD] Selected load item with SaveId='%s' from history grid."), *SaveId);
+
+    TSharedPtr<FJsonObject> TargetSave;
+    for (const auto& Save : LoadedSaves)
+    {
+        if (Save->GetStringField(TEXT("saveId")) == SaveId)
+        {
+            TargetSave = Save;
+            break;
+        }
+    }
+
+    if (TargetSave.IsValid())
+    {
+        const TArray<TSharedPtr<FJsonValue>>* BoothStatesArray;
+        if (TargetSave->TryGetArrayField(TEXT("boothStates"), BoothStatesArray))
+        {
+            APlayerController* PC = GetOwningPlayer();
+            AMaxiMallPreviewController* AwsPC = Cast<AMaxiMallPreviewController>(PC);
+            if (AwsPC)
+            {
+                TArray<AActor*> FoundBooths;
+                UGameplayStatics::GetAllActorsOfClass(GetWorld(), AShowroomBooth::StaticClass(), FoundBooths);
+
+                UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][LOAD] Loaded save record. Applying config states to %d booths in world."), BoothStatesArray->Num());
+
+                for (const auto& Val : *BoothStatesArray)
+                {
+                    TSharedPtr<FJsonObject> BoothObj = Val->AsObject();
+                    if (BoothObj.IsValid())
+                    {
+                        FString BoothName = BoothObj->GetStringField(TEXT("boothName"));
+                        TSharedPtr<FJsonObject> StateObj = BoothObj->GetObjectField(TEXT("state"));
+                        if (StateObj.IsValid())
+                        {
+                            // Find the matching booth actor in the level
+                            AShowroomBooth* TargetBooth = nullptr;
+                            for (AActor* Actor : FoundBooths)
+                            {
+                                if (Actor->GetName() == BoothName)
+                                {
+                                    TargetBooth = Cast<AShowroomBooth>(Actor);
+                                    break;
+                                }
+                            }
+
+                            if (TargetBooth)
+                            {
+                                // Reconstruct FShowroomBoothConfigState
+                                FShowroomBoothConfigState State;
+                                State.ProductID = FName(*StateObj->GetStringField(TEXT("productID")));
+                                State.ActiveSizeIndex = StateObj->GetIntegerField(TEXT("activeSizeIndex"));
+                                State.ActiveColorIndex = StateObj->GetIntegerField(TEXT("activeColorIndex"));
+                                State.CountertopSizeIndex = StateObj->GetIntegerField(TEXT("countertopSizeIndex"));
+                                State.ActiveCountertopColorIndex = StateObj->GetIntegerField(TEXT("activeCountertopColorIndex"));
+                                State.ClosetSizeIndex = StateObj->GetIntegerField(TEXT("closetSizeIndex"));
+                                State.ClosetColorIndex = StateObj->GetIntegerField(TEXT("closetColorIndex"));
+                                State.SinkSizeIndex = StateObj->GetIntegerField(TEXT("sinkSizeIndex"));
+                                State.SinkColorIndex = StateObj->GetIntegerField(TEXT("sinkColorIndex"));
+                                State.FaucetSizeIndex = StateObj->GetIntegerField(TEXT("faucetSizeIndex"));
+                                State.FaucetColorIndex = StateObj->GetIntegerField(TEXT("faucetColorIndex"));
+                                State.MirrorSizeIndex = StateObj->GetIntegerField(TEXT("mirrorSizeIndex"));
+                                State.MirrorColorIndex = StateObj->GetIntegerField(TEXT("mirrorColorIndex"));
+
+                                UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][LOAD] Dispatching server RPC for booth '%s'"), *BoothName);
+                                AwsPC->Server_LoadBoothState(TargetBooth, State);
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("[SaveSystem][LOAD] Owning Player Controller is not AMaxiMallPreviewController. Cannot load."));
+            }
+        }
+    }
 }
 
 void USaveSystemWidget::HandleDeleteSaveItem(FString SaveId)
@@ -133,6 +328,7 @@ void USaveSystemWidget::HandleDeleteSaveItem(FString SaveId)
     Request->SetURL(RequestUrl);
     Request->SetVerb(TEXT("DELETE"));
     Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    Request->SetTimeout(5.0f);
 
     Request->OnProcessRequestComplete().BindUObject(this, &USaveSystemWidget::OnDeleteSaveComplete);
     Request->ProcessRequest();
@@ -154,9 +350,17 @@ void USaveSystemWidget::SetLastSaveDetails(const FString& SaveName, const FStrin
         LastSaveDate->SetText(FText::FromString(Date));
     }
 
-    if (LastSaveThumbnail && Thumbnail)
+    if (LastSaveThumbnail)
     {
-        LastSaveThumbnail->SetBrushFromTexture(Thumbnail);
+        if (Thumbnail)
+        {
+            LastSaveThumbnail->SetBrushFromTexture(Thumbnail);
+            // Retain user's custom layout definitions (e.g. 126x126) and scale texture inside the widget bounds
+        }
+        else
+        {
+            LastSaveThumbnail->SetBrushFromTexture(nullptr);
+        }
     }
 }
 
@@ -186,6 +390,7 @@ void USaveSystemWidget::RefreshSaveHistory()
     Request->SetURL(RequestUrl);
     Request->SetVerb(TEXT("GET"));
     Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    Request->SetTimeout(5.0f);
 
     Request->OnProcessRequestComplete().BindUObject(this, &USaveSystemWidget::OnGetSavesComplete);
     Request->ProcessRequest();
@@ -223,8 +428,13 @@ void USaveSystemWidget::OnGetSavesComplete(FHttpRequestPtr Request, FHttpRespons
         const TArray<TSharedPtr<FJsonValue>>* JsonArray;
         if (JsonValue->TryGetArray(JsonArray))
         {
+            if (SaveHistoryScrollBox)
+            {
+                SaveHistoryScrollBox->ClearChildren();
+            }
             MockNamesList.Empty();
             MockDatesList.Empty();
+            LoadedSaves.Empty();
             TArray<FString> MockIds;
 
             for (const auto& Val : *JsonArray)
@@ -239,6 +449,7 @@ void USaveSystemWidget::OnGetSavesComplete(FHttpRequestPtr Request, FHttpRespons
                     MockNamesList.Add(SaveName);
                     MockDatesList.Add(Date);
                     MockIds.Add(SaveId);
+                    LoadedSaves.Add(Obj);
                 }
             }
 
@@ -250,8 +461,12 @@ void USaveSystemWidget::OnGetSavesComplete(FHttpRequestPtr Request, FHttpRespons
 
             if (SaveCount > 0)
             {
+                // Decode the last save's thumbnail texture
+                FString LastSaveThumbnailBase64 = LoadedSaves[SaveCount - 1]->GetStringField(TEXT("thumbnail"));
+                UTexture2D* LastSaveDecodedTexture = LoadTextureFromBase64(LastSaveThumbnailBase64);
+
                 // Update "Last Save" section with the most recent item
-                SetLastSaveDetails(MockNamesList[SaveCount - 1], MockDatesList[SaveCount - 1], nullptr);
+                SetLastSaveDetails(MockNamesList[SaveCount - 1], MockDatesList[SaveCount - 1], LastSaveDecodedTexture);
 
                 // Build uniform grid layout
                 UUniformGridPanel* GridPanel = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
@@ -264,7 +479,10 @@ void USaveSystemWidget::OnGetSavesComplete(FHttpRequestPtr Request, FHttpRespons
                         USaveHistoryItemWidget* NewItem = CreateWidget<USaveHistoryItemWidget>(this, SaveHistoryItemClass);
                         if (NewItem)
                         {
-                            NewItem->SetupItem(MockIds[i], MockNamesList[i], MockDatesList[i], nullptr);
+                            FString ItemThumbnailBase64 = LoadedSaves[i]->GetStringField(TEXT("thumbnail"));
+                            UTexture2D* ItemDecodedTexture = LoadTextureFromBase64(ItemThumbnailBase64);
+
+                            NewItem->SetupItem(MockIds[i], MockNamesList[i], MockDatesList[i], ItemDecodedTexture);
 
                             // Bind callbacks
                             NewItem->OnLoadPressed.AddUniqueDynamic(this, &USaveSystemWidget::HandleLoadSaveItem);
@@ -393,9 +611,21 @@ void USaveSystemWidget::UpdateUIVisibility(int32 SaveCount)
 FString USaveSystemWidget::GetBackendBaseURL() const
 {
     FString CommandLine = FCommandLine::Get();
-    FString PixelStreamingURL;
+    
+    // 1. Check for custom BackendURL parameter
+    FString CustomBackendURL;
+    if (FParse::Value(*CommandLine, TEXT("-BackendURL="), CustomBackendURL))
+    {
+        // Strip trailing slash if present
+        if (CustomBackendURL.EndsWith(TEXT("/")))
+        {
+            CustomBackendURL.LeftChopInline(1);
+        }
+        return CustomBackendURL;
+    }
 
-    // Retrieve host from standard Pixel Streaming launch argument
+    // 2. Retrieve host from standard Pixel Streaming launch argument
+    FString PixelStreamingURL;
     if (FParse::Value(*CommandLine, TEXT("-PixelStreamingURL="), PixelStreamingURL))
     {
         FString HostAndPort = PixelStreamingURL;
@@ -424,6 +654,27 @@ FString USaveSystemWidget::GetBackendBaseURL() const
         }
     }
 
-    // Default local fallback to PC 1 IP address
-    return TEXT("http://192.168.10.138:3000");
+    // 3. Default local fallback to AWS backend
+    return TEXT("https://18-185-5-251.nip.io");
+}
+
+UTexture2D* USaveSystemWidget::LoadTextureFromBase64(const FString& Base64String)
+{
+    if (Base64String.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    TArray<uint8> DecodedBytes;
+    if (FBase64::Decode(Base64String, DecodedBytes))
+    {
+        UTexture2D* Texture = FImageUtils::ImportBufferAsTexture2D(DecodedBytes);
+        if (Texture)
+        {
+            Texture->SRGB = true;
+            Texture->UpdateResource();
+            return Texture;
+        }
+    }
+    return nullptr;
 }

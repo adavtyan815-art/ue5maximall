@@ -1,4 +1,4 @@
-﻿#include "MaxiMallPreviewController.h"
+#include "MaxiMallPreviewController.h"
 #include "UObject/UObjectIterator.h"
 
 #include <Net/Core/Connection/NetCloseResult.h>
@@ -17,7 +17,6 @@
 #include "Blueprint/UserWidget.h"
 #include "FurnitureConfigurator/UI/ConfiguratorMainWidget.h"
 #include "FurnitureConfigurator/UI/ViewmodeOverlayWidget.h"
-#include "FurnitureConfigurator/UI/BIMInspectorWidget.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/SViewport.h"
 #include "Engine/LocalPlayer.h"
@@ -33,9 +32,6 @@
 // FShaderPipelineCache::SetBatchMode(Fast) was stalling the game thread for
 // ~90-150 s on every level load while compiling all Vulkan PSOs synchronously.
 // Background PSO compilation is now driven by DefaultEngine.ini:
-//   r.ShaderPipelineCache.Enabled=1  |  BackgroundBatchSize=20  |  PrecompileBatchTime=0.01
-#include "DatasmithAssetUserData.h"
-#include "DatasmithContentBlueprintLibrary.h"
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "RoomPlanner/RoomPlannerManager.h"
@@ -178,11 +174,6 @@ void AMaxiMallPreviewController::BeginPlay()
 static bool IsWidgetHoveredGeometrically(UUserWidget* Widget)
 {
     if (!Widget || !Widget->IsInViewport()) return false;
-
-    if (UBIMInspectorWidget* BIMWidget = Cast<UBIMInspectorWidget>(Widget))
-    {
-        return BIMWidget->IsMouseOverMainPanel();
-    }
 
     if (Widget->IsHovered()) return true;
 
@@ -363,7 +354,7 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
     AShowroomBooth* HitBooth = nullptr;
     bool bHoveringShowroom = false;
     
-    bool bIsMouseOverUI = IsWidgetHoveredGeometrically(BIMInspectorInstance) || IsWidgetHoveredGeometrically(MainWidgetInstance);
+    bool bIsMouseOverUI = IsWidgetHoveredGeometrically(MainWidgetInstance);
 
     bool bIsMouseDown = IsInputKeyDown(EKeys::LeftMouseButton) || IsInputKeyDown(EKeys::RightMouseButton) || bRightMouseIsDragging;
 
@@ -413,49 +404,10 @@ void AMaxiMallPreviewController::PlayerTick(float DeltaTime)
             {
                 bHoveringShowroom = true;
             }
-            else if (HitComp && HasBIMMetadata(HitComp))
-            {
-                NewHoveredComp = HitComp;
-            }
         }
     }
 
-    UPrimitiveComponent* CurrentHovered = HoveredComponent.Get();
-    if (CurrentHovered != NewHoveredComp)
-    {
-        if (CurrentHovered && CurrentHovered != SelectedComponent.Get())
-        {
-            // If another player shared this component, restore stencil 3 instead
-            // of turning off custom depth entirely.
-            if (SharedHighlights.Contains(CurrentHovered))
-            {
-                CurrentHovered->SetRenderCustomDepth(true);
-                CurrentHovered->SetCustomDepthStencilValue(3);
-            }
-            else
-            {
-                CurrentHovered->SetRenderCustomDepth(false);
-            }
-        }
-        else if (CurrentHovered && CurrentHovered == SelectedComponent.Get())
-        {
-            CurrentHovered->SetRenderCustomDepth(true);
-            CurrentHovered->SetCustomDepthStencilValue(2);
-        }
-        
-        if (NewHoveredComp)
-        {
-            NewHoveredComp->SetRenderCustomDepth(true);
-            if (NewHoveredComp != SelectedComponent.Get())
-            {
-                NewHoveredComp->SetCustomDepthStencilValue(1);
-            }
-        }
-        
-        HoveredComponent = NewHoveredComp;
-    }
-
-    const bool bIsAnyHovered = (NewHoveredComp != nullptr || bHoveringShowroom);
+    const bool bIsAnyHovered = bHoveringShowroom;
     if (bIsAnyHovered)
     {
         if (bShowMouseCursor)
@@ -605,7 +557,7 @@ void AMaxiMallPreviewController::OnLeftMouseButtonClicked()
         }
     }
 
-    bool bIsMouseOverUI = IsWidgetHoveredGeometrically(BIMInspectorInstance) || IsWidgetHoveredGeometrically(MainWidgetInstance);
+    bool bIsMouseOverUI = IsWidgetHoveredGeometrically(MainWidgetInstance);
 
     // Single-click selection for BIM elements & furniture components
     if (!ActivePreviewActor && !bIsMouseOverUI)
@@ -646,20 +598,8 @@ void AMaxiMallPreviewController::OnLeftMouseButtonClicked()
 
             if (bIsShowroomActor)
             {
-                // Showroom single left-click does NOT open UI or BIM selection.
+                // Showroom single left-click does NOT open UI or component selection.
                 // Double-click interaction handles opening View Mode.
-            }
-            else if (HasBIMMetadata(HitComp))
-            {
-                // Toggle selection on BIM model: clicking selected mesh deselects it
-                if (SelectedComponent.Get() == HitComp)
-                {
-                    SelectComponent(nullptr);
-                }
-                else
-                {
-                    SelectComponent(HitComp);
-                }
             }
             else
             {
@@ -1698,193 +1638,9 @@ void AMaxiMallPreviewController::OnPixelStreamingInput(const FString& Descriptor
     }
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// ToggleSharedSelection вЂ” called from WBP_BIMInspector Share button.
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-bool AMaxiMallPreviewController::ToggleSharedSelection()
-{
-    if (bSharedSelectionActive)
-    {
-        // в”Ђв”Ђ DEACTIVATE: stop sharing the currently broadcast component в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-        if (SharedSelectionComponent.IsValid())
-        {
-            UPrimitiveComponent* Comp = SharedSelectionComponent.Get();
-            Server_SetSharedSelection(Comp->GetOwner(), Comp->GetName(), false);
-            UE_LOG(LogTemp, Warning,
-                TEXT("[MaxiMall|PC] ToggleSharedSelection: deactivating broadcast for '%s'."),
-                *Comp->GetName());
-        }
-        bSharedSelectionActive = false;
-        SharedSelectionComponent.Reset();
-    }
-    else
-    {
-        // в”Ђв”Ђ ACTIVATE: broadcast the currently selected component to all players в”Ђв”Ђ
-        UPrimitiveComponent* Comp = SelectedComponent.Get();
-        if (!Comp || !Comp->GetOwner() || !HasBIMMetadata(Comp))
-        {
-            // Nothing valid to share.
-            UE_LOG(LogTemp, Warning,
-                TEXT("[MaxiMall|PC] ToggleSharedSelection: no valid BIM component selected вЂ” nothing to share."));
-            return false;
-        }
 
-        Server_SetSharedSelection(Comp->GetOwner(), Comp->GetName(), true);
-        bSharedSelectionActive = true;
-        SharedSelectionComponent = Comp;
-        UE_LOG(LogTemp, Warning,
-            TEXT("[MaxiMall|PC] ToggleSharedSelection: broadcasting '%s' owned by '%s'."),
-            *Comp->GetName(), *Comp->GetOwner()->GetName());
-    }
 
-    // Automatically update BIM Inspector UI text (e.g. TextBlock_93)
-    if (BIMInspectorInstance)
-    {
-        if (UBIMInspectorWidget* BIMWidget = Cast<UBIMInspectorWidget>(BIMInspectorInstance))
-        {
-            BIMWidget->UpdateShareButtonText(bSharedSelectionActive);
-        }
-    }
 
-    // Notify browser so it can update the button label/color.
-    SendDiag_PC(PixelStreamingInput.Get(),
-        FString::Printf(TEXT("[PC] SharedSelection %s."),
-            bSharedSelectionActive ? TEXT("ACTIVATED") : TEXT("DEACTIVATED")));
-
-    return bSharedSelectionActive;
-}
-
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// Server_SetSharedSelection вЂ” validates and calls the NetMulticast.
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-bool AMaxiMallPreviewController::Server_SetSharedSelection_Validate(
-    AActor* ComponentOwner, const FString& ComponentName, bool bActivate)
-{
-    return IsValid(ComponentOwner);
-}
-
-void AMaxiMallPreviewController::Server_SetSharedSelection_Implementation(
-    AActor* ComponentOwner, const FString& ComponentName, bool bActivate)
-{
-    UE_LOG(LogTemp, Warning,
-        TEXT("[MaxiMall|Server] Server_SetSharedSelection: owner='%s' comp='%s' activate=%s"),
-        *ComponentOwner->GetName(), *ComponentName,
-        bActivate ? TEXT("true") : TEXT("false"));
-
-    UWorld* World = GetWorld();
-    if (!World)
-    {
-        return;
-    }
-
-    // Broadcast Client_ApplySharedSelection to EVERY connected PlayerController on the server!
-    // This guarantees all connected clients (Client 1, Client 2, etc.) receive the stencil change.
-    for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
-    {
-        if (AMaxiMallPreviewController* PC = Cast<AMaxiMallPreviewController>(It->Get()))
-        {
-            PC->Client_ApplySharedSelection(ComponentOwner, ComponentName, bActivate);
-        }
-    }
-}
-
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// Client_ApplySharedSelection вЂ” executed on every connected client.
-// Finds the named component on ComponentOwner and applies / removes stencil 3.
-// Local hover (1) and local selection (2) take priority: this function restores
-// them if they were previously set, avoiding visual conflict.
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-void AMaxiMallPreviewController::Client_ApplySharedSelection_Implementation(
-    AActor* ComponentOwner, const FString& ComponentName, bool bActivate)
-{
-    if (!IsValid(ComponentOwner))
-    {
-        UE_LOG(LogTemp, Warning,
-            TEXT("[MaxiMall|Client] Client_ApplySharedSelection: ComponentOwner is null, skipping."));
-        return;
-    }
-
-    // Find the named PrimitiveComponent on the actor.
-    // Component names are deterministic and identical across all clients.
-    UPrimitiveComponent* TargetComp = nullptr;
-    TArray<UPrimitiveComponent*> PrimComps;
-    ComponentOwner->GetComponents<UPrimitiveComponent>(PrimComps);
-    for (UPrimitiveComponent* Comp : PrimComps)
-    {
-        if (Comp && Comp->GetName() == ComponentName)
-        {
-            TargetComp = Comp;
-            break;
-        }
-    }
-
-    if (!TargetComp)
-    {
-        UE_LOG(LogTemp, Warning,
-            TEXT("[MaxiMall|Client] Multicast_ApplySharedSelection: component '%s' not found on '%s'."),
-            *ComponentName, *ComponentOwner->GetName());
-        return;
-    }
-
-    if (bActivate)
-    {
-        // в”Ђв”Ђ Add to our local SharedHighlights tracking set в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-        SharedHighlights.Add(TargetComp);
-
-        // Apply stencil 3 ONLY if local player is not hovering (1) or selecting (2)
-        // this component right now. If they are, their local stencil takes priority,
-        // and PlayerTick will restore stencil 3 when hover/select leaves.
-        const bool bIsLocallyHovered  = (HoveredComponent.Get()  == TargetComp);
-        const bool bIsLocallySelected = (SelectedComponent.Get() == TargetComp);
-
-        if (!bIsLocallyHovered && !bIsLocallySelected)
-        {
-            TargetComp->SetRenderCustomDepth(true);
-            TargetComp->SetCustomDepthStencilValue(3);
-        }
-        // If hovering/selecting: we leave the current stencil (1 or 2) intact.
-        // When hover/select ends, PlayerTick will restore stencil 3 via SharedHighlights.
-
-        UE_LOG(LogTemp, Warning,
-            TEXT("[MaxiMall|Client] SharedSelection ACTIVATED on '%s' (localHovered=%s, localSelected=%s)."),
-            *ComponentName,
-            bIsLocallyHovered  ? TEXT("yes") : TEXT("no"),
-            bIsLocallySelected ? TEXT("yes") : TEXT("no"));
-    }
-    else
-    {
-        // в”Ђв”Ђ Remove from tracking set в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-        SharedHighlights.Remove(TargetComp);
-
-        // Restore the correct local stencil for this client.
-        const bool bIsLocallySelected = (SelectedComponent.Get() == TargetComp);
-        const bool bIsLocallyHovered  = (HoveredComponent.Get()  == TargetComp);
-
-        if (bIsLocallySelected)
-        {
-            // Keep stencil 2 (locally selected вЂ” still clicked on by this player)
-            TargetComp->SetRenderCustomDepth(true);
-            TargetComp->SetCustomDepthStencilValue(2);
-        }
-        else if (bIsLocallyHovered)
-        {
-            // Keep stencil 1 (currently hovered by this player)
-            TargetComp->SetRenderCustomDepth(true);
-            TargetComp->SetCustomDepthStencilValue(1);
-        }
-        else
-        {
-            // Not hovered or selected locally вЂ” clear completely
-            TargetComp->SetRenderCustomDepth(false);
-        }
-
-        UE_LOG(LogTemp, Warning,
-            TEXT("[MaxiMall|Client] SharedSelection DEACTIVATED on '%s' вЂ” restored to %s."),
-            *ComponentName,
-            bIsLocallySelected ? TEXT("stencil 2") :
-            bIsLocallyHovered  ? TEXT("stencil 1") : TEXT("off"));
-    }
-}
 
 void AMaxiMallPreviewController::SendOpenURLToBrowser(const FString& URL)
 {
@@ -1908,158 +1664,21 @@ void AMaxiMallPreviewController::SendOpenURLToBrowser(const FString& URL)
     }
 }
 
-bool AMaxiMallPreviewController::HasBIMMetadata(UPrimitiveComponent* Component)
-{
-    if (!Component)
-    {
-        return false;
-    }
-
-    if (Component->ComponentTags.Contains(TEXT("IgnoreBIM")))
-    {
-        return false;
-    }
-
-    if (AActor* OwnerActor = Component->GetOwner())
-    {
-        if (OwnerActor->ActorHasTag(TEXT("IgnoreBIM")) || OwnerActor->Tags.Contains(TEXT("IgnoreBIM")))
-        {
-            return false;
-        }
-
-        if (Cast<AShowroomBooth>(OwnerActor) || OwnerActor->IsA(AShowroomBooth::StaticClass()) || 
-            OwnerActor->GetName().Contains(TEXT("Showroom")) || OwnerActor->GetClass()->GetName().Contains(TEXT("Showroom")))
-        {
-            return false;
-        }
-    }
-
-    // 1. Check Component Asset User Data
-    if (UDatasmithAssetUserData* AssetUserData = UDatasmithContentBlueprintLibrary::GetDatasmithUserData(Component))
-    {
-        return true;
-    }
-
-    // 2. Check Static Mesh Asset User Data
-    if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(Component))
-    {
-        if (UStaticMesh* MeshAsset = SMC->GetStaticMesh())
-        {
-            if (UDatasmithAssetUserData* MeshUserData = UDatasmithContentBlueprintLibrary::GetDatasmithUserData(MeshAsset))
-            {
-                return true;
-            }
-        }
-    }
-
-    // 3. Check Parent Actor Asset User Data
-    if (AActor* OwnerActor = Component->GetOwner())
-    {
-        if (UDatasmithAssetUserData* ActorUserData = UDatasmithContentBlueprintLibrary::GetDatasmithUserData(OwnerActor))
-        {
-            return true;
-        }
-    }
-
-    // Fallback: If component is part of a Datasmith imported mesh/actor
-    if (AActor* OwnerActor = Component->GetOwner())
-    {
-        if (OwnerActor->GetName().Contains(TEXT("Datasmith")) || OwnerActor->GetClass()->GetName().Contains(TEXT("Datasmith")))
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 void AMaxiMallPreviewController::SelectComponent(UPrimitiveComponent* ComponentToSelect)
 {
-    // Never allow BIM selection or BIM events while inside Viewmode
+    // Never allow component selection while inside Viewmode
     if (ActivePreviewActor != nullptr && ComponentToSelect != nullptr)
     {
         return;
     }
 
-    // в”Ђв”Ђ Auto-deactivate shared selection on any selection change в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-    // Covers both: closing BIM Inspector (ComponentToSelect == nullptr) and
-    // clicking a different mesh while sharing is active.
-    if (bSharedSelectionActive && SharedSelectionComponent.IsValid() &&
-        SharedSelectionComponent.Get() != ComponentToSelect)
-    {
-        UPrimitiveComponent* Shared = SharedSelectionComponent.Get();
-        Server_SetSharedSelection(Shared->GetOwner(), Shared->GetName(), false);
-        bSharedSelectionActive = false;
-        SharedSelectionComponent.Reset();
-        UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|PC] SharedSelection auto-deactivated (selection changed)."));
-    }
-
     UPrimitiveComponent* PrevSelected = SelectedComponent.Get();
-
-    // Clear custom depth from previously selected component if it's no longer hovered
-    if (PrevSelected && PrevSelected != ComponentToSelect && PrevSelected != HoveredComponent.Get())
+    if (PrevSelected && PrevSelected != ComponentToSelect)
     {
-        // Restore shared stencil if another player still has it shared
-        if (SharedHighlights.Contains(PrevSelected))
-        {
-            PrevSelected->SetRenderCustomDepth(true);
-            PrevSelected->SetCustomDepthStencilValue(3);
-        }
-        else
-        {
-            PrevSelected->SetRenderCustomDepth(false);
-        }
-    }
-    else if (PrevSelected && PrevSelected != ComponentToSelect && PrevSelected == HoveredComponent.Get())
-    {
-        // Revert to hover stencil (1)
-        PrevSelected->SetRenderCustomDepth(true);
-        PrevSelected->SetCustomDepthStencilValue(1);
+        PrevSelected->SetRenderCustomDepth(false);
     }
 
     SelectedComponent = ComponentToSelect;
-
-    if (ComponentToSelect && HasBIMMetadata(ComponentToSelect))
-    {
-        // Apply persistent selection stencil (2)
-        ComponentToSelect->SetRenderCustomDepth(true);
-        ComponentToSelect->SetCustomDepthStencilValue(2);
-
-        if (!BIMInspectorInstance && BIMInspectorClass)
-        {
-            BIMInspectorInstance = CreateWidget<UUserWidget>(this, BIMInspectorClass);
-        }
-        if (BIMInspectorInstance)
-        {
-            if (!BIMInspectorInstance->IsInViewport())
-            {
-                BIMInspectorInstance->AddToViewport();
-            }
-            if (UBIMInspectorWidget* BIMWidget = Cast<UBIMInspectorWidget>(BIMInspectorInstance))
-            {
-                BIMWidget->RefreshBIMData(ComponentToSelect);
-            }
-
-            bShowMouseCursor = true;
-            FInputModeGameAndUI InputMode;
-            InputMode.SetWidgetToFocus(BIMInspectorInstance->TakeWidget());
-            InputMode.SetHideCursorDuringCapture(true);
-            InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-            SetInputMode(InputMode);
-        }
-    }
-    else
-    {
-        if (BIMInspectorInstance && BIMInspectorInstance->IsInViewport())
-        {
-            BIMInspectorInstance->RemoveFromParent();
-
-            FInputModeGameAndUI InputMode;
-            InputMode.SetHideCursorDuringCapture(true);
-            InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-            SetInputMode(InputMode);
-        }
-    }
 
     OnComponentSelected(ComponentToSelect);
     OnComponentSelectedDelegate.Broadcast(ComponentToSelect);
@@ -2068,275 +1687,6 @@ void AMaxiMallPreviewController::SelectComponent(UPrimitiveComponent* ComponentT
 UPrimitiveComponent* AMaxiMallPreviewController::GetSelectedComponent() const
 {
     return SelectedComponent.Get();
-}
-
-bool AMaxiMallPreviewController::GetBIMElementData(UPrimitiveComponent* Component, FBIMElementData& OutData)
-{
-    OutData = FBIMElementData();
-
-    if (!Component)
-    {
-        return false;
-    }
-
-    OutData.ElementName = Component->GetName();
-    if (AActor* Owner = Component->GetOwner())
-    {
-        OutData.ElementName = Owner->GetName();
-    }
-
-    TMap<FName, FString> RawMap;
-    TMap<FString, TArray<FBIMMetadataPair>> GroupMap;
-
-    auto ExtractMetaDataFromObj = [&RawMap](UObject* Obj)
-    {
-        if (!Obj) return;
-        if (UDatasmithAssetUserData* CompData = UDatasmithContentBlueprintLibrary::GetDatasmithUserData(Obj))
-        {
-            RawMap.Append(CompData->MetaData);
-        }
-        if (IInterface_AssetUserData* Interface = Cast<IInterface_AssetUserData>(Obj))
-        {
-            if (const TArray<UAssetUserData*>* UserDataArray = Interface->GetAssetUserDataArray())
-            {
-                for (UAssetUserData* UserData : *UserDataArray)
-                {
-                    if (UDatasmithAssetUserData* DatasmithData = Cast<UDatasmithAssetUserData>(UserData))
-                    {
-                        RawMap.Append(DatasmithData->MetaData);
-                    }
-                }
-            }
-        }
-    };
-
-    ExtractMetaDataFromObj(Component);
-
-    if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(Component))
-    {
-        ExtractMetaDataFromObj(SMC->GetStaticMesh());
-    }
-
-    ExtractMetaDataFromObj(Component->GetOwner());
-
-    for (const TPair<FName, FString>& Pair : RawMap)
-    {
-        FString KeyStr = Pair.Key.ToString();
-        FString ValStr = Pair.Value;
-
-        FBIMMetadataPair RawPair;
-        RawPair.Key = KeyStr;
-        RawPair.Value = ValStr;
-        OutData.RawMetadata.Add(RawPair);
-
-        FString CleanKey = KeyStr;
-        if (CleanKey.StartsWith(TEXT("Element*")) || CleanKey.StartsWith(TEXT("Element=")) || CleanKey.StartsWith(TEXT("Element.")) || CleanKey.StartsWith(TEXT("Element_")) || CleanKey.StartsWith(TEXT("Element:")) || CleanKey.StartsWith(TEXT("Element-")))
-        {
-            CleanKey.RightChopInline(8);
-        }
-        else if (CleanKey.StartsWith(TEXT("Type*")) || CleanKey.StartsWith(TEXT("Type=")) || CleanKey.StartsWith(TEXT("Type.")) || CleanKey.StartsWith(TEXT("Type_")) || CleanKey.StartsWith(TEXT("Type:")) || CleanKey.StartsWith(TEXT("Type-")))
-        {
-            CleanKey.RightChopInline(5);
-        }
-
-        FBIMMetadataPair CleanPair;
-        CleanPair.Key = CleanKey;
-        CleanPair.Value = ValStr;
-
-        if (CleanKey.Equals(TEXT("Category"), ESearchCase::IgnoreCase) || CleanKey.Contains(TEXT("Category")))
-        {
-            OutData.Category = ValStr;
-        }
-        else if (CleanKey.Equals(TEXT("Family"), ESearchCase::IgnoreCase) || CleanKey.Contains(TEXT("Family")))
-        {
-            OutData.FamilyName = ValStr;
-        }
-        else if (CleanKey.Equals(TEXT("Type"), ESearchCase::IgnoreCase))
-        {
-            OutData.TypeName = ValStr;
-        }
-        else if (CleanKey.Equals(TEXT("IfcGUID"), ESearchCase::IgnoreCase))
-        {
-            OutData.IfcGUID = ValStr;
-        }
-
-        // Categorize into standard BIM property groups
-        FString GroupName = TEXT("Identity Data");
-        FString PropName = CleanKey;
-
-        int32 DotIdx = INDEX_NONE;
-        if (CleanKey.FindChar(TEXT('.'), DotIdx))
-        {
-            GroupName = CleanKey.Left(DotIdx);
-            PropName = CleanKey.Mid(DotIdx + 1);
-        }
-        else
-        {
-            if (CleanKey.Contains(TEXT("Constraint")) || CleanKey.Contains(TEXT("Offset")) || CleanKey.Contains(TEXT("Location Line")) || CleanKey.Contains(TEXT("Unconnected Height")) || CleanKey.Contains(TEXT("Attached")))
-            {
-                GroupName = TEXT("Constraints");
-            }
-            else if (CleanKey.Contains(TEXT("Area")) || CleanKey.Contains(TEXT("Length")) || CleanKey.Contains(TEXT("Volume")) || CleanKey.Contains(TEXT("Thickness")) || CleanKey.Contains(TEXT("Width")) || CleanKey.Contains(TEXT("Height")))
-            {
-                GroupName = TEXT("Dimensions");
-            }
-            else if (CleanKey.Contains(TEXT("Phase")))
-            {
-                GroupName = TEXT("Phasing");
-            }
-            else if (CleanKey.Contains(TEXT("Structural")) || CleanKey.Contains(TEXT("Analytical")))
-            {
-                GroupName = TEXT("Structural");
-            }
-            else if (CleanKey.Contains(TEXT("Cross-Section")) || CleanKey.Contains(TEXT("Export to IFC")) || CleanKey.Contains(TEXT("Function")))
-            {
-                GroupName = TEXT("Construction");
-            }
-            else if (CleanKey.Contains(TEXT("Material")) || CleanKey.Contains(TEXT("Absorptance")))
-            {
-                GroupName = TEXT("Materials and Finishes");
-            }
-            else if (CleanKey.Contains(TEXT("Room Bounding")) || CleanKey.Contains(TEXT("Mass")))
-            {
-                GroupName = TEXT("Model Properties");
-            }
-        }
-
-        if (PropName.StartsWith(TEXT("Element*")) || PropName.StartsWith(TEXT("Element=")) || PropName.StartsWith(TEXT("Element.")) || PropName.StartsWith(TEXT("Element_")))
-        {
-            PropName.RightChopInline(8);
-        }
-        else if (PropName.StartsWith(TEXT("Type*")) || PropName.StartsWith(TEXT("Type=")) || PropName.StartsWith(TEXT("Type.")) || PropName.StartsWith(TEXT("Type_")))
-        {
-            PropName.RightChopInline(5);
-        }
-
-        FBIMMetadataPair GroupPair;
-        GroupPair.Key = PropName;
-        GroupPair.Value = ValStr;
-        GroupMap.FindOrAdd(GroupName).Add(GroupPair);
-    }
-
-    // Convert GroupMap to CategorizedMetadata array
-    for (const TPair<FString, TArray<FBIMMetadataPair>>& GroupPair : GroupMap)
-    {
-        FBIMCategoryGroup CatGroup;
-        CatGroup.CategoryName = GroupPair.Key;
-        CatGroup.Pairs = GroupPair.Value;
-        OutData.CategorizedMetadata.Add(CatGroup);
-    }
-
-    // Fail-safe fallbacks: Ensure Dimensions and Title are NEVER empty
-    if (OutData.Dimensions.Num() == 0)
-    {
-        OutData.Dimensions = OutData.RawMetadata;
-    }
-
-    if (OutData.FamilyName.IsEmpty())
-    {
-        OutData.FamilyName = OutData.ElementName;
-    }
-    if (OutData.Category.IsEmpty())
-    {
-        OutData.Category = TEXT("BIM Element");
-    }
-    if (OutData.TypeName.IsEmpty())
-    {
-        OutData.TypeName = OutData.ElementName;
-    }
-
-    return true;
-}
-
-int32 AMaxiMallPreviewController::SelectAllComponentsOfCategory(const FString& CategoryName)
-{
-    SelectComponent(nullptr);
-
-    for (int32 i = MultiSelectedComponents.Num() - 1; i >= 0; --i)
-    {
-        if (UPrimitiveComponent* Comp = MultiSelectedComponents[i].Get())
-        {
-            Comp->SetRenderCustomDepth(false);
-        }
-    }
-    MultiSelectedComponents.Empty();
-
-    if (CategoryName.IsEmpty() || !GetWorld())
-    {
-        return 0;
-    }
-
-    int32 Count = 0;
-    for (TObjectIterator<UPrimitiveComponent> It; It; ++It)
-    {
-        UPrimitiveComponent* Comp = *It;
-        if (Comp && Comp->GetWorld() == GetWorld() && !Comp->IsBeingDestroyed())
-        {
-            FBIMElementData Data;
-            if (GetBIMElementData(Comp, Data))
-            {
-                if (Data.Category.Equals(CategoryName, ESearchCase::IgnoreCase))
-                {
-                    Comp->SetRenderCustomDepth(true);
-                    Comp->SetCustomDepthStencilValue(2);
-                    MultiSelectedComponents.Add(Comp);
-                    Count++;
-                }
-            }
-        }
-    }
-
-    UE_LOG(LogTemp, Warning, TEXT("[BIM Category Selection] Highlighted %d elements for category '%s'"), Count, *CategoryName);
-    return Count;
-}
-
-void AMaxiMallPreviewController::CalculateSelectedQuantity(float& OutTotalAreaM2, float& OutTotalLengthM) const
-{
-    OutTotalAreaM2 = 0.f;
-    OutTotalLengthM = 0.f;
-
-    TArray<UPrimitiveComponent*> Targets;
-    if (SelectedComponent.IsValid())
-    {
-        Targets.Add(SelectedComponent.Get());
-    }
-    for (const TObjectPtr<UPrimitiveComponent>& CompObj : MultiSelectedComponents)
-    {
-        if (CompObj && !Targets.Contains(CompObj.Get()))
-        {
-            Targets.Add(CompObj.Get());
-        }
-    }
-
-    for (UPrimitiveComponent* Comp : Targets)
-    {
-        FBIMElementData Data;
-        if (GetBIMElementData(Comp, Data))
-        {
-            for (const FBIMMetadataPair& Dim : Data.Dimensions)
-            {
-                if (Dim.Key.Contains(TEXT("Area")))
-                {
-                    FString RawVal = Dim.Value;
-                    RawVal.ReplaceInline(TEXT("mВІ"), TEXT(""));
-                    RawVal.ReplaceInline(TEXT("m2"), TEXT(""));
-                    RawVal.TrimStartAndEndInline();
-                    OutTotalAreaM2 += FCString::Atof(*RawVal);
-                }
-                else if (Dim.Key.Contains(TEXT("Length")))
-                {
-                    FString RawVal = Dim.Value;
-                    RawVal.TrimStartAndEndInline();
-                    float Val = FCString::Atof(*RawVal);
-                    if (Val > 100.f)
-                    {
-                        Val /= 1000.f;
-                    }
-                    OutTotalLengthM += Val;
-                }
-            }
-        }
-    }
 }
 
 void AMaxiMallPreviewController::Server_CommitWall_Implementation(FVector2D StartPos, FVector2D EndPos, float Thickness, float Height)

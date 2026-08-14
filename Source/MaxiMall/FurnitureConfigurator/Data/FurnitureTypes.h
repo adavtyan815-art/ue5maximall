@@ -1,4 +1,4 @@
-﻿// Copyright awsTutorial Project. All Rights Reserved.
+// Copyright awsTutorial Project. All Rights Reserved.
 // FurnitureTypes.h
 //
 // Central type definitions for the Modular Furniture Configurator System.
@@ -594,12 +594,12 @@ struct FShowroomBoothConfigState
 
 
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// ─────────────────────────────────────────────────────────────────────────────
 // PRIMARY DATA TABLE ROW
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * FFurnitureProductRow вЂ” One row per distinct product category/set in the DataTable.
+ * FFurnitureProductRow — One row per distinct product category/set in the DataTable.
  *
  * The DataTable RowName serves as the ProductID (FName key).
  * Designers populate every field inside the Editor's DataTable editor.
@@ -613,107 +613,47 @@ struct FFurnitureProductRow : public FTableRowBase
 {
     GENERATED_BODY()
 
-    // в”Ђв”Ђ Cabinet Body в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── Cabinet Body ──────────────────────────────────────────────────────
 
     /** Main cabinet body options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Cabinet")
     FFurnitureCabinetOptions CabinetOptions;
 
-    // в”Ђв”Ђ Closet Body в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── Closet Body ───────────────────────────────────────────────────────
 
     /** Closet options. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Closet")
     FFurnitureComponentOptions ClosetOptions;
 
-    // в”Ђв”Ђ Doors в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── Doors ─────────────────────────────────────────────────────────────
 
     /** Unified doors configuration for cabinet and closet doors. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Doors")
     FFurnitureDoorsConfig DoorsConfig;
 
-    // в”Ђв”Ђ Countertop в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── Countertop ────────────────────────────────────────────────────────
 
     /** Countertop allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Countertop", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetCountertopOptions"))
     TArray<FName> AllowedCountertopIDs;
 
-    // в”Ђв”Ђ Sink в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── Sink ──────────────────────────────────────────────────────────────
 
     /** Standalone sink allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Sink", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetSinkOptions"))
     TArray<FName> AllowedSinkIDs;
 
-    // в”Ђв”Ђ Faucet в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── Faucet ────────────────────────────────────────────────────────────
 
     /** Faucet allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Faucet", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetFaucetOptions"))
     TArray<FName> AllowedFaucetIDs;
 
-    // в”Ђв”Ђ Mirror в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── Mirror ────────────────────────────────────────────────────────────
 
     /** Mirror allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetMirrorOptions"))
     TArray<FName> AllowedMirrorIDs;
-};
-
-/** A single key-value attribute pair for BIM metadata display. */
-USTRUCT(BlueprintType)
-struct FBIMMetadataPair
-{
-    GENERATED_BODY()
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    FString Key;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    FString Value;
-};
-
-/** Grouped BIM metadata category containing a header and list of key-value pairs. */
-USTRUCT(BlueprintType)
-struct FBIMCategoryGroup
-{
-    GENERATED_BODY()
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    FString CategoryName;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    TArray<FBIMMetadataPair> Pairs;
-};
-
-/** Categorized Revit / Datasmith BIM element metadata. */
-USTRUCT(BlueprintType)
-struct FBIMElementData
-{
-    GENERATED_BODY()
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    FString ElementName;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    FString Category;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    FString FamilyName;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    FString TypeName;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    FString IfcGUID;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    TArray<FBIMMetadataPair> Dimensions;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    TArray<FBIMMetadataPair> Specifications;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    TArray<FBIMMetadataPair> RawMetadata;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BIM Metadata")
-    TArray<FBIMCategoryGroup> CategorizedMetadata;
 };
 
 UCLASS()

@@ -4,6 +4,7 @@
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
 #include "Components/Image.h"
+#include "Engine/Texture2D.h"
 
 void USaveHistoryItemWidget::NativeConstruct()
 {
@@ -34,9 +35,17 @@ void USaveHistoryItemWidget::SetupItem(const FString& InSaveId, const FString& I
         SaveDateText->SetText(FText::FromString(InDate));
     }
 
-    if (ThumbnailImage && InThumbnail)
+    if (ThumbnailImage)
     {
-        ThumbnailImage->SetBrushFromTexture(InThumbnail);
+        if (InThumbnail)
+        {
+            ThumbnailImage->SetBrushFromTexture(InThumbnail);
+            // Retain user's custom layout definitions (e.g. 176x161) and scale texture inside the widget bounds
+        }
+        else
+        {
+            ThumbnailImage->SetBrushFromTexture(nullptr);
+        }
     }
 }
 
