@@ -380,8 +380,16 @@ void ARoomPlannerManager::RebuildAllWalls()
 						float Dot = FVector2D::DotProduct(Dir, OtherDir);
 						float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
 						float TanHalf = FMath::Tan(AngleRad * 0.5f);
-						StartExt = (TanHalf > 0.1f) ? (HalfThick / TanHalf) : HalfThick;
-						StartExt = FMath::Clamp(StartExt, 0.f, Seg->Thickness * 1.5f);
+						if (TanHalf > 0.05f)
+						{
+							float CotHalf = 1.0f / TanHalf;
+							StartExt = HalfThick * FMath::Min(TanHalf, CotHalf);
+						}
+						else
+						{
+							StartExt = 0.f;
+						}
+						StartExt = FMath::Clamp(StartExt, 0.f, Seg->Thickness);
 					}
 				}
 				else if (StartNode->ConnectedSegmentIDs.Num() >= 3)
@@ -405,8 +413,16 @@ void ARoomPlannerManager::RebuildAllWalls()
 						float Dot = FVector2D::DotProduct(AwayDir, OtherDir);
 						float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
 						float TanHalf = FMath::Tan(AngleRad * 0.5f);
-						EndExt = (TanHalf > 0.1f) ? (HalfThick / TanHalf) : HalfThick;
-						EndExt = FMath::Clamp(EndExt, 0.f, Seg->Thickness * 1.5f);
+						if (TanHalf > 0.05f)
+						{
+							float CotHalf = 1.0f / TanHalf;
+							EndExt = HalfThick * FMath::Min(TanHalf, CotHalf);
+						}
+						else
+						{
+							EndExt = 0.f;
+						}
+						EndExt = FMath::Clamp(EndExt, 0.f, Seg->Thickness);
 					}
 				}
 				else if (EndNode->ConnectedSegmentIDs.Num() >= 3)
@@ -1075,6 +1091,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 						{
 							CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
 							CamComp->OrthoWidth = 2500.f;
+							CamComp->bConstrainAspectRatio = false;
 							CamComp->OrthoNearClipPlane = -5000.f;
 							CamComp->OrthoFarClipPlane = 20000.f;
 						}
@@ -1086,6 +1103,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 					{
 						CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
 						CamComp->OrthoWidth = 2500.f;
+						CamComp->bConstrainAspectRatio = false;
 					}
 				}
 
