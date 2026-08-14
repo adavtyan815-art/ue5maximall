@@ -462,6 +462,7 @@ void ARoomPlannerManager::RebuildAllWalls()
 
 			WallActor->WallData = *Seg;
 			WallActor->RebuildWallMesh(StartPos, EndPos, SL2D, SR2D, EL2D, ER2D, bStartCap, bEndCap, true);
+			WallActor->SetOpeningCADSymbolsVisibility(b2DViewMode);
 		}
 	}
 }
@@ -1088,6 +1089,14 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 	if (CeilingProceduralMesh)
 	{
 		CeilingProceduralMesh->SetVisibility(bCeilingVisible && !bIn2DMode);
+	}
+
+	for (auto& Pair : WallActors)
+	{
+		if (Pair.Value)
+		{
+			Pair.Value->SetOpeningCADSymbolsVisibility(bIn2DMode);
+		}
 	}
 
 	if (UWorld* World = GetWorld())

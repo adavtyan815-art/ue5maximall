@@ -54,6 +54,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Wall")
 	void ClearAllOpeningHighlights();
 
+	UFUNCTION(BlueprintCallable, Category = "Wall")
+	void SetOpeningCADSymbolsVisibility(bool bVisible);
+
 private:
 	void GenerateQuad(TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs,
 	                  const FVector& V0, const FVector& V1, const FVector& V2, const FVector& V3,

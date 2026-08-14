@@ -155,6 +155,17 @@ void AProceduralWallActor::GenerateQuadWithColor(TArray<FVector>& Vertices, TArr
 	Triangles.Add(BaseIndex + 3);
 }
 
+void AProceduralWallActor::SetOpeningCADSymbolsVisibility(bool bVisible)
+{
+	for (UProceduralMeshComponent* Comp : OpeningHighlightMeshes)
+	{
+		if (Comp)
+		{
+			Comp->SetVisibility(bVisible);
+		}
+	}
+}
+
 void AProceduralWallActor::BuildOpeningCADVisuals(UProceduralMeshComponent* MeshComp,
                                                   const FWallOpening& Opening,
                                                   const FVector2D& OpSL, const FVector2D& OpEL,
@@ -164,6 +175,10 @@ void AProceduralWallActor::BuildOpeningCADVisuals(UProceduralMeshComponent* Mesh
 {
 	if (!MeshComp) return;
 
+	MeshComp->SetCastShadow(false);
+	MeshComp->CastShadow = false;
+	MeshComp->bCastDynamicShadow = false;
+
 	TArray<FVector> Verts;
 	TArray<int32> Tris;
 	TArray<FVector> Norms;
@@ -171,16 +186,19 @@ void AProceduralWallActor::BuildOpeningCADVisuals(UProceduralMeshComponent* Mesh
 	TArray<FColor> Colors;
 	TArray<FProcMeshTangent> Tangents;
 
-	float TopZ = WallHeight + 0.6f;
-	float ExtZ = WallHeight + 1.2f;
+	float TopZ = WallHeight + 1.0f;
+	float ExtZ = WallHeight + 1.8f;
 	FVector Up(0.f, 0.f, 1.f);
+
+	FLinearColor DynamicMatColor;
 
 	if (Opening.Type == EOpeningType::Door)
 	{
-		FColor DoorColor(230, 160, 60, 255); // Vibrant Amber / CAD Door Leaf Tone
+		FColor DoorColor(245, 160, 45, 255); // Vibrant Amber CAD Door Tone
+		DynamicMatColor = FLinearColor(0.96f, 0.63f, 0.18f, 1.0f);
 
 		// 1. Door Jamb Edge Lines (Start & End Jambs at Wall Top)
-		float LineThick = 2.5f;
+		float LineThick = 3.0f;
 		FVector2D HalfThickDir = Dir2D * (LineThick * 0.5f);
 
 		// Start Jamb Line
@@ -199,8 +217,8 @@ void AProceduralWallActor::BuildOpeningCADVisuals(UProceduralMeshComponent* Mesh
 			FVector(OpER.X - HalfThickDir.X, OpER.Y - HalfThickDir.Y, TopZ),
 			Up, DoorColor);
 
-		// 2. 90° Door Leaf (Perpendicular to wall from OpSL along +Normal2D)
-		float LeafThick = 3.5f;
+		// 2. 90° Door Leaf (Thick rectangular strip swung into the room from OpSL along +Normal2D)
+		float LeafThick = 4.5f;
 		float LeafLen = Opening.Width;
 		FVector2D LeafHinge = OpSL;
 		FVector2D LeafTip = LeafHinge + Normal2D * LeafLen;
@@ -214,9 +232,9 @@ void AProceduralWallActor::BuildOpeningCADVisuals(UProceduralMeshComponent* Mesh
 			Up, DoorColor);
 
 		// 3. 90° Door Swing Arc (Connecting OpEL to LeafTip around LeafHinge)
-		const int32 NumArcSteps = 16;
+		const int32 NumArcSteps = 24;
 		float ArcRadius = Opening.Width;
-		float ArcThickness = 2.0f;
+		float ArcThickness = 3.0f;
 
 		FVector2D PrevArcInner = OpEL;
 		FVector2D PrevArcOuter = OpEL + (OpEL - LeafHinge).GetSafeNormal() * ArcThickness;
@@ -241,8 +259,9 @@ void AProceduralWallActor::BuildOpeningCADVisuals(UProceduralMeshComponent* Mesh
 	}
 	else // Window
 	{
-		FColor FrameColor(180, 180, 180, 255); // Slate Window Frame
-		FColor GlassColor(0, 210, 255, 255);   // Cyan / Sky Blue Glass Pane
+		FColor FrameColor(80, 80, 85, 255);       // Dark Slate Outline Frame
+		FColor GlassColor(0, 235, 255, 255);      // Brilliant Electric Cyan Glass
+		DynamicMatColor = FLinearColor(0.0f, 0.92f, 1.0f, 1.0f);
 
 		float FrameThick = 2.5f;
 
@@ -278,8 +297,8 @@ void AProceduralWallActor::BuildOpeningCADVisuals(UProceduralMeshComponent* Mesh
 			FVector(OpSR.X + HalfNorm.X, OpSR.Y + HalfNorm.Y, TopZ),
 			Up, FrameColor);
 
-		// 3. Center Glass Pane Line (Crisp Sky Blue Ribbon)
-		float GlassThick = 4.0f;
+		// 3. Thick Cyan Glass Block Pane across the entire window cutout
+		float GlassThick = 12.0f; // Thick, prominent glass block
 		FVector2D CenterS = (OpSL + OpSR) * 0.5f;
 		FVector2D CenterE = (OpEL + OpER) * 0.5f;
 		FVector2D GlassOffset = Normal2D * (GlassThick * 0.5f);
@@ -294,14 +313,31 @@ void AProceduralWallActor::BuildOpeningCADVisuals(UProceduralMeshComponent* Mesh
 
 	MeshComp->CreateMeshSection(0, Verts, Tris, Norms, UVs, Colors, Tangents, false);
 
-	UMaterialInterface* BasicMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	if (BasicMat)
+	// Apply Dynamic Material with Unlit Emissive Color
+	UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/LevelPrototyping/Materials/M_Solid.M_Solid"));
+	if (!BaseMat)
 	{
-		MeshComp->SetMaterial(0, BasicMat);
+		BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
 	}
-	else if (WallProceduralMesh)
+	if (!BaseMat)
 	{
-		MeshComp->SetMaterial(0, WallProceduralMesh->GetMaterial(0));
+		BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	}
+
+	if (BaseMat)
+	{
+		UMaterialInstanceDynamic* DynMat = UMaterialInstanceDynamic::Create(BaseMat, MeshComp);
+		if (DynMat)
+		{
+			DynMat->SetVectorParameterValue(TEXT("Color"), DynamicMatColor);
+			DynMat->SetVectorParameterValue(TEXT("BaseColor"), DynamicMatColor);
+			DynMat->SetVectorParameterValue(TEXT("EmissiveColor"), DynamicMatColor * 1.5f);
+			MeshComp->SetMaterial(0, DynMat);
+		}
+		else
+		{
+			MeshComp->SetMaterial(0, BaseMat);
+		}
 	}
 }
 
