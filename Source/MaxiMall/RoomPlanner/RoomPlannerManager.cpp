@@ -462,7 +462,6 @@ void ARoomPlannerManager::RebuildAllWalls()
 
 			WallActor->WallData = *Seg;
 			WallActor->RebuildWallMesh(StartPos, EndPos, SL2D, SR2D, EL2D, ER2D, bStartCap, bEndCap, true);
-			WallActor->SetOpeningCADSymbolsVisibility(b2DViewMode);
 		}
 	}
 }
@@ -1091,14 +1090,6 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 		CeilingProceduralMesh->SetVisibility(bCeilingVisible && !bIn2DMode);
 	}
 
-	for (auto& Pair : WallActors)
-	{
-		if (Pair.Value)
-		{
-			Pair.Value->SetOpeningCADSymbolsVisibility(bIn2DMode);
-		}
-	}
-
 	if (UWorld* World = GetWorld())
 	{
 		if (APlayerController* PC = World->GetFirstPlayerController())
@@ -1115,7 +1106,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 					FActorSpawnParameters SpawnParams;
 					SpawnParams.Owner = this;
 					SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-					FVector CamLoc(0.f, 0.f, 2000.f);
+					FVector CamLoc(0.f, 0.f, 1600.f);
 					if (Pawn)
 					{
 						CamLoc.X = Pawn->GetActorLocation().X;
@@ -1127,11 +1118,19 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 					{
 						if (UCameraComponent* CamComp = TopDownCameraActor->GetCameraComponent())
 						{
-							CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
-							CamComp->OrthoWidth = 2500.f;
 							CamComp->bConstrainAspectRatio = false;
-							CamComp->OrthoNearClipPlane = -5000.f;
-							CamComp->OrthoFarClipPlane = 20000.f;
+							if (ActiveToolMode == EPlannerToolMode::DrawWall)
+							{
+								CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
+								CamComp->OrthoWidth = 2500.f;
+								CamComp->OrthoNearClipPlane = -5000.f;
+								CamComp->OrthoFarClipPlane = 20000.f;
+							}
+							else
+							{
+								CamComp->ProjectionMode = ECameraProjectionMode::Perspective;
+								CamComp->FieldOfView = 80.f;
+							}
 						}
 					}
 				}
@@ -1139,9 +1138,19 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 				{
 					if (UCameraComponent* CamComp = TopDownCameraActor->GetCameraComponent())
 					{
-						CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
-						CamComp->OrthoWidth = 2500.f;
 						CamComp->bConstrainAspectRatio = false;
+						if (ActiveToolMode == EPlannerToolMode::DrawWall)
+						{
+							CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
+							CamComp->OrthoWidth = 2500.f;
+							CamComp->OrthoNearClipPlane = -5000.f;
+							CamComp->OrthoFarClipPlane = 20000.f;
+						}
+						else
+						{
+							CamComp->ProjectionMode = ECameraProjectionMode::Perspective;
+							CamComp->FieldOfView = 80.f;
+						}
 					}
 				}
 
@@ -1408,6 +1417,25 @@ void ARoomPlannerManager::SetToolMode(EPlannerToolMode NewToolMode)
 	if (ActiveToolMode != EPlannerToolMode::Select)
 	{
 		ClearWallSelection();
+	}
+
+	if (b2DViewMode && TopDownCameraActor)
+	{
+		if (UCameraComponent* CamComp = TopDownCameraActor->GetCameraComponent())
+		{
+			if (ActiveToolMode == EPlannerToolMode::DrawWall)
+			{
+				CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
+				CamComp->OrthoWidth = 2500.f;
+				CamComp->OrthoNearClipPlane = -5000.f;
+				CamComp->OrthoFarClipPlane = 20000.f;
+			}
+			else
+			{
+				CamComp->ProjectionMode = ECameraProjectionMode::Perspective;
+				CamComp->FieldOfView = 80.f;
+			}
+		}
 	}
 }
 

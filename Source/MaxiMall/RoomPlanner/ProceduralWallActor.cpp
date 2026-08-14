@@ -63,11 +63,7 @@ void AProceduralWallActor::SetOpeningSelectedHighlight(int32 OpeningIndex, bool 
 {
 	if (OpeningHighlightMeshes.IsValidIndex(OpeningIndex) && OpeningHighlightMeshes[OpeningIndex])
 	{
-		OpeningHighlightMeshes[OpeningIndex]->SetRenderCustomDepth(bSelected);
-		if (bSelected)
-		{
-			OpeningHighlightMeshes[OpeningIndex]->SetCustomDepthStencilValue(StencilValue);
-		}
+		OpeningHighlightMeshes[OpeningIndex]->SetVisibility(bSelected);
 	}
 }
 
@@ -77,7 +73,7 @@ void AProceduralWallActor::ClearAllOpeningHighlights()
 	{
 		if (Comp)
 		{
-			Comp->SetRenderCustomDepth(false);
+			Comp->SetVisibility(false);
 		}
 	}
 }
@@ -115,230 +111,6 @@ void AProceduralWallActor::GenerateQuad(TArray<FVector>& Vertices, TArray<int32>
 	Triangles.Add(StartIdx + 0);
 	Triangles.Add(StartIdx + 2);
 	Triangles.Add(StartIdx + 3);
-}
-
-void AProceduralWallActor::GenerateQuadWithColor(TArray<FVector>& Vertices, TArray<int32>& Triangles,
-                                                 TArray<FVector>& Normals, TArray<FVector2D>& UVs,
-                                                 TArray<FColor>& VertexColors,
-                                                 const FVector& V0, const FVector& V1,
-                                                 const FVector& V2, const FVector& V3,
-                                                 const FVector& Normal, const FColor& Color)
-{
-	int32 BaseIndex = Vertices.Num();
-
-	Vertices.Add(V0);
-	Vertices.Add(V1);
-	Vertices.Add(V2);
-	Vertices.Add(V3);
-
-	Normals.Add(Normal);
-	Normals.Add(Normal);
-	Normals.Add(Normal);
-	Normals.Add(Normal);
-
-	UVs.Add(FVector2D(0.f, 0.f));
-	UVs.Add(FVector2D(1.f, 0.f));
-	UVs.Add(FVector2D(1.f, 1.f));
-	UVs.Add(FVector2D(0.f, 1.f));
-
-	VertexColors.Add(Color);
-	VertexColors.Add(Color);
-	VertexColors.Add(Color);
-	VertexColors.Add(Color);
-
-	Triangles.Add(BaseIndex);
-	Triangles.Add(BaseIndex + 1);
-	Triangles.Add(BaseIndex + 2);
-
-	Triangles.Add(BaseIndex);
-	Triangles.Add(BaseIndex + 2);
-	Triangles.Add(BaseIndex + 3);
-}
-
-void AProceduralWallActor::SetOpeningCADSymbolsVisibility(bool bVisible)
-{
-	for (UProceduralMeshComponent* Comp : OpeningHighlightMeshes)
-	{
-		if (Comp)
-		{
-			Comp->SetVisibility(bVisible);
-		}
-	}
-}
-
-void AProceduralWallActor::BuildOpeningCADVisuals(UProceduralMeshComponent* MeshComp,
-                                                  const FWallOpening& Opening,
-                                                  const FVector2D& OpSL, const FVector2D& OpEL,
-                                                  const FVector2D& OpSR, const FVector2D& OpER,
-                                                  const FVector2D& Dir2D, const FVector2D& Normal2D,
-                                                  float WallHeight)
-{
-	if (!MeshComp) return;
-
-	MeshComp->SetCastShadow(false);
-	MeshComp->CastShadow = false;
-	MeshComp->bCastDynamicShadow = false;
-
-	TArray<FVector> Verts;
-	TArray<int32> Tris;
-	TArray<FVector> Norms;
-	TArray<FVector2D> UVs;
-	TArray<FColor> Colors;
-	TArray<FProcMeshTangent> Tangents;
-
-	float TopZ = WallHeight + 1.0f;
-	float ExtZ = WallHeight + 1.8f;
-	FVector Up(0.f, 0.f, 1.f);
-
-	FLinearColor DynamicMatColor;
-
-	if (Opening.Type == EOpeningType::Door)
-	{
-		FColor DoorColor(245, 160, 45, 255); // Vibrant Amber CAD Door Tone
-		DynamicMatColor = FLinearColor(0.96f, 0.63f, 0.18f, 1.0f);
-
-		// 1. Door Jamb Edge Lines (Start & End Jambs at Wall Top)
-		float LineThick = 3.0f;
-		FVector2D HalfThickDir = Dir2D * (LineThick * 0.5f);
-
-		// Start Jamb Line
-		GenerateQuadWithColor(Verts, Tris, Norms, UVs, Colors,
-			FVector(OpSL.X - HalfThickDir.X, OpSL.Y - HalfThickDir.Y, TopZ),
-			FVector(OpSL.X + HalfThickDir.X, OpSL.Y + HalfThickDir.Y, TopZ),
-			FVector(OpSR.X + HalfThickDir.X, OpSR.Y + HalfThickDir.Y, TopZ),
-			FVector(OpSR.X - HalfThickDir.X, OpSR.Y - HalfThickDir.Y, TopZ),
-			Up, DoorColor);
-
-		// End Jamb Line
-		GenerateQuadWithColor(Verts, Tris, Norms, UVs, Colors,
-			FVector(OpEL.X - HalfThickDir.X, OpEL.Y - HalfThickDir.Y, TopZ),
-			FVector(OpEL.X + HalfThickDir.X, OpEL.Y + HalfThickDir.Y, TopZ),
-			FVector(OpER.X + HalfThickDir.X, OpER.Y + HalfThickDir.Y, TopZ),
-			FVector(OpER.X - HalfThickDir.X, OpER.Y - HalfThickDir.Y, TopZ),
-			Up, DoorColor);
-
-		// 2. 90° Door Leaf (Thick rectangular strip swung into the room from OpSL along +Normal2D)
-		float LeafThick = 4.5f;
-		float LeafLen = Opening.Width;
-		FVector2D LeafHinge = OpSL;
-		FVector2D LeafTip = LeafHinge + Normal2D * LeafLen;
-		FVector2D LeafOffset = Dir2D * LeafThick;
-
-		GenerateQuadWithColor(Verts, Tris, Norms, UVs, Colors,
-			FVector(LeafHinge.X, LeafHinge.Y, TopZ),
-			FVector(LeafHinge.X + LeafOffset.X, LeafHinge.Y + LeafOffset.Y, TopZ),
-			FVector(LeafTip.X + LeafOffset.X, LeafTip.Y + LeafOffset.Y, TopZ),
-			FVector(LeafTip.X, LeafTip.Y, TopZ),
-			Up, DoorColor);
-
-		// 3. 90° Door Swing Arc (Connecting OpEL to LeafTip around LeafHinge)
-		const int32 NumArcSteps = 24;
-		float ArcRadius = Opening.Width;
-		float ArcThickness = 3.0f;
-
-		FVector2D PrevArcInner = OpEL;
-		FVector2D PrevArcOuter = OpEL + (OpEL - LeafHinge).GetSafeNormal() * ArcThickness;
-
-		for (int32 Step = 1; Step <= NumArcSteps; ++Step)
-		{
-			float AngleRad = (PI * 0.5f) * ((float)Step / (float)NumArcSteps);
-			FVector2D ArcDir = Dir2D * FMath::Cos(AngleRad) + Normal2D * FMath::Sin(AngleRad);
-			FVector2D CurrArcInner = LeafHinge + ArcDir * ArcRadius;
-			FVector2D CurrArcOuter = LeafHinge + ArcDir * (ArcRadius + ArcThickness);
-
-			GenerateQuadWithColor(Verts, Tris, Norms, UVs, Colors,
-				FVector(PrevArcInner.X, PrevArcInner.Y, TopZ),
-				FVector(CurrArcInner.X, CurrArcInner.Y, TopZ),
-				FVector(CurrArcOuter.X, CurrArcOuter.Y, TopZ),
-				FVector(PrevArcOuter.X, PrevArcOuter.Y, TopZ),
-				Up, DoorColor);
-
-			PrevArcInner = CurrArcInner;
-			PrevArcOuter = CurrArcOuter;
-		}
-	}
-	else // Window
-	{
-		FColor FrameColor(80, 80, 85, 255);       // Dark Slate Outline Frame
-		FColor GlassColor(0, 235, 255, 255);      // Brilliant Electric Cyan Glass
-		DynamicMatColor = FLinearColor(0.0f, 0.92f, 1.0f, 1.0f);
-
-		float FrameThick = 2.5f;
-
-		// 1. Left & Right Jamb Lines
-		FVector2D HalfThickDir = Dir2D * (FrameThick * 0.5f);
-		GenerateQuadWithColor(Verts, Tris, Norms, UVs, Colors,
-			FVector(OpSL.X - HalfThickDir.X, OpSL.Y - HalfThickDir.Y, TopZ),
-			FVector(OpSL.X + HalfThickDir.X, OpSL.Y + HalfThickDir.Y, TopZ),
-			FVector(OpSR.X + HalfThickDir.X, OpSR.Y + HalfThickDir.Y, TopZ),
-			FVector(OpSR.X - HalfThickDir.X, OpSR.Y - HalfThickDir.Y, TopZ),
-			Up, FrameColor);
-
-		GenerateQuadWithColor(Verts, Tris, Norms, UVs, Colors,
-			FVector(OpEL.X - HalfThickDir.X, OpEL.Y - HalfThickDir.Y, TopZ),
-			FVector(OpEL.X + HalfThickDir.X, OpEL.Y + HalfThickDir.Y, TopZ),
-			FVector(OpER.X + HalfThickDir.X, OpER.Y + HalfThickDir.Y, TopZ),
-			FVector(OpER.X - HalfThickDir.X, OpER.Y - HalfThickDir.Y, TopZ),
-			Up, FrameColor);
-
-		// 2. Outer & Inner Border Lines
-		FVector2D HalfNorm = Normal2D * (FrameThick * 0.5f);
-		GenerateQuadWithColor(Verts, Tris, Norms, UVs, Colors,
-			FVector(OpSL.X - HalfNorm.X, OpSL.Y - HalfNorm.Y, TopZ),
-			FVector(OpEL.X - HalfNorm.X, OpEL.Y - HalfNorm.Y, TopZ),
-			FVector(OpEL.X + HalfNorm.X, OpEL.Y + HalfNorm.Y, TopZ),
-			FVector(OpSL.X + HalfNorm.X, OpSL.Y + HalfNorm.Y, TopZ),
-			Up, FrameColor);
-
-		GenerateQuadWithColor(Verts, Tris, Norms, UVs, Colors,
-			FVector(OpSR.X - HalfNorm.X, OpSR.Y - HalfNorm.Y, TopZ),
-			FVector(OpER.X - HalfNorm.X, OpER.Y - HalfNorm.Y, TopZ),
-			FVector(OpER.X + HalfNorm.X, OpER.Y + HalfNorm.Y, TopZ),
-			FVector(OpSR.X + HalfNorm.X, OpSR.Y + HalfNorm.Y, TopZ),
-			Up, FrameColor);
-
-		// 3. Thick Cyan Glass Block Pane across the entire window cutout
-		float GlassThick = 12.0f; // Thick, prominent glass block
-		FVector2D CenterS = (OpSL + OpSR) * 0.5f;
-		FVector2D CenterE = (OpEL + OpER) * 0.5f;
-		FVector2D GlassOffset = Normal2D * (GlassThick * 0.5f);
-
-		GenerateQuadWithColor(Verts, Tris, Norms, UVs, Colors,
-			FVector(CenterS.X - GlassOffset.X, CenterS.Y - GlassOffset.Y, ExtZ),
-			FVector(CenterE.X - GlassOffset.X, CenterE.Y - GlassOffset.Y, ExtZ),
-			FVector(CenterE.X + GlassOffset.X, CenterE.Y + GlassOffset.Y, ExtZ),
-			FVector(CenterS.X + GlassOffset.X, CenterS.Y + GlassOffset.Y, ExtZ),
-			Up, GlassColor);
-	}
-
-	MeshComp->CreateMeshSection(0, Verts, Tris, Norms, UVs, Colors, Tangents, false);
-
-	// Apply Dynamic Material with Unlit Emissive Color
-	UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/LevelPrototyping/Materials/M_Solid.M_Solid"));
-	if (!BaseMat)
-	{
-		BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
-	}
-	if (!BaseMat)
-	{
-		BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	}
-
-	if (BaseMat)
-	{
-		UMaterialInstanceDynamic* DynMat = UMaterialInstanceDynamic::Create(BaseMat, MeshComp);
-		if (DynMat)
-		{
-			DynMat->SetVectorParameterValue(TEXT("Color"), DynamicMatColor);
-			DynMat->SetVectorParameterValue(TEXT("BaseColor"), DynamicMatColor);
-			DynMat->SetVectorParameterValue(TEXT("EmissiveColor"), DynamicMatColor * 1.5f);
-			MeshComp->SetMaterial(0, DynMat);
-		}
-		else
-		{
-			MeshComp->SetMaterial(0, BaseMat);
-		}
-	}
 }
 
 void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVector2D& EndPos,
@@ -493,6 +265,11 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 			GenerateQuad(Vertices, Triangles, Normals, UVs,
 				FVector(OpEL.X, OpEL.Y, LintelZ), FVector(OpSL.X, OpSL.Y, LintelZ),
 				FVector(OpSR.X, OpSR.Y, LintelZ), FVector(OpER.X, OpER.Y, LintelZ), -UpVector);
+
+			// Top Face above lintel
+			GenerateQuad(Vertices, Triangles, Normals, UVs,
+				FVector(OpSL.X, OpSL.Y, WallHeight), FVector(OpEL.X, OpEL.Y, WallHeight),
+				FVector(OpER.X, OpER.Y, WallHeight), FVector(OpSR.X, OpSR.Y, WallHeight), UpVector);
 		}
 
 		// Left & Right inner jamb faces
@@ -506,7 +283,7 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 
 		CurrentDist = OpenEnd;
 
-		// Generate dedicated architectural CAD blueprint overlay for this opening
+		// Generate 3D red translucent selection box for this opening
 		UProceduralMeshComponent* HighlightMesh = NewObject<UProceduralMeshComponent>(this);
 		HighlightMesh->CreationMethod = EComponentCreationMethod::Instance;
 		HighlightMesh->RegisterComponent();
@@ -514,11 +291,68 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		AddInstanceComponent(HighlightMesh);
 		HighlightMesh->bRenderInMainPass = true;
 		HighlightMesh->bRenderCustomDepth = false;
-		HighlightMesh->SetVisibility(true);
+		HighlightMesh->SetVisibility(false);
 		HighlightMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		OpeningHighlightMeshes.Add(HighlightMesh);
 
-		BuildOpeningCADVisuals(HighlightMesh, Opening, OpSL, OpEL, OpSR, OpER, Dir2D, Normal2D, WallHeight);
+		TArray<FVector> HVerts;
+		TArray<int32> HTris;
+		TArray<FVector> HNorms;
+		TArray<FVector2D> HUVs;
+
+		FVector2D OutLeft = FVector2D(LeftNormalVector.X, LeftNormalVector.Y) * 2.0f;
+		FVector2D OutRight = FVector2D(RightNormalVector.X, RightNormalVector.Y) * 2.0f;
+		FVector2D OutStart = FVector2D(StartNormalVector.X, StartNormalVector.Y) * 2.0f;
+		FVector2D OutEnd = FVector2D(EndNormalVector.X, EndNormalVector.Y) * 2.0f;
+
+		FVector2D H_OpSL = OpSL + OutLeft + OutStart;
+		FVector2D H_OpEL = OpEL + OutLeft + OutEnd;
+		FVector2D H_OpSR = OpSR + OutRight + OutStart;
+		FVector2D H_OpER = OpER + OutRight + OutEnd;
+		
+		float H_SillZ = SillZ - 2.0f;
+		float H_LintelZ = LintelZ + 2.0f;
+
+		// Front Face
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpSL.X, H_OpSL.Y, H_SillZ), FVector(H_OpEL.X, H_OpEL.Y, H_SillZ),
+			FVector(H_OpEL.X, H_OpEL.Y, H_LintelZ), FVector(H_OpSL.X, H_OpSL.Y, H_LintelZ), LeftNormalVector);
+		// Back Face
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpER.X, H_OpER.Y, H_SillZ), FVector(H_OpSR.X, H_OpSR.Y, H_SillZ),
+			FVector(H_OpSR.X, H_OpSR.Y, H_LintelZ), FVector(H_OpER.X, H_OpER.Y, H_LintelZ), RightNormalVector);
+		// Left Face (Start Jamb)
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpSR.X, H_OpSR.Y, H_SillZ), FVector(H_OpSL.X, H_OpSL.Y, H_SillZ),
+			FVector(H_OpSL.X, H_OpSL.Y, H_LintelZ), FVector(H_OpSR.X, H_OpSR.Y, H_LintelZ), StartNormalVector);
+		// Right Face (End Jamb)
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpEL.X, H_OpEL.Y, H_SillZ), FVector(H_OpER.X, H_OpER.Y, H_SillZ),
+			FVector(H_OpER.X, H_OpER.Y, H_LintelZ), FVector(H_OpEL.X, H_OpEL.Y, H_LintelZ), EndNormalVector);
+		// Top Face
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpSL.X, H_OpSL.Y, H_LintelZ), FVector(H_OpEL.X, H_OpEL.Y, H_LintelZ),
+			FVector(H_OpER.X, H_OpER.Y, H_LintelZ), FVector(H_OpSR.X, H_OpSR.Y, H_LintelZ), UpVector);
+		// Bottom Face
+		GenerateQuad(HVerts, HTris, HNorms, HUVs,
+			FVector(H_OpEL.X, H_OpEL.Y, H_SillZ), FVector(H_OpSL.X, H_OpSL.Y, H_SillZ),
+			FVector(H_OpSR.X, H_OpSR.Y, H_SillZ), FVector(H_OpER.X, H_OpER.Y, H_SillZ), -UpVector);
+
+		HighlightMesh->CreateMeshSection(0, HVerts, HTris, HNorms, HUVs, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
+		
+		UMaterialInterface* OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
+		if (!OpeningMat)
+		{
+			OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
+		}
+		if (OpeningMat)
+		{
+			HighlightMesh->SetMaterial(0, OpeningMat);
+		}
+		else
+		{
+			HighlightMesh->SetMaterial(0, WallProceduralMesh->GetMaterial(0));
+		}
 	}
 
 	// Final wall section after last opening
