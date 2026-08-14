@@ -167,6 +167,29 @@ void AMaxiMallLoginPlayerController::OnPixelStreamingInput(const FString& Descri
 		return;
 	}
 
+	// Check if the payload is double-JSON-encoded (e.g. from some frontend wrappers: {"descriptor": "{...}"})
+	FString EffectiveJSON = Descriptor;
+	if (JsonObject->HasField(TEXT("descriptor")))
+	{
+		EffectiveJSON = JsonObject->GetStringField(TEXT("descriptor"));
+		TSharedPtr<FJsonObject> InnerObject;
+		TSharedRef<TJsonReader<>> InnerReader = TJsonReaderFactory<>::Create(EffectiveJSON);
+		if (FJsonSerializer::Deserialize(InnerReader, InnerObject) && InnerObject.IsValid())
+		{
+			JsonObject = InnerObject;
+		}
+	}
+	else if (JsonObject->HasField(TEXT("Descriptor")))
+	{
+		EffectiveJSON = JsonObject->GetStringField(TEXT("Descriptor"));
+		TSharedPtr<FJsonObject> InnerObject;
+		TSharedRef<TJsonReader<>> InnerReader = TJsonReaderFactory<>::Create(EffectiveJSON);
+		if (FJsonSerializer::Deserialize(InnerReader, InnerObject) && InnerObject.IsValid())
+		{
+			JsonObject = InnerObject;
+		}
+	}
+
 	// ── ClipboardPaste command ───────────────────────────────────────────
 	if (JsonObject->HasField(TEXT("Cmd")) &&
 		JsonObject->GetStringField(TEXT("Cmd")) == TEXT("ClipboardPaste"))
@@ -178,7 +201,9 @@ void AMaxiMallLoginPlayerController::OnPixelStreamingInput(const FString& Descri
 
 		UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] ClipboardPaste received. Character count: %d"), PasteText.Len());
 
+		// 1. Sync to OS-level clipboard as a fallback
 		FPlatformApplicationMisc::ClipboardCopy(*PasteText);
+		LastKnownClipboardContent = PasteText;
 
 		if (!FSlateApplication::IsInitialized())
 		{
@@ -199,7 +224,6 @@ void AMaxiMallLoginPlayerController::OnPixelStreamingInput(const FString& Descri
 		UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|Login] ClipboardPaste: injected %d characters via Slate CharacterEvent."), PasteText.Len());
 
 		// ── BROWSER DIAGNOSTIC ──────────────────────────────────────────
-		// Tells user in DevTools that paste arrived AND was injected successfully.
 		SendDiag(FString::Printf(
 			TEXT("[Login] ClipboardPaste OK — injected %d chars via Slate."), PasteText.Len()));
 	}

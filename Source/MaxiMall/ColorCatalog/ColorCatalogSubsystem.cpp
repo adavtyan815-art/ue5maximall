@@ -1,4 +1,4 @@
-﻿// Copyright MaxiMall. All Rights Reserved.
+// Copyright MaxiMall. All Rights Reserved.
 
 #include "ColorCatalog/ColorCatalogSubsystem.h"
 #include "Misc/FileHelper.h"
@@ -14,20 +14,39 @@ void UColorCatalogSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	LoadNCSCatalog();
 }
 
+static bool LoadColorJsonFile(const FString& RelFileName, FString& OutJsonString)
+{
+	const TArray<FString> SearchPaths = {
+		FPaths::ProjectContentDir() / TEXT("Data/Colors") / RelFileName,
+		FPaths::ProjectContentDir() / TEXT("data/colors") / RelFileName,
+		FPaths::ProjectDir() / TEXT("Content/Data/Colors") / RelFileName,
+		FPaths::ProjectDir() / TEXT("content/data/colors") / RelFileName,
+		FPaths::ProjectDir() / TEXT("Data/Colors") / RelFileName,
+		FPaths::ProjectDir() / TEXT("Source/color") / RelFileName,
+		FPaths::LaunchDir() / TEXT("Content/Data/Colors") / RelFileName,
+		FPaths::LaunchDir() / TEXT("Data/Colors") / RelFileName
+	};
+
+	for (const FString& TestPath : SearchPaths)
+	{
+		if (FFileHelper::LoadFileToString(OutJsonString, *TestPath) && !OutJsonString.IsEmpty())
+		{
+			UE_LOG(LogTemp, Log, TEXT("[ColorCatalogSubsystem] Successfully loaded color catalog from: %s"), *TestPath);
+			return true;
+		}
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("[ColorCatalogSubsystem] Failed to locate '%s' in any known content or staging paths."), *RelFileName);
+	return false;
+}
+
 void UColorCatalogSubsystem::LoadRALCatalog()
 {
 	RALColors.Reset();
 
-	FString FilePath = FPaths::ProjectContentDir() / TEXT("Data/Colors/ral_classic.json");
-	if (!FPaths::FileExists(FilePath))
-	{
-		FilePath = FPaths::ProjectDir() / TEXT("Source/color/ral_classic.json");
-	}
-
 	FString JsonString;
-	if (!FFileHelper::LoadFileToString(JsonString, *FilePath))
+	if (!LoadColorJsonFile(TEXT("ral_classic.json"), JsonString))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[RoomPlannerColorSubsystem] Failed to read RAL catalog JSON file from: %s"), *FilePath);
 		return;
 	}
 
@@ -69,23 +88,16 @@ void UColorCatalogSubsystem::LoadRALCatalog()
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[RoomPlannerColorSubsystem] Successfully loaded %d RAL colors."), RALColors.Num());
+	UE_LOG(LogTemp, Log, TEXT("[ColorCatalogSubsystem] Successfully loaded %d RAL colors."), RALColors.Num());
 }
 
 void UColorCatalogSubsystem::LoadNCSCatalog()
 {
 	NCSColors.Reset();
 
-	FString FilePath = FPaths::ProjectContentDir() / TEXT("Data/Colors/ncscolorguide_2052_ui_sorted.json");
-	if (!FPaths::FileExists(FilePath))
-	{
-		FilePath = FPaths::ProjectDir() / TEXT("Source/color/ncscolorguide_2052_ui_sorted.json");
-	}
-
 	FString JsonString;
-	if (!FFileHelper::LoadFileToString(JsonString, *FilePath))
+	if (!LoadColorJsonFile(TEXT("ncscolorguide_2052_ui_sorted.json"), JsonString))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[RoomPlannerColorSubsystem] Failed to read NCS catalog JSON file from: %s"), *FilePath);
 		return;
 	}
 
