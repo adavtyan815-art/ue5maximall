@@ -12,21 +12,7 @@
  *
  * Responsibilities:
  *  - Supports Pixel Streaming clipboard paste via Slate Character Event injection.
- *  - Sends DIAG diagnostic messages back to the browser over the PS data channel
- *    so that every step can be verified in the browser DevTools console even in
- *    Shipping builds (where UE_LOG is compiled out).
- *
- * Design principles (fixes applied):
- *  FIX 1 — SetBatchMode(Fast) has been REMOVED from BeginPlay().
- *           It was stalling the game thread for ~90-150 s on Login level load.
- *           Background PSO compilation is driven by DefaultEngine.ini settings.
- *
- *  FIX 2 — CreateDefaultSubobject<UPixelStreamingInput> has been REMOVED from
- *           the constructor. The PS plugin creates and owns exactly one
- *           UPixelStreamingInput component per controller. We discover it once
- *           in BeginPlay() via GetComponentByClass — no per-frame tick scan.
- *           This eliminates the duplicate-component PS handshake interference
- *           that caused intermittent login kickbacks.
+ *  - Sends diagnostic messages back to the browser over the PS data channel.
  */
 UCLASS()
 class MAXIMALL_API AMaxiMallLoginPlayerController : public APlayerController

@@ -28,10 +28,6 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
-// NOTE: #include "ShaderPipelineCache.h" intentionally REMOVED (FIX 1).
-// FShaderPipelineCache::SetBatchMode(Fast) was stalling the game thread for
-// ~90-150 s on every level load while compiling all Vulkan PSOs synchronously.
-// Background PSO compilation is now driven by DefaultEngine.ini:
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "RoomPlanner/RoomPlannerManager.h"
@@ -77,12 +73,6 @@ static void SendDiag_PC(UPixelStreamingInput* PSInput, const FString& Message)
 void AMaxiMallPreviewController::BeginPlay()
 {
     Super::BeginPlay();
-
-    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-    // FIX 1 APPLIED: FShaderPipelineCache::SetBatchMode(BatchMode::Fast)
-    // has been REMOVED from BeginPlay().
-    // Background PSO compilation driven by DefaultEngine.ini settings.
-    // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     UE_LOG(LogTemp, Warning, TEXT("[MaxiMall|PC] ===== BeginPlay START =====  IsLocalController: %s"),
         IsLocalController() ? TEXT("YES") : TEXT("NO"));

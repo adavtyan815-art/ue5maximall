@@ -6,13 +6,6 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "HAL/PlatformApplicationMisc.h"
-// NOTE: #include "ShaderPipelineCache.h" has been intentionally REMOVED.
-//       FShaderPipelineCache::SetBatchMode(Fast) was the cause of the ~2-minute
-//       game-thread freeze on Login level load (FIX 1). Background PSO
-//       compilation is now driven exclusively by DefaultEngine.ini settings:
-//         r.ShaderPipelineCache.Enabled=1
-//         r.ShaderPipelineCache.BackgroundBatchSize=20
-//         r.ShaderPipelineCache.PrecompileBatchTime=0.01
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -50,7 +43,7 @@ void AMaxiMallLoginPlayerController::BeginPlay()
 		UE_LOG(LogTemp, Warning,
 			TEXT("[MaxiMall|Login] PS Input component found in BeginPlay and bound."));
 
-		SendDiag(TEXT("[Login] BeginPlay OK | FIX1: no shader-pipeline stall | FIX2: PS component bound in BeginPlay | Awaiting user Login click."));
+		SendDiag(TEXT("[Login] BeginPlay OK | PS component bound in BeginPlay | Awaiting user Login click."));
 	}
 	else
 	{
