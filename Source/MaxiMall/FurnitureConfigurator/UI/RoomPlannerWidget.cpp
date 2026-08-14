@@ -237,8 +237,7 @@ void URoomPlannerWidget::OnDeleteToolClicked()
 				}
 			}
 			PlannerManager->ClearWallSelection();
-			if (OpeningPropertiesPanel) OpeningPropertiesPanel->SetVisibility(ESlateVisibility::Collapsed);
-			if (WallPropertiesPanel) WallPropertiesPanel->SetVisibility(ESlateVisibility::Collapsed);
+			UpdateDynamicPropertiesPanel();
 		}
 		else
 		{
