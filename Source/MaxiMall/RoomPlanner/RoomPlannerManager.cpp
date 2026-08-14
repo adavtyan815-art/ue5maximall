@@ -364,10 +364,18 @@ void ARoomPlannerManager::RebuildAllWalls()
 			FVector2D EndPos = Nodes[Seg->EndNodeID].Position;
 
 			FVector2D Dir = (EndPos - StartPos).GetSafeNormal();
+			FVector2D Normal(-Dir.Y, Dir.X);
 			float HalfThick = Seg->Thickness * 0.5f;
 
-			// --- Calculate Start Extension ---
-			float StartExt = 0.f;
+			FVector2D SL2D = StartPos + Normal * HalfThick;
+			FVector2D SR2D = StartPos - Normal * HalfThick;
+			FVector2D EL2D = EndPos + Normal * HalfThick;
+			FVector2D ER2D = EndPos - Normal * HalfThick;
+
+			bool bStartCap = true;
+			bool bEndCap = true;
+
+			// --- Calculate Start Bisector Corner ---
 			if (const FWallNode* StartNode = Nodes.Find(Seg->StartNodeID))
 			{
 				if (StartNode->ConnectedSegmentIDs.Num() == 2)
@@ -377,29 +385,39 @@ void ARoomPlannerManager::RebuildAllWalls()
 					{
 						FVector2D OtherEnd = (OtherSeg->StartNodeID == Seg->StartNodeID) ? Nodes[OtherSeg->EndNodeID].Position : Nodes[OtherSeg->StartNodeID].Position;
 						FVector2D OtherDir = (OtherEnd - StartPos).GetSafeNormal();
+
+						float Cross = Dir.X * OtherDir.Y - Dir.Y * OtherDir.X;
 						float Dot = FVector2D::DotProduct(Dir, OtherDir);
-						float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
-						float TanHalf = FMath::Tan(AngleRad * 0.5f);
-						if (TanHalf > 0.05f)
+
+						if (FMath::Abs(Cross) > 0.02f)
 						{
-							float CotHalf = 1.0f / TanHalf;
-							StartExt = HalfThick * FMath::Min(TanHalf, CotHalf);
+							float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
+							float SinHalf = FMath::Sin(AngleRad * 0.5f);
+							float BisectorDist = (SinHalf > 0.05f) ? (HalfThick / SinHalf) : HalfThick;
+							BisectorDist = FMath::Clamp(BisectorDist, HalfThick, Seg->Thickness * 2.5f);
+
+							FVector2D Bisector = (Dir + OtherDir).GetSafeNormal();
+
+							if (Cross > 0.f)
+							{
+								// Turn Left: Left side is inside corner (+Bisector), Right side is outside apex (-Bisector)
+								SL2D = StartPos + Bisector * BisectorDist;
+								SR2D = StartPos - Bisector * BisectorDist;
+							}
+							else
+							{
+								// Turn Right: Right side is inside corner (+Bisector), Left side is outside apex (-Bisector)
+								SL2D = StartPos - Bisector * BisectorDist;
+								SR2D = StartPos + Bisector * BisectorDist;
+							}
+
+							bStartCap = false; // Seamless bisector seam with connecting wall
 						}
-						else
-						{
-							StartExt = 0.f;
-						}
-						StartExt = FMath::Clamp(StartExt, 0.f, Seg->Thickness);
 					}
-				}
-				else if (StartNode->ConnectedSegmentIDs.Num() >= 3)
-				{
-					StartExt = HalfThick;
 				}
 			}
 
-			// --- Calculate End Extension ---
-			float EndExt = 0.f;
+			// --- Calculate End Bisector Corner ---
 			if (const FWallNode* EndNode = Nodes.Find(Seg->EndNodeID))
 			{
 				if (EndNode->ConnectedSegmentIDs.Num() == 2)
@@ -410,29 +428,40 @@ void ARoomPlannerManager::RebuildAllWalls()
 						FVector2D OtherEnd = (OtherSeg->StartNodeID == Seg->EndNodeID) ? Nodes[OtherSeg->EndNodeID].Position : Nodes[OtherSeg->StartNodeID].Position;
 						FVector2D OtherDir = (OtherEnd - EndPos).GetSafeNormal();
 						FVector2D AwayDir = -Dir;
+
+						float Cross = AwayDir.X * OtherDir.Y - AwayDir.Y * OtherDir.X;
 						float Dot = FVector2D::DotProduct(AwayDir, OtherDir);
-						float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
-						float TanHalf = FMath::Tan(AngleRad * 0.5f);
-						if (TanHalf > 0.05f)
+
+						if (FMath::Abs(Cross) > 0.02f)
 						{
-							float CotHalf = 1.0f / TanHalf;
-							EndExt = HalfThick * FMath::Min(TanHalf, CotHalf);
+							float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
+							float SinHalf = FMath::Sin(AngleRad * 0.5f);
+							float BisectorDist = (SinHalf > 0.05f) ? (HalfThick / SinHalf) : HalfThick;
+							BisectorDist = FMath::Clamp(BisectorDist, HalfThick, Seg->Thickness * 2.5f);
+
+							FVector2D Bisector = (AwayDir + OtherDir).GetSafeNormal();
+
+							if (Cross > 0.f)
+							{
+								// Turn Left relative to AwayDir (which is segment's Right side: ER2D)
+								ER2D = EndPos + Bisector * BisectorDist;
+								EL2D = EndPos - Bisector * BisectorDist;
+							}
+							else
+							{
+								// Turn Right relative to AwayDir (which is segment's Left side: EL2D)
+								EL2D = EndPos + Bisector * BisectorDist;
+								ER2D = EndPos - Bisector * BisectorDist;
+							}
+
+							bEndCap = false; // Seamless bisector seam with connecting wall
 						}
-						else
-						{
-							EndExt = 0.f;
-						}
-						EndExt = FMath::Clamp(EndExt, 0.f, Seg->Thickness);
 					}
-				}
-				else if (EndNode->ConnectedSegmentIDs.Num() >= 3)
-				{
-					EndExt = HalfThick;
 				}
 			}
 
 			WallActor->WallData = *Seg;
-			WallActor->RebuildWallMesh(StartPos, EndPos, StartExt, EndExt, true);
+			WallActor->RebuildWallMesh(StartPos, EndPos, SL2D, SR2D, EL2D, ER2D, bStartCap, bEndCap, true);
 		}
 	}
 }
@@ -1307,7 +1336,7 @@ void ARoomPlannerManager::UpdateInteractiveWallDraw(const FVector& WorldPos)
 
 		if (PreviewWallActor)
 		{
-			PreviewWallActor->RebuildWallMesh(P1, P2, 0.f, 0.f, false);
+			PreviewWallActor->RebuildWallMesh(P1, P2, FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, true, true, false);
 		}
 
 		float LengthMeters = LengthCm / 100.f;

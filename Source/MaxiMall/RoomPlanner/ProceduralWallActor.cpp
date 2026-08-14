@@ -114,7 +114,9 @@ void AProceduralWallActor::GenerateQuad(TArray<FVector>& Vertices, TArray<int32>
 }
 
 void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVector2D& EndPos,
-                                            float StartExtension, float EndExtension,
+                                            FVector2D InSL2D, FVector2D InSR2D,
+                                            FVector2D InEL2D, FVector2D InER2D,
+                                            bool bStartCap, bool bEndCap,
                                             bool bCreateCollision)
 {
 	if (!WallProceduralMesh)
@@ -146,16 +148,13 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	float HalfThickness = WallData.Thickness * 0.5f;
 	float WallHeight = WallData.Height;
 
-	// Calculate extended start and end positions along the exact same centerline
-	FVector2D ExtStartPos = StartPos - Dir2D * StartExtension;
-	FVector2D ExtEndPos = EndPos + Dir2D * EndExtension;
-	float TotalLength = NominalLength + StartExtension + EndExtension;
+	// If corner vertices are not provided (e.g. preview wall), calculate standard rectangular corners
+	FVector2D SL2D = InSL2D.IsNearlyZero() ? (StartPos + Normal2D * HalfThickness) : InSL2D;
+	FVector2D SR2D = InSR2D.IsNearlyZero() ? (StartPos - Normal2D * HalfThickness) : InSR2D;
+	FVector2D EL2D = InEL2D.IsNearlyZero() ? (EndPos + Normal2D * HalfThickness) : InEL2D;
+	FVector2D ER2D = InER2D.IsNearlyZero() ? (EndPos - Normal2D * HalfThickness) : InER2D;
 
-	// Calculate 2D corner vertices for pure, solid rectangular wall prism
-	FVector2D SL2D = ExtStartPos + Normal2D * HalfThickness;
-	FVector2D SR2D = ExtStartPos - Normal2D * HalfThickness;
-	FVector2D EL2D = ExtEndPos + Normal2D * HalfThickness;
-	FVector2D ER2D = ExtEndPos - Normal2D * HalfThickness;
+	float TotalLength = NominalLength;
 
 	TArray<FVector> Vertices;
 	TArray<int32> Triangles;
@@ -179,9 +178,8 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	float LastOpeningEnd = 0.f;
 	for (const FWallOpening& Op : SortedOpenings)
 	{
-		float CenterAlongExt = Op.DistanceFromStart + StartExtension;
-		float OpStart = CenterAlongExt - Op.Width * 0.5f;
-		float OpEnd = CenterAlongExt + Op.Width * 0.5f;
+		float OpStart = Op.DistanceFromStart - Op.Width * 0.5f;
+		float OpEnd = Op.DistanceFromStart + Op.Width * 0.5f;
 		if (OpStart >= LastOpeningEnd - 1.f && OpStart < TotalLength && OpEnd <= TotalLength + 1.f)
 		{
 			ValidOpenings.Add(Op);
@@ -193,9 +191,8 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 
 	for (const FWallOpening& Opening : ValidOpenings)
 	{
-		float CenterAlongExt = Opening.DistanceFromStart + StartExtension;
-		float OpenStart = FMath::Clamp(CenterAlongExt - Opening.Width * 0.5f, 0.f, TotalLength);
-		float OpenEnd = FMath::Clamp(CenterAlongExt + Opening.Width * 0.5f, 0.f, TotalLength);
+		float OpenStart = FMath::Clamp(Opening.DistanceFromStart - Opening.Width * 0.5f, 0.f, TotalLength);
+		float OpenEnd = FMath::Clamp(Opening.DistanceFromStart + Opening.Width * 0.5f, 0.f, TotalLength);
 
 		if (OpenStart > CurrentDist)
 		{
@@ -381,15 +378,21 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 			FVector(SecER.X, SecER.Y, WallHeight), FVector(SecSR.X, SecSR.Y, WallHeight), UpVector);
 	}
 
-	// Start Cap Face (flat perpendicular box end)
-	GenerateQuad(Vertices, Triangles, Normals, UVs,
-		FVector(SR2D.X, SR2D.Y, 0.f), FVector(SL2D.X, SL2D.Y, 0.f),
-		FVector(SL2D.X, SL2D.Y, WallHeight), FVector(SR2D.X, SR2D.Y, WallHeight), StartNormalVector);
+	// Start Cap Face (if open end)
+	if (bStartCap)
+	{
+		GenerateQuad(Vertices, Triangles, Normals, UVs,
+			FVector(SR2D.X, SR2D.Y, 0.f), FVector(SL2D.X, SL2D.Y, 0.f),
+			FVector(SL2D.X, SL2D.Y, WallHeight), FVector(SR2D.X, SR2D.Y, WallHeight), StartNormalVector);
+	}
 
-	// End Cap Face (flat perpendicular box end)
-	GenerateQuad(Vertices, Triangles, Normals, UVs,
-		FVector(EL2D.X, EL2D.Y, 0.f), FVector(ER2D.X, ER2D.Y, 0.f),
-		FVector(ER2D.X, ER2D.Y, WallHeight), FVector(EL2D.X, EL2D.Y, WallHeight), EndNormalVector);
+	// End Cap Face (if open end)
+	if (bEndCap)
+	{
+		GenerateQuad(Vertices, Triangles, Normals, UVs,
+			FVector(EL2D.X, EL2D.Y, 0.f), FVector(ER2D.X, ER2D.Y, 0.f),
+			FVector(ER2D.X, ER2D.Y, WallHeight), FVector(EL2D.X, EL2D.Y, WallHeight), EndNormalVector);
+	}
 
 	WallProceduralMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, TArray<FColor>(), Tangents, bCreateCollision);
 

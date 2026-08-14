@@ -28,11 +28,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wall")
 	FWallSegment WallData;
 
-	/** Rebuilds the procedural 3D wall geometry taking corner extensions and openings into account. */
+	/** Rebuilds the procedural 3D wall geometry taking exact corner vertices and openings into account. */
 	UFUNCTION(BlueprintCallable, Category = "Wall")
 	void RebuildWallMesh(const FVector2D& StartPos, const FVector2D& EndPos,
-	                     float StartExtension = 0.f,
-	                     float EndExtension = 0.f,
+	                     FVector2D InSL2D = FVector2D::ZeroVector,
+	                     FVector2D InSR2D = FVector2D::ZeroVector,
+	                     FVector2D InEL2D = FVector2D::ZeroVector,
+	                     FVector2D InER2D = FVector2D::ZeroVector,
+	                     bool bStartCap = true,
+	                     bool bEndCap = true,
 	                     bool bCreateCollision = true);
 
 	UFUNCTION(BlueprintCallable, Category = "Wall")
