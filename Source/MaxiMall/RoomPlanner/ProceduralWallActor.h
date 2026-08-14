@@ -28,13 +28,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wall")
 	FWallSegment WallData;
 
-	/** Rebuilds the procedural 3D wall geometry taking mitered corner offsets and openings into account. */
+	/** Rebuilds the procedural 3D wall geometry taking corner extensions and openings into account. */
 	UFUNCTION(BlueprintCallable, Category = "Wall")
 	void RebuildWallMesh(const FVector2D& StartPos, const FVector2D& EndPos,
-	                     FVector2D StartLeftMiterOffset = FVector2D::ZeroVector,
-	                     FVector2D StartRightMiterOffset = FVector2D::ZeroVector,
-	                     FVector2D EndLeftMiterOffset = FVector2D::ZeroVector,
-	                     FVector2D EndRightMiterOffset = FVector2D::ZeroVector,
+	                     float StartExtension = 0.f,
+	                     float EndExtension = 0.f,
 	                     bool bCreateCollision = true);
 
 	UFUNCTION(BlueprintCallable, Category = "Wall")

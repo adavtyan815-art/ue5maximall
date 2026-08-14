@@ -347,18 +347,11 @@ void ARoomPlannerManager::ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FV
                                                      TMap<int32, FVector2D>& OutEndLeftOffsets,
                                                      TMap<int32, FVector2D>& OutEndRightOffsets)
 {
-	// Rectangular CAD wall prisms are used with solid end caps to maintain uniform wall cross-sections and prevent trapezoidal corner distortion.
+	// Centerline extension logic is handled in RebuildAllWalls to ensure clean corner closing.
 }
 
 void ARoomPlannerManager::RebuildAllWalls()
 {
-	TMap<int32, FVector2D> StartLeftOffsets, StartRightOffsets, EndLeftOffsets, EndRightOffsets;
-
-	for (const TPair<int32, FWallNode>& Pair : Nodes)
-	{
-		ComputeMiterOffsetsAtNode(Pair.Key, StartLeftOffsets, StartRightOffsets, EndLeftOffsets, EndRightOffsets);
-	}
-
 	for (auto& Pair : WallActors)
 	{
 		int32 SegID = Pair.Key;
@@ -370,13 +363,60 @@ void ARoomPlannerManager::RebuildAllWalls()
 			FVector2D StartPos = Nodes[Seg->StartNodeID].Position;
 			FVector2D EndPos = Nodes[Seg->EndNodeID].Position;
 
-			FVector2D SLO = StartLeftOffsets.FindRef(SegID);
-			FVector2D SRO = StartRightOffsets.FindRef(SegID);
-			FVector2D ELO = EndLeftOffsets.FindRef(SegID);
-			FVector2D ERO = EndRightOffsets.FindRef(SegID);
+			FVector2D Dir = (EndPos - StartPos).GetSafeNormal();
+			float HalfThick = Seg->Thickness * 0.5f;
+
+			// --- Calculate Start Extension ---
+			float StartExt = 0.f;
+			if (const FWallNode* StartNode = Nodes.Find(Seg->StartNodeID))
+			{
+				if (StartNode->ConnectedSegmentIDs.Num() == 2)
+				{
+					int32 OtherSegID = (StartNode->ConnectedSegmentIDs[0] == SegID) ? StartNode->ConnectedSegmentIDs[1] : StartNode->ConnectedSegmentIDs[0];
+					if (const FWallSegment* OtherSeg = WallSegments.Find(OtherSegID))
+					{
+						FVector2D OtherEnd = (OtherSeg->StartNodeID == Seg->StartNodeID) ? Nodes[OtherSeg->EndNodeID].Position : Nodes[OtherSeg->StartNodeID].Position;
+						FVector2D OtherDir = (OtherEnd - StartPos).GetSafeNormal();
+						float Dot = FVector2D::DotProduct(Dir, OtherDir);
+						float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
+						float TanHalf = FMath::Tan(AngleRad * 0.5f);
+						StartExt = (TanHalf > 0.1f) ? (HalfThick / TanHalf) : HalfThick;
+						StartExt = FMath::Clamp(StartExt, 0.f, Seg->Thickness * 1.5f);
+					}
+				}
+				else if (StartNode->ConnectedSegmentIDs.Num() >= 3)
+				{
+					StartExt = HalfThick;
+				}
+			}
+
+			// --- Calculate End Extension ---
+			float EndExt = 0.f;
+			if (const FWallNode* EndNode = Nodes.Find(Seg->EndNodeID))
+			{
+				if (EndNode->ConnectedSegmentIDs.Num() == 2)
+				{
+					int32 OtherSegID = (EndNode->ConnectedSegmentIDs[0] == SegID) ? EndNode->ConnectedSegmentIDs[1] : EndNode->ConnectedSegmentIDs[0];
+					if (const FWallSegment* OtherSeg = WallSegments.Find(OtherSegID))
+					{
+						FVector2D OtherEnd = (OtherSeg->StartNodeID == Seg->EndNodeID) ? Nodes[OtherSeg->EndNodeID].Position : Nodes[OtherSeg->StartNodeID].Position;
+						FVector2D OtherDir = (OtherEnd - EndPos).GetSafeNormal();
+						FVector2D AwayDir = -Dir;
+						float Dot = FVector2D::DotProduct(AwayDir, OtherDir);
+						float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
+						float TanHalf = FMath::Tan(AngleRad * 0.5f);
+						EndExt = (TanHalf > 0.1f) ? (HalfThick / TanHalf) : HalfThick;
+						EndExt = FMath::Clamp(EndExt, 0.f, Seg->Thickness * 1.5f);
+					}
+				}
+				else if (EndNode->ConnectedSegmentIDs.Num() >= 3)
+				{
+					EndExt = HalfThick;
+				}
+			}
 
 			WallActor->WallData = *Seg;
-			WallActor->RebuildWallMesh(StartPos, EndPos, SLO, SRO, ELO, ERO);
+			WallActor->RebuildWallMesh(StartPos, EndPos, StartExt, EndExt, true);
 		}
 	}
 }
@@ -1249,7 +1289,7 @@ void ARoomPlannerManager::UpdateInteractiveWallDraw(const FVector& WorldPos)
 
 		if (PreviewWallActor)
 		{
-			PreviewWallActor->RebuildWallMesh(P1, P2, FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, false);
+			PreviewWallActor->RebuildWallMesh(P1, P2, 0.f, 0.f, false);
 		}
 
 		float LengthMeters = LengthCm / 100.f;

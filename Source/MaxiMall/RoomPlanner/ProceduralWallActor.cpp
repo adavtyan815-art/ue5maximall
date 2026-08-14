@@ -114,8 +114,7 @@ void AProceduralWallActor::GenerateQuad(TArray<FVector>& Vertices, TArray<int32>
 }
 
 void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVector2D& EndPos,
-                                            FVector2D StartLeftMiterOffset, FVector2D StartRightMiterOffset,
-                                            FVector2D EndLeftMiterOffset, FVector2D EndRightMiterOffset,
+                                            float StartExtension, float EndExtension,
                                             bool bCreateCollision)
 {
 	if (!WallProceduralMesh)
@@ -135,23 +134,28 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	OpeningHighlightMeshes.Empty();
 
 	FVector2D Dir2D = (EndPos - StartPos);
-	float TotalLength = Dir2D.Size();
-	if (TotalLength < 1.0f)
+	float NominalLength = Dir2D.Size();
+	if (NominalLength < 1.0f)
 	{
 		return;
 	}
 
-	Dir2D /= TotalLength;
+	Dir2D /= NominalLength;
 	FVector2D Normal2D(-Dir2D.Y, Dir2D.X);
 
 	float HalfThickness = WallData.Thickness * 0.5f;
 	float WallHeight = WallData.Height;
 
+	// Calculate extended start and end positions along the exact same centerline
+	FVector2D ExtStartPos = StartPos - Dir2D * StartExtension;
+	FVector2D ExtEndPos = EndPos + Dir2D * EndExtension;
+	float TotalLength = NominalLength + StartExtension + EndExtension;
+
 	// Calculate 2D corner vertices for pure, solid rectangular wall prism
-	FVector2D SL2D = StartPos + Normal2D * HalfThickness;
-	FVector2D SR2D = StartPos - Normal2D * HalfThickness;
-	FVector2D EL2D = EndPos + Normal2D * HalfThickness;
-	FVector2D ER2D = EndPos - Normal2D * HalfThickness;
+	FVector2D SL2D = ExtStartPos + Normal2D * HalfThickness;
+	FVector2D SR2D = ExtStartPos - Normal2D * HalfThickness;
+	FVector2D EL2D = ExtEndPos + Normal2D * HalfThickness;
+	FVector2D ER2D = ExtEndPos - Normal2D * HalfThickness;
 
 	TArray<FVector> Vertices;
 	TArray<int32> Triangles;
@@ -175,8 +179,9 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	float LastOpeningEnd = 0.f;
 	for (const FWallOpening& Op : SortedOpenings)
 	{
-		float OpStart = Op.DistanceFromStart - Op.Width * 0.5f;
-		float OpEnd = Op.DistanceFromStart + Op.Width * 0.5f;
+		float CenterAlongExt = Op.DistanceFromStart + StartExtension;
+		float OpStart = CenterAlongExt - Op.Width * 0.5f;
+		float OpEnd = CenterAlongExt + Op.Width * 0.5f;
 		if (OpStart >= LastOpeningEnd - 1.f && OpStart < TotalLength && OpEnd <= TotalLength + 1.f)
 		{
 			ValidOpenings.Add(Op);
@@ -188,8 +193,9 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 
 	for (const FWallOpening& Opening : ValidOpenings)
 	{
-		float OpenStart = FMath::Clamp(Opening.DistanceFromStart - Opening.Width * 0.5f, 0.f, TotalLength);
-		float OpenEnd = FMath::Clamp(Opening.DistanceFromStart + Opening.Width * 0.5f, 0.f, TotalLength);
+		float CenterAlongExt = Opening.DistanceFromStart + StartExtension;
+		float OpenStart = FMath::Clamp(CenterAlongExt - Opening.Width * 0.5f, 0.f, TotalLength);
+		float OpenEnd = FMath::Clamp(CenterAlongExt + Opening.Width * 0.5f, 0.f, TotalLength);
 
 		if (OpenStart > CurrentDist)
 		{

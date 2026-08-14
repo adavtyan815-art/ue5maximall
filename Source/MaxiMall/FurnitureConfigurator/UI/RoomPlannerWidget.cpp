@@ -181,6 +181,18 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 	if (BtnClearLayout) BtnClearLayout->SetVisibility(ToolsVis);
 	if (BtnPresetRoom) BtnPresetRoom->SetVisibility(ToolsVis);
 	if (Image_1) Image_1->SetVisibility(ToolsVis);
+
+	if (TxtGuidanceHint)
+	{
+		if (bIs2D)
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("2D Режим: Нажмите и тяните ЛКМ для создания стены")));
+		}
+		else
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("3D Просмотр:\n• Удерживайте ПКМ для вращения камеры\n• Колесо мыши для масштабирования")));
+		}
+	}
 	
 	// BtnSelectTool is handled by NativeTick, but we can also force it here
 }

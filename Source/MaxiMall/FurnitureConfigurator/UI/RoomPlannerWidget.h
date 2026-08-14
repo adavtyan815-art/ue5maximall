@@ -141,6 +141,9 @@ public:
 	TObjectPtr<UTextBlock> TxtPerimeter;
 
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UTextBlock> TxtGuidanceHint;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UWidget> SnapIndicator;
 
 	// --- Dynamic Properties Panel ---
