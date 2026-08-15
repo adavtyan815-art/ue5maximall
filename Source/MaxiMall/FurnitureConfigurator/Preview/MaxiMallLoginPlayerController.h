@@ -8,11 +8,7 @@
 #include "MaxiMallLoginPlayerController.generated.h"
 
 /**
- * Lightweight Player Controller for the Login screen.
- *
- * Responsibilities:
- *  - Supports Pixel Streaming clipboard paste via Slate Character Event injection.
- *  - Sends diagnostic messages back to the browser over the PS data channel.
+ * Lightweight Player Controller for the Login screen to support Pixel Streaming Copy/Paste.
  */
 UCLASS()
 class MAXIMALL_API AMaxiMallLoginPlayerController : public APlayerController
@@ -27,24 +23,12 @@ protected:
 	virtual void PlayerTick(float DeltaTime) override;
 
 private:
-	/**
-	 * Cached reference to the UPixelStreamingInput component created and owned
-	 * by the Pixel Streaming plugin. Populated once in BeginPlay() via
-	 * GetComponentByClass — NOT created with CreateDefaultSubobject.
-	 */
 	UPROPERTY()
-	TObjectPtr<UPixelStreamingInput> CachedPSInput;
+	TObjectPtr<UPixelStreamingInput> PixelStreamingInput;
 
-	FString LastKnownClipboardContent;
-	float ClipboardCheckInterval = 0.2f;
-	float ClipboardCheckTimer = 0.0f;
+	UPROPERTY()
+	TObjectPtr<UPixelStreamingInput> ActivePixelStreamingInput;
 
-	/** Handles incoming PS data-channel messages (e.g. ClipboardPaste commands). */
 	UFUNCTION()
 	void OnPixelStreamingInput(const FString& Descriptor);
-
-	/** Sends a DIAG diagnostic string to the browser via the PS data channel.
-	 *  Visible in browser DevTools when the MaxiMall diagnostic interceptor
-	 *  snippet is active. Works in Shipping builds (no UE_LOG dependency). */
-	void SendDiag(const FString& Message) const;
 };

@@ -1,4 +1,4 @@
-﻿// Copyright MaxiMall. All Rights Reserved.
+// Copyright MaxiMall. All Rights Reserved.
 
 #include "ColorCatalog/ColorCatalogWidget.h"
 #include "ColorCatalog/ColorCatalogSubsystem.h"
@@ -50,6 +50,8 @@ void UColorCatalogWidget::NativeConstruct()
 
 	if (EditableText_Search)
 	{
+		EditableText_Search->SetHintText(FText::FromString(TEXT("Поиск...")));
+		EditableText_Search->SetText(FText::GetEmpty());
 		EditableText_Search->OnTextChanged.AddUniqueDynamic(this, &UColorCatalogWidget::OnSearchTextChanged);
 	}
 
