@@ -56,11 +56,9 @@ void UColorCatalogWidget::NativeConstruct()
 		const FColor HexColor = FColor::FromHex(TEXT("0C121DFF"));
 		const FSlateColor SlateHexColor = FSlateColor(FLinearColor::FromSRGBColor(HexColor));
 
-		FEditableTextBoxStyle Style = EditableText_Search->GetWidgetStyle();
-		Style.TextStyle.ColorAndOpacity = SlateHexColor;
-		Style.ForegroundColor = SlateHexColor;
-		Style.FocusedForegroundColor = SlateHexColor;
-		EditableText_Search->SetWidgetStyle(Style);
+		EditableText_Search->WidgetStyle.TextStyle.ColorAndOpacity = SlateHexColor;
+		EditableText_Search->WidgetStyle.ForegroundColor = SlateHexColor;
+		EditableText_Search->WidgetStyle.FocusedForegroundColor = SlateHexColor;
 
 		EditableText_Search->OnTextChanged.AddUniqueDynamic(this, &UColorCatalogWidget::OnSearchTextChanged);
 	}
