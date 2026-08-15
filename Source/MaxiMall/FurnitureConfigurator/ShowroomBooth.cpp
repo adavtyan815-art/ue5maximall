@@ -1,4 +1,4 @@
-﻿// Copyright MaxiMall Project. All Rights Reserved.
+// Copyright MaxiMall Project. All Rights Reserved.
 // ShowroomBooth.cpp
 
 #include "FurnitureConfigurator/ShowroomBooth.h"
@@ -1105,22 +1105,38 @@ bool AShowroomBooth::Server_ApplyCustomColor_Validate(EFurnitureComponentType Co
 
 void AShowroomBooth::Server_ApplyCustomColor_Implementation(EFurnitureComponentType ComponentType, FLinearColor Color, UMaterialInterface* OverrideMaterial)
 {
-    bool bFound = false;
-    for (FCustomColorOverride& Override : CustomColors)
+    auto ApplyColorToMap = [this](EFurnitureComponentType Type, FLinearColor InColor, UMaterialInterface* InMat)
     {
-        if (Override.ComponentType == ComponentType)
+        bool bFound = false;
+        for (FCustomColorOverride& Override : CustomColors)
         {
-            Override.CustomColor = Color;
-            bFound = true;
-            break;
+            if (Override.ComponentType == Type)
+            {
+                Override.CustomColor = InColor;
+                Override.OverrideMaterial = InMat;
+                bFound = true;
+                break;
+            }
         }
-    }
-    
-    if (!bFound)
+        
+        if (!bFound)
+        {
+            CustomColors.Add(FCustomColorOverride(Type, InColor, InMat));
+        }
+    };
+
+    ApplyColorToMap(ComponentType, Color, OverrideMaterial);
+
+    // Pair Cabinet & Doors: When Cabinet or Doors are colored, both are unified
+    if (ComponentType == EFurnitureComponentType::Cabinet)
     {
-        CustomColors.Add(FCustomColorOverride(ComponentType, Color, OverrideMaterial));
+        ApplyColorToMap(EFurnitureComponentType::Doors, Color, OverrideMaterial);
     }
-    
+    else if (ComponentType == EFurnitureComponentType::Doors)
+    {
+        ApplyColorToMap(EFurnitureComponentType::Cabinet, Color, OverrideMaterial);
+    }
+
     OnRep_CustomColors();
 }
 
@@ -1227,11 +1243,20 @@ void AShowroomBooth::OnRep_CustomColors()
         
         switch (Override.ComponentType)
         {
-        case EFurnitureComponentType::Cabinet: Targets.Add(MainCabinet); break;
-        case EFurnitureComponentType::Closet: Targets.Add(ClosetMesh); break;
+        case EFurnitureComponentType::Cabinet:
+            Targets.Add(MainCabinet);
+            Targets.Add(DoorMeshSlot0);
+            Targets.Add(DoorMeshSlot1);
+            break;
         case EFurnitureComponentType::Doors: 
+            Targets.Add(MainCabinet);
             Targets.Add(DoorMeshSlot0); 
             Targets.Add(DoorMeshSlot1); 
+            break;
+        case EFurnitureComponentType::Closet:
+            Targets.Add(ClosetMesh);
+            Targets.Add(ClosetDoorMeshSlot0);
+            Targets.Add(ClosetDoorMeshSlot1);
             break;
         case EFurnitureComponentType::Countertop: Targets.Add(CountertopMesh); break;
         case EFurnitureComponentType::Sink: Targets.Add(SinkMesh); break;
