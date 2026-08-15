@@ -52,6 +52,16 @@ void UColorCatalogWidget::NativeConstruct()
 	{
 		EditableText_Search->SetHintText(FText::FromString(TEXT("Поиск...")));
 		EditableText_Search->SetText(FText::GetEmpty());
+
+		const FColor HexColor = FColor::FromHex(TEXT("0C121DFF"));
+		const FSlateColor SlateHexColor = FSlateColor(FLinearColor::FromSRGBColor(HexColor));
+
+		FEditableTextBoxStyle Style = EditableText_Search->GetWidgetStyle();
+		Style.TextStyle.ColorAndOpacity = SlateHexColor;
+		Style.ForegroundColor = SlateHexColor;
+		Style.FocusedForegroundColor = SlateHexColor;
+		EditableText_Search->SetWidgetStyle(Style);
+
 		EditableText_Search->OnTextChanged.AddUniqueDynamic(this, &UColorCatalogWidget::OnSearchTextChanged);
 	}
 
