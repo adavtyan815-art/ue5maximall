@@ -10,10 +10,12 @@
 
 # Exclude Unreal directories
 Binaries/
-Build/
 Intermediate/
 Saved/
 DerivedDataCache/
+
+# Exclude local machine-instantiated Target.cs files (managed via Build/Targets/)
+/Source/*.Target.cs
 
 # Exclude backups and upgrade logs
 Backup/
