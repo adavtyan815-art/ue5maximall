@@ -76,9 +76,16 @@ MaxiMall (Project Root)
 │   └── DefaultEditor.ini                 # Editor preferences
 ├── Content/                              # Unreal Engine binary assets
 │   ├── MaxiMall.umap                     # Master interactive 3D level
-│   ├── Blueprints/                       # Gameplay & UI Blueprints (BP_PlayerController, etc.)
-│   ├── DataTables/                       # Furniture & Material catalog DataTables
-│   └── Meshes/ Materials/ Textures/      # 3D assets
+│   ├── DT/                               # Canonical project DataTables
+│   │   ├── DT_FurnitureCatalog.uasset    # Furniture model options & dimension limits
+│   │   ├── DT_SharedCountertops.uasset   # Shared countertop static mesh catalog
+│   │   └── DT_SharedSinks.uasset         # Shared sink static mesh catalog
+│   ├── FurnitureConfigurator/            # Configurator Blueprints & UI Widgets
+│   │   ├── BP_MaxiMallPlayerController   # Core player controller Blueprint
+│   │   ├── Blueprints/                   # BP_ShowroomBooth, BP_FurniturePreviewActor
+│   │   └── UI/                           # WBP_SaveSystem, WBP_SaveHistoryItem, etc.
+│   ├── RoomPlanner/                      # WBP_RoomPlannerWidget, WBP_ColorCatalog
+│   └── ColorCatalog/                     # WBP_ColorCatalog, WBP_ColorSwatchItem
 ├── Source/
 │   ├── awsTutorial.Target.cs             # [GITIGNORED] Machine-active Game target
 │   ├── awsTutorialEditor.Target.cs       # [GITIGNORED] Machine-active Editor target
