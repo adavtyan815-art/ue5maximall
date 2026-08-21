@@ -1,4 +1,4 @@
-﻿# AI Access & Permissions Operational Guide — MaxiMall Platform
+# AI Access & Permissions Operational Guide — MaxiMall Platform
 
 > **Purpose**: Definitive operational access boundaries, security rules, and setup instructions for AI coding agents (Antigravity, Claude Code, etc.) across the MaxiMall repositories.  
 > **Security Policy**: Zero plaintext secrets or credentials in Git. Describe credential locations and mechanisms, never secret values.  
@@ -68,16 +68,20 @@ flowchart TD
 To onboard an AI agent onto a development machine, ensure the following toolchain is available:
 
 ### PC1 (Development Machine — Narek):
-1. **Unreal Engine**: Version `5.3.2` installed at `C:\Program Files\Epic Games\UE_5.3\`.
+1. **Unreal Engine**: Version `5.3.2` installed at `D:\Programs\Epic Games\UE_5.3\`.
 2. **Visual Studio**: Visual Studio 2022 with MSVC `v143` C++ toolchain and Windows 10/11 SDK.
 3. **.NET SDK**: .NET 6.0 and .NET 8.0 SDKs (required for UnrealBuildTool and Epic commandlets).
 4. **Git Client**: Standard Git CLI with credential helper configured.
-5. **Node.js**: Node.js 18+ or 20+ LTS (for testing `maximall-web` and `maximall-pixel-config`).
 
 ### PC2 (Production Build Machine — Artur):
 1. **Unreal Engine**: Version `5.6` installed for packaging Linux Client and Server targets.
 2. **Linux Cross-Compilation Toolchain**: Installed for packaging Linux binaries from Windows.
 3. **Visual Studio 2022**: C++ Game Development workload installed.
+4. **.NET SDK**: .NET 6.0 and .NET 8.0 SDKs.
+5. **Git Client**: Standard Git CLI with credential helper configured.
+
+### Optional Cross-Project Tooling (Ecosystem Integration Only):
+- **Node.js**: Node.js 18+ or 20+ LTS is **NOT** required for normal `awsTutorial` Unreal Engine development. It is only required if a developer or AI is actively running or modifying the external `maximall-web` orchestrator or compiling the `maximall-pixel-config` frontend player.
 
 ---
 

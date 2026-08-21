@@ -1,4 +1,4 @@
-﻿# PC1 Ecosystem Integration Guide — awsTutorial, maximall-web & maximall-pixel-config
+# PC1 Ecosystem Integration Guide — awsTutorial, maximall-web & maximall-pixel-config
 
 > **Primary Audience**: PC1 Developer (Narek), Antigravity, and Claude Code agents working across the MaxiMall platform.  
 > **Purpose**: Deep breakdown of cross-repository responsibilities, communication protocols, data schemas, and runtime contracts.  
@@ -33,36 +33,54 @@
 
 ## 2. Unreal Engine ↔ Backend REST Contracts (`maximall-web`)
 
-Unreal Engine communicates with `maximall-web` via HTTP REST calls dispatched from C++ (`HttpModule`) or Web Blueprints:
+Unreal Engine communicates with `maximall-web` via HTTP REST calls dispatched from C++ (`HttpModule`) in `USaveSystemWidget`:
 
-### 2.1 Get User Saves (`GET /api/saves?user=<username>`)
-- **Caller**: `USaveSystemWidget` in `awsTutorial`.
-- **Backend Handler**: `app.get('/api/saves', ...)` in `maximall-web`.
+### 2.1 Get User Saves (`GET /api/saves/:username`)
+- **Caller**: `USaveSystemWidget::RefreshSaveHistory()` in `awsTutorial`.
+- **Backend Handler**: `app.get('/api/saves/:username', ...)` in `maximall-web`.
 - **Response Format**:
   ```json
   [
     {
-      "id": "room_01_save",
-      "user": "narek",
-      "updatedAt": "2026-08-21T12:00:00.000Z",
-      "screenshotBase64": "data:image/jpeg;base64,...",
-      "roomData": {
-        "roomId": "modern_showroom",
-        "objects": [
-          { "id": "sofa_leather_01", "x": 250.0, "y": 100.0, "z": 0.0, "yaw": 180.0 }
-        ],
-        "boothStates": [
-          { "boothId": "booth_1", "active": true, "theme": "wood" }
-        ]
-      }
+      "username": "narek",
+      "saveId": "save_1724240000000",
+      "saveName": "My Modern Showroom",
+      "date": "21.08.2026",
+      "thumbnail": "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhm...",
+      "boothStates": [
+        {
+          "boothName": "BP_ShowroomBooth_C_1",
+          "state": {
+            "productID": "Vanity_Set_01",
+            "activeSizeIndex": 0,
+            "activeColorIndex": 2,
+            "countertopSizeIndex": 0,
+            "activeCountertopColorIndex": 1,
+            "closetSizeIndex": 0,
+            "closetColorIndex": 0,
+            "sinkSizeIndex": 0,
+            "sinkColorIndex": 0,
+            "faucetSizeIndex": 0,
+            "faucetColorIndex": 0,
+            "mirrorSizeIndex": 0,
+            "mirrorColorIndex": 0
+          }
+        }
+      ]
     }
   ]
   ```
 
 ### 2.2 Upload Room Save (`POST /api/saves`)
-- **Caller**: `USaveSystemWidget` upon clicking *"Save Room"*.
-- **Payload**: Serialized room objects, booth layout states, and a Base64-encoded viewport screenshot thumbnail.
+- **Caller**: `USaveSystemWidget::ExecuteSaveGame()` in `awsTutorial`.
+- **Backend Handler**: `app.post('/api/saves', ...)` in `maximall-web`.
+- **Payload**: JSON payload with `username`, `saveId`, `saveName`, `date`, `thumbnail` (Base64 PNG screenshot), and `boothStates` array serializing `FShowroomBoothConfigState`.
 - **Response**: `HTTP 200 OK` `{ "success": true, "id": "..." }`.
+
+### 2.3 Delete Room Save (`DELETE /api/saves/:username/:saveId`)
+- **Caller**: `USaveSystemWidget::HandleDeleteSaveItem()` in `awsTutorial`.
+- **Backend Handler**: `app.delete('/api/saves/:username/:saveId', ...)` in `maximall-web`.
+- **Response**: `HTTP 200 OK` `{ "success": true }`.
 
 ---
 
@@ -74,8 +92,8 @@ Unreal Engine communicates with `maximall-web` via HTTP REST calls dispatched fr
 
 ### 3.2 Data Channel Event Hooks:
 1. **URL Redirection (`open_url`)**:
-   - Dispatched from `AawsTutorial_PlayerController::OpenWebURL(const FString& URL)`.
-   - Transmits string payload over Pixel Streaming data channel: `open_url:https://external-store.com/item/123`.
+   - Dispatched from `AAwsTutorial_PlayerController::SendOpenURLToBrowser(const FString& URL)`.
+   - Transmits string payload over Pixel Streaming data channel: `open_url: https://external-store.com/item/123` (`open_url: %s` format with space).
    - Handled in `player.ts` via `window.open(url, '_blank')`.
 2. **Cursor Synchronization**:
    - `player.ts` injects the `html.lmb-down` style to hide the browser cursor while the user rotates the 3D camera with LMB, preventing cursor flickering over DOM overlays.

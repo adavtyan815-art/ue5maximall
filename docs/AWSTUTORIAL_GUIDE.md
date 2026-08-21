@@ -1,4 +1,4 @@
-﻿# awsTutorial Unreal Engine Project: Master Architecture & Universal Guide
+# awsTutorial Unreal Engine Project: Master Architecture & Universal Guide
 
 > **Repository**: `https://github.com/adavtyan815-art/ue5maximall.git`  
 > **Primary Module**: `awsTutorial` (`Source/awsTutorial/` — 42 functional C++ source files)  
@@ -160,12 +160,17 @@ MaxiMall (Project Root)
 
 - **Master Level**: `/Game/MaxiMall` (`Content/MaxiMall.umap`).
 - **Core Blueprints**:
-  - `BP_PlayerController` (Derived from `AawsTutorial_PlayerController`).
-  - `BP_ShowroomBooth` (Derived from `AShowroomBooth`).
-  - `BP_ProceduralWall` (Derived from `AProceduralWallActor`).
-- **DataTables**:
-  - `DT_FurnitureCatalog`: Contains furniture IDs, mesh references, dimension limits, and pricing metadata.
-  - `DT_MaterialCatalog`: Contains material instance references, texture sets, and swatch thumbnails.
+  - `BP_MaxiMallPlayerController` (`Content/FurnitureConfigurator/BP_MaxiMallPlayerController.uasset` — Derived from `AawsTutorial_PlayerController`).
+  - `BP_ShowroomBooth` (`Content/FurnitureConfigurator/Blueprints/BP_ShowroomBooth.uasset` — Derived from `AShowroomBooth`).
+  - `BP_FurniturePreviewActor` (`Content/FurnitureConfigurator/Blueprints/BP_FurniturePreviewActor.uasset` — Derived from `AFurniturePreviewActor`).
+  - `WBP_SaveSystem`, `WBP_SaveHistoryItem`, `WBP_RoomPlannerWidget`, `WBP_ColorCatalog` (UI Widgets).
+- **Native Procedural Actors**:
+  - `AProceduralWallActor`: Spawned dynamically at runtime by `URoomPlannerManager` (native C++ procedural mesh generation; no standalone Blueprint asset).
+- **DataTables (`Content/DT/`)**:
+  - `DT_FurnitureCatalog`: Contains furniture model IDs, meshes, dimension limits, and component options.
+  - `DT_SharedCountertops`: Contains shared countertop model IDs and static mesh options.
+  - `DT_SharedSinks`: Contains shared sink model IDs and static mesh options.
+  *(Note: Material catalogs and RAL color palettes are indexed programmatically via `UColorCatalogSubsystem`).*
 
 ---
 
@@ -271,13 +276,14 @@ Build/Targets/
 ---
 
 ## 10. External Ecosystem Interfaces & Contracts
-
+ 
 1. **`maximall-web` Backend**:
-   - Save/Load API: `GET /api/saves?user=<username>`, `POST /api/saves`, `DELETE /api/saves/:id`.
-   - Host URL Parameter: Passed via command line `-BackendURL=http://172.31.x.x:3000`.
+   - Save/Load API: `GET /api/saves/:username`, `POST /api/saves`, `DELETE /api/saves/:username/:saveId`.
+   - Host URL Parameter: Passed via command line `-BackendURL=http://172.31.x.x:3000` (or `https://...`).
+   - Implementation: `USaveSystemWidget` serializes showroom booth configurations to JSON and exchanges REST payloads via `FHttpModule`.
 2. **`maximall-pixel-config` Infrastructure**:
    - Streamer Port: Connects to local Wilbur signaling on `ws://127.0.0.1:8888`.
-   - Data Channel Commands: `open_url` for browser tab opening, mouse hover events for cursor sync.
+   - Data Channel Commands: `open_url: %s` for browser tab opening, mouse hover events for cursor sync.
 
 ---
 
@@ -291,4 +297,4 @@ Build/Targets/
 > 4. **No BIM or ShowroomBoothAll Classes**: All booth interaction is consolidated in `AShowroomBooth`.
 
 ---
-*Document Version: 1.1.0 — Canonical Universal Guide for awsTutorial*
+*Document Version: 1.2.0 — Canonical Universal Guide for awsTutorial*
