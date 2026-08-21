@@ -1,97 +1,98 @@
-# AI Access & Permissions Operational Guide — MaxiMall Platform
+﻿# AI Access & Permissions Operational Guide
 
-> **Purpose**: Definitive operational access boundaries, security rules, and setup instructions for AI coding agents (Antigravity, Claude Code, etc.) across the MaxiMall repositories.  
-> **Security Policy**: Zero plaintext secrets or credentials in Git. Describe credential locations and mechanisms, never secret values.  
+> **Purpose**: Definitive operational boundaries, autonomous permission scopes, human-approval requirements, and security governance for AI coding agents across the repository.  
+> **Security Policy**: Zero plaintext credentials or secrets in Git. Describe credential mechanisms and locations, never secret values.  
 
 ---
 
-## 1. Access Scopes & Permission Levels
+## 1. Core Operational Directives for AI Agents
+
+> [!IMPORTANT]
+> ### STRICT TASK SCOPE ENFORCEMENT
+> The AI agent must perform **only the operations explicitly requested by the current user task**.
+> - It must **not** independently execute builds, tests, cleanups, synchronizations, migrations, deployments, Git operations, or refactors merely because they seem useful or standard.
+> - If an operation is not part of the active user request, the AI must ask for explicit instructions before proceeding.
+
+---
+
+## 2. Permission Tier Model
 
 ```mermaid
 flowchart TD
-    subgraph Tier1 [Tier 1: Safe Read-Only Operations]
-        R1[Read source code & configs]
-        R2[Inspect Git status & log]
-        R3[Run UBT Editor builds & tests]
+    subgraph Tier1 [Tier 1: Safe Read-Only (Autonomous / Unrestricted)]
+        R1[Read source code, configs, & documentation]
+        R2[Inspect Git status, branch list, & commit logs]
+        R3[Inspect compiler diagnostic outputs & reports]
     end
 
     subgraph Tier2 [Tier 2: Autonomous Local Modifications]
-        W1[Edit C++ source files in Source/awsTutorial/]
-        W2[Run setup_ue53.bat / setup_ue56.bat]
-        W3[Compile Blueprints via commandlet]
-        W4[Stage & commit changes on feature branches]
+        W1[Edit source and documentation files requested by task]
+        W2[Create local commits on working/feature branches]
     end
 
-    subgraph Tier3 [Tier 3: Operations Requiring Human Confirmation]
-        A1[Merge to dev or main branches]
-        A2[Delete untracked project files]
-        A3[Push commits to GitHub origin]
+    subgraph Tier3 [Tier 3: Operations Requiring Explicit Human Approval]
+        A1[Delete files or directories from the repository]
+        A2[Merge branches]
+        A3[Push commits or branches to remote repositories]
+        A4[Modify repository structure or top-level folders]
     end
 
     subgraph Tier4 [Tier 4: Sensitive Production Operations]
-        P1[AWS EC2 instance start / stop / terminate]
-        P2[Modify IAM roles or security group rules]
-        P3[Deploy production Linux packages]
+        P1[AWS EC2 instance lifecycle: start / stop / terminate]
+        P2[Modify IAM roles, access policies, or Security Groups]
+        P3[Deploy packages or modify live production environments]
     end
 ```
 
 ---
 
-## 2. Operations Classification
+## 3. Detailed Operational Permissions
 
-### 2.1 Tier 1: Safe Read-Only (Unrestricted)
-- Reading `.cpp`, `.h`, `.ini`, `.json`, `.ts`, `.md`, and build files.
-- Inspecting `git status`, `git branch -a`, `git log`.
-- Running compiler diagnostic checks.
+### 3.1 Tier 1: Safe Read-Only (Autonomous)
+- **Filesystem & Code**: Read source files (`.cpp`, `.h`, `.cs`, `.ini`, `.json`, `.ts`, `.bat`, `.md`).
+- **Git State**: Query `git status`, `git diff`, `git log`, `git branch -a`, `git remote -v`.
+- **Diagnostics**: Read existing build logs, diagnostic summaries, and test reports.
 
-### 2.2 Tier 2: Local Modifying Operations (Autonomous)
-- Editing C++ classes in `Source/awsTutorial/`.
-- Switching active build profiles via `setup_ue53.bat` or `setup_ue56.bat`.
-- Running Unreal Engine compilation (`Build.bat`).
-- Running `CompileAllBlueprintsCommandlet` and map load verifications.
-- Creating local Git commits on developer branches (`narek/*`, `artur/*`).
+### 3.2 Tier 2: Local Modifications (Autonomous)
+- **Source Editing**: Modify only the source and documentation files specifically targeted by the task.
+- **Local Commits**: Create local Git commits only on developer feature branches when requested.
 
-### 2.3 Tier 3: Human Confirmation Required
-- Deleting files or directories from the repository.
-- Merging feature branches into `dev` or `main`.
-- Pushing local branches to `origin`.
+### 3.3 Tier 3: Operations Requiring Human Confirmation
+- **File Deletions**: Deleting any file or directory requires forensic verification of redundancy and explicit user confirmation.
+- **Branch Merges**: Merging feature branches into shared branches.
+- **Remote Operations**: Pushing local branches or tags to remote repositories (`git push`).
+- **Structural Changes**: Adding, deleting, or renaming top-level project folders or module roots.
 
-### 2.4 Tier 4: Sensitive Production Operations (Strict Safety)
-- Modifying live AWS infrastructure or launching GPU instances outside automated scaling.
-- Changing security group rules or VPC subnet configurations.
-- Altering production build profiles or deployment pipelines.
+### 3.4 Tier 4: Sensitive Production Operations (Strict Confirmation)
+- **Cloud Infrastructure**: Starting, stopping, or terminating AWS EC2 instances outside established automated pipelines.
+- **Security & Network**: Altering AWS Security Groups, VPC configurations, or IAM permissions.
+- **Production Deployments**: Publishing production binaries or modifying live host services.
 
 ---
 
-## 3. Toolchain & Environment Requirements for New AI Agents
+## 4. File Deletion & Redundancy Rules
 
-To onboard an AI agent onto a development machine, ensure the following toolchain is available:
-
-### PC1 (Development Machine — Narek):
-1. **Unreal Engine**: Version `5.3.2` installed at `D:\Programs\Epic Games\UE_5.3\`.
-2. **Visual Studio**: Visual Studio 2022 with MSVC `v143` C++ toolchain and Windows 10/11 SDK.
-3. **.NET SDK**: .NET 6.0 and .NET 8.0 SDKs (required for UnrealBuildTool and Epic commandlets).
-4. **Git Client**: Standard Git CLI with credential helper configured.
-
-### PC2 (Production Build Machine — Artur):
-1. **Unreal Engine**: Version `5.6` installed for packaging Linux Client and Server targets.
-2. **Linux Cross-Compilation Toolchain**: Installed for packaging Linux binaries from Windows.
-3. **Visual Studio 2022**: C++ Game Development workload installed.
-4. **.NET SDK**: .NET 6.0 and .NET 8.0 SDKs.
-5. **Git Client**: Standard Git CLI with credential helper configured.
-
-### Optional Cross-Project Tooling (Ecosystem Integration Only):
-- **Node.js**: Node.js 18+ or 20+ LTS is **NOT** required for normal `awsTutorial` Unreal Engine development. It is only required if a developer or AI is actively running or modifying the external `maximall-web` orchestrator or compiling the `maximall-pixel-config` frontend player.
+1. **Forensic Redundancy Requirement**:
+   - A file may only be deleted if it is forensically proven to be already tracked in Git, an obsolete duplicate, or a regenerable temporary file.
+2. **Unique Work Protection**:
+   - If unique or uncommitted work is detected in an untracked file, the AI must preserve it and report it to the user.
+3. **No Speculative Deletions**:
+   - Never delete files "for cleanup" unless explicitly instructed by the current task.
 
 ---
 
-## 4. Credential Management & Security Rules
+## 5. Credential Management & Security Policies
 
 > [!CAUTION]
-> ### STRICT SECURITY POLICIES
-> 1. **No Embedded PATs in Git**: Remote URLs must always use clean HTTPS URLs (`https://github.com/adavtyan815-art/...`) without embedded credentials.
-> 2. **No Hardcoded API Keys**: AWS access keys, SSH private keys, and session secrets must reside strictly in local `.env` or system environment variables. Never commit `.env` files.
-> 3. **SSH Key Protection**: Private keys (e.g. `maximall-temp.pem`) must remain in secure local user directories with `chmod 400` equivalent permissions.
+> ### ZERO SECRETS POLICY
+> 1. **No Embedded Credentials in Git**:
+>    - Remote URLs must always use clean HTTPS URLs (`https://github.com/<org>/<repo>.git`) without embedded Personal Access Tokens (PATs) or basic authentication strings (`https://<token>@github.com/...`).
+> 2. **No Hardcoded Secrets**:
+>    - Never write passwords, AWS access keys, secret keys, SSH private keys, session tokens, or `.env` content into code, markdown files, or commit messages.
+> 3. **Safe Authenticated Access**:
+>    - **GitHub**: Rely on the system Git Credential Manager or local SSH agent. Never pass raw tokens via command-line arguments or log them.
+>    - **AWS**: Rely on standard AWS CLI credential chains (system environment variables or `~/.aws/credentials`). Never print or echo secrets to transcripts.
+>    - **SSH Keys**: Private keys (`.pem` / `.id_rsa`) must remain in secure local directories with restricted filesystem permissions.
 
 ---
-*Document Version: 1.0.0 — AI Access & Permissions Operational Guide*
+*Document Version: 3.0.0 — AI Access & Permissions Operational Guide*
