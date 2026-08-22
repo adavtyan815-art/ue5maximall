@@ -722,14 +722,11 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
     }
     const FVector TargetSpawnLocation = TargetBooth ? TargetBooth->GetActorLocation() : FVector::ZeroVector;
 
-    // Disable world PostProcessVolume (and its M_PostProcessOutline) during View Mode
-    for (TActorIterator<APostProcessVolume> It(World); It; ++It)
-    {
-        if (APostProcessVolume* PPVol = *It)
-        {
-            PPVol->bEnabled = false;
-        }
-    }
+    // NOTE: the level's PostProcessVolumes are deliberately left ENABLED during
+    // View Mode. Exposure, bloom and grading on the previewed mesh must match the
+    // level (this is most of what makes shiny materials read the same), and the
+    // preview camera's own stencil-isolation blendable handles the outline/dim
+    // without needing the world volume switched off.
 
     ActivePreviewActor = Cast<AFurniturePreviewActor>(World->SpawnActor(
         SpawnClass,
@@ -798,17 +795,8 @@ void AAwsTutorial_PlayerController::CloseFurniturePreview()
         CurrentTargetBooth->OnProductChanged.RemoveAll(this);
     }
 
-    // Re-enable world PostProcessVolume when exiting View Mode
-    if (UWorld* World = GetWorld())
-    {
-        for (TActorIterator<APostProcessVolume> It(World); It; ++It)
-        {
-            if (APostProcessVolume* PPVol = *It)
-            {
-                PPVol->bEnabled = true;
-            }
-        }
-    }
+    // (PostProcessVolumes are no longer touched on entry, so there is nothing to
+    // re-enable here — the level's post processing ran untouched throughout.)
 
     if (!ActivePreviewActor)
     {

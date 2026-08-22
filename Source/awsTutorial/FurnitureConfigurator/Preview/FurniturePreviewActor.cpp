@@ -10,14 +10,11 @@
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "EngineUtils.h"
 #include "Engine/OverlapResult.h"
-#include "Engine/RectLight.h"
-#include "Engine/DirectionalLight.h"
-#include "Engine/SkyLight.h"
 #include "Components/RectLightComponent.h"
-#include "Components/SkyLightComponent.h"
-#include "Components/DirectionalLightComponent.h"
+#include "CollisionQueryParams.h"
+#include "EngineUtils.h"
+#include "Engine/PostProcessVolume.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "GameFramework/Character.h"
@@ -32,7 +29,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // CRITICAL: Never replicate. Client-local only.
     bReplicates                   = false;
     bAlwaysRelevant               = false;
-    PrimaryActorTick.bCanEverTick = true; // Enabled to allow FTimerManager next-tick callbacks to execute.
+    PrimaryActorTick.bCanEverTick = false; // Fully event-driven; nothing per-frame.
 
     // ── Per-component zoom defaults ────────────────────────────────────────
     // These are the recommended starting values — designers override in the BP
@@ -106,83 +103,47 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     Camera->PostProcessSettings.bOverride_AutoExposureMinBrightness = false;
     Camera->PostProcessSettings.bOverride_AutoExposureMaxBrightness = false;
 
-    // ── Preview Lighting Rig ──────────────────────────────────────────────
-    // Key: attached to SpringArm at a FIXED −200cm offset along the arm direction.
-    // This means the light orbits 1:1 with the camera (SpringArm rotation) but
-    // its distance to the mesh pivot stays CONSTANT regardless of zoom level.
-    // Attaching to Camera instead would move the light closer on zoom, causing the
-    // attenuation radius boundary to cross the mesh surface (visible hard line).
-    // Yaw=180° flips emission toward the mesh (pivot direction).
+    // ── Subject Fill Rig (LIGHTING CHANNEL 1, shadowless) ─────────────────
+    // Two rect lights that illuminate ONLY the preview meshes (also channel 1).
+    // The room keeps its own lights on channel 0, untouched; the subject gets
+    // constant, even illumination through the full rotation, while Lumen GI and
+    // reflections from the intact room preserve the level's material appearance.
+    //
+    // Both are children of the SpringArm ROOT (at the pivot), not the camera
+    // socket: their distance to the subject never changes with zoom, and since
+    // the camera does not move during mesh rotation, illumination is identical
+    // from every viewing angle. Shadowless lights ignore occluders, so a light
+    // position that lands inside nearby wall geometry still works correctly.
+    //
+    // Exact placement, intensity, color and size are configured per component in
+    // SetFocusComponent from FPreviewComponentConfig.
+    auto InitRigLight = [](URectLightComponent* Light)
+    {
+        Light->SetMobility(EComponentMobility::Movable);
+        Light->SetIntensity(0.f);                 // configured on focus
+        Light->SetLightColor(FLinearColor::White);
+        Light->AttenuationRadius = 800.f;
+        Light->bUseTemperature   = false;
+        Light->SetCastShadows(false);             // evenness: never shadowed
+        Light->SetVisibility(false);              // shown only during active preview
+        Light->LightingChannels.bChannel0 = false;
+        Light->LightingChannels.bChannel1 = true; // subject-only
+    };
+
     PreviewKeyLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewKeyLight"));
     PreviewKeyLight->SetupAttachment(SpringArm);
-    PreviewKeyLight->SetMobility(EComponentMobility::Movable);
-    PreviewKeyLight->SetRelativeLocation(FVector(-200.f, 0.f, 0.f)); // 200cm toward camera from pivot
-    PreviewKeyLight->SetRelativeRotation(FRotator(0.f, 180.f, 0.f)); // face toward mesh (pivot)
-    PreviewKeyLight->SetIntensity(0.f);      // Off by default — Lumen handles lighting.
-    PreviewKeyLight->SetLightColor(FLinearColor::White);
-    PreviewKeyLight->SourceWidth  = 80.f;
-    PreviewKeyLight->SourceHeight = 100.f;
-    PreviewKeyLight->AttenuationRadius = 800.f;
-    PreviewKeyLight->bUseTemperature = false;
-    PreviewKeyLight->SetCastShadows(false);
-    PreviewKeyLight->SetVisibility(false); // shown only during active preview
+    InitRigLight(PreviewKeyLight);
 
-    // Fill: attached to SpringArm pivot (local Pitch=+35°, Yaw=170°).
-    // Stays at the focus pivot and rotates as the SpringArm rotates,
-    // so it provides backfill from below/behind the camera orbit.
     PreviewFillLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewFillLight"));
     PreviewFillLight->SetupAttachment(SpringArm);
-    PreviewFillLight->SetMobility(EComponentMobility::Movable);
-    PreviewFillLight->SetRelativeRotation(FRotator(35.f, 170.f, 0.f));
-    PreviewFillLight->SetIntensity(320.f);
-    PreviewFillLight->SetLightColor(FLinearColor::White);
-    PreviewFillLight->SourceWidth  = 120.f;
-    PreviewFillLight->SourceHeight = 150.f;
-    PreviewFillLight->SetCastShadows(false);
-    PreviewFillLight->SetVisibility(false);
+    InitRigLight(PreviewFillLight);
 
-    // Rim / Top: attached to SpringArm pivot, Pitch=−80° (pointing sharply downward).
-    // Acts as a top-down edge/rim light regardless of camera orbit angle.
-    PreviewRimLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewRimLight"));
-    PreviewRimLight->SetupAttachment(SpringArm);
-    PreviewRimLight->SetMobility(EComponentMobility::Movable);
-    PreviewRimLight->SetRelativeRotation(FRotator(-80.f, 0.f, 0.f));
-    PreviewRimLight->SetIntensity(200.f);
-    PreviewRimLight->SetLightColor(FLinearColor::White);
-    PreviewRimLight->SourceWidth  = 60.f;
-    PreviewRimLight->SourceHeight = 60.f;
-    PreviewRimLight->SetCastShadows(false);
-    PreviewRimLight->SetVisibility(false);
-
-    // ── Studio SkyLight ─────────────────────────────────────────────────────
-    // One-shot captured scene, enabled only during active preview.
-    // Provides true 360° diffuse ambient fill from all directions, solving the
-    // pitch-black back-side artifact caused by WIP_UpdateWallOcclusion removing
-    // Lumen bounce surfaces. bRealTimeCapture=false: zero per-frame overhead.
-    PreviewSkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("PreviewSkyLight"));
-    PreviewSkyLight->SetupAttachment(PreviewRoot);
-    PreviewSkyLight->SetMobility(EComponentMobility::Movable);
-    PreviewSkyLight->SourceType              = ESkyLightSourceType::SLS_CapturedScene;
-    PreviewSkyLight->bRealTimeCapture        = false;    // single RecaptureSky() at preview start
-    PreviewSkyLight->bLowerHemisphereIsBlack = false;    // Allow 360-degree ambient reflections from ground/countertop
-    PreviewSkyLight->SetIntensity(2.f);
-    PreviewSkyLight->SetLightColor(FLinearColor::White);
-    PreviewSkyLight->SetCastShadows(false);
-    PreviewSkyLight->SetVisibility(false);        // hidden until preview is active
-
-    // ── Studio Directional Key Light (Camera Headlight / View Light) ────────
-    // Attached directly to Camera Component with a strict local rotation offset.
-    // Moves and rotates 1:1 with camera location and view rotation, ensuring
-    // whichever face the camera looks at (horizontal, from above, or from below)
-    // is always illuminated with rich material highlights.
-    PreviewDirectionalLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("PreviewDirectionalLight"));
-    PreviewDirectionalLight->SetupAttachment(Camera);
-    PreviewDirectionalLight->SetMobility(EComponentMobility::Movable);
-    PreviewDirectionalLight->SetRelativeRotation(FRotator(-15.f, 15.f, 0.f)); // local offset relative to camera forward vector
-    PreviewDirectionalLight->SetIntensity(8.f);
-    PreviewDirectionalLight->SetLightColor(FLinearColor(1.f, 0.95f, 0.85f)); // warm sunlight tint
-    PreviewDirectionalLight->SetCastShadows(false);
-    PreviewDirectionalLight->SetVisibility(false);        // hidden until preview is active
+    // ── Default conflicting post-process materials ────────────────────────
+    // The Room Planner's outline material is keyed on custom-depth stencil values;
+    // the preview subject renders stencil 250 for its isolation dim, so the outline
+    // would tint the previewed mesh. Suspended during preview, restored on exit.
+    PostProcessMaterialsToSuspend.Add(TSoftObjectPtr<UMaterialInterface>(
+        FSoftObjectPath(TEXT("/Game/M_PostProcessOutline.M_PostProcessOutline"))));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,137 +188,138 @@ void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
         WIP_CachedSourceBooth.Reset();
     }
 
-    // ── Restore all world components that were hidden during preview ───────
-    for (const TWeakObjectPtr<UPrimitiveComponent>& CompPtr : WIP_CachedHiddenWallComponents)
-    {
-        if (CompPtr.IsValid())
-        {
-            CompPtr->SetVisibility(true);
-            CompPtr->SetCastShadow(true);
-        }
-    }
-    WIP_CachedHiddenWallComponents.Empty();
+    // ── Restore world components hidden by the clearance fallback ──────────
+    RestoreClearanceHiddenComponents();
 
-    // ── Clear custom depth and restore default CastShadow settings ────────
-    auto RestoreState = [](UStaticMeshComponent* C, bool bDefaultShadow)
-    {
-        if (IsValid(C))
-        {
-            C->SetRenderCustomDepth(false);
-            C->SetCastShadow(bDefaultShadow);
-            C->SetCastHiddenShadow(false);
-        }
-    };
-    RestoreState(CabinetMesh.Get(),          CabinetConfig.bCastShadow);
-    RestoreState(DoorMeshSlot0.Get(),        CabinetConfig.bCastShadow);
-    RestoreState(DoorMeshSlot1.Get(),        CabinetConfig.bCastShadow);
-    RestoreState(CountertopMesh.Get(),       CountertopConfig.bCastShadow);
-    RestoreState(SinkMesh.Get(),             SinkConfig.bCastShadow);
-    RestoreState(FaucetMesh.Get(),           FaucetConfig.bCastShadow);
-    RestoreState(MirrorMesh.Get(),           MirrorConfig.bCastShadow);
-    RestoreState(ClosetMesh.Get(),           ClosetConfig.bCastShadow);
-    RestoreState(ClosetDoorMeshSlot0.Get(),  ClosetConfig.bCastShadow);
-    RestoreState(ClosetDoorMeshSlot1.Get(),  ClosetConfig.bCastShadow);
+    // ── Restore the suspended outline blendable(s) to their volumes ────────
+    RestoreSuspendedPostProcessMaterials();
 
     // ── Hide preview lights ───────────────────────────────────────────────
-    if (IsValid(PreviewKeyLight))          { PreviewKeyLight->SetVisibility(false); }
-    if (IsValid(PreviewFillLight))         { PreviewFillLight->SetVisibility(false); }
-    if (IsValid(PreviewRimLight))          { PreviewRimLight->SetVisibility(false); }
-    if (IsValid(PreviewSkyLight))          { PreviewSkyLight->SetVisibility(false); }
-    if (IsValid(PreviewDirectionalLight))  { PreviewDirectionalLight->SetVisibility(false); }
+    if (IsValid(PreviewKeyLight))  { PreviewKeyLight->SetVisibility(false); }
+    if (IsValid(PreviewFillLight)) { PreviewFillLight->SetVisibility(false); }
 
-    // ── Restore hidden world Rect Light actors ────────────────────────────
-    for (const TWeakObjectPtr<AActor>& LightPtr : WIP_CachedWorldRectLights)
-    {
-        if (LightPtr.IsValid())
-        {
-            LightPtr->SetActorHiddenInGame(false);
-        }
-    }
-    WIP_CachedWorldRectLights.Empty();
-
-    // ── Restore world ADirectionalLight actors ────────────────────────────
-    for (const auto& Pair : WIP_CachedWorldDirLights)
-    {
-        if (Pair.Key.IsValid())
-        {
-            Pair.Key->SetActorHiddenInGame(false);
-        }
-    }
-    WIP_CachedWorldDirLights.Empty();
+    // NOTE: no other world state to restore. The level's DirectionalLights,
+    // RectLights and SkyLights are never modified; PostProcessVolumes only ever
+    // have the listed conflicting blendables temporarily pulled (restored above),
+    // so entering/leaving Viewmode cannot alter how the level looks.
 
     Super::EndPlay(EndPlayReason);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DeferredHideWorldLights
-// Tick N+1 callback scheduled by LoadProductPreview.
-// At this point the GPU has already executed the SkyLight cubemap capture from
-// the fully-lit Tick N scene. Now it is safe to hide world actors / lights.
-// ─────────────────────────────────────────────────────────────────────────────
-
-void AFurniturePreviewActor::DeferredHideWorldLights()
+void AFurniturePreviewActor::RestoreClearanceHiddenComponents()
 {
-    // ── Hide SourceBooth (no longer needed visually; preview meshes take its place) ──
-    if (AShowroomBooth* Booth = WIP_DeferredSourceBooth.Get())
+    for (const TWeakObjectPtr<UPrimitiveComponent>& CompPtr : WIP_CachedHiddenWallComponents)
     {
-        WIP_CachedSourceBooth = Booth;
-        Booth->SetActorHiddenInGame(true);
-    }
-    WIP_DeferredSourceBooth.Reset();
-
-    // ── Hide all world ARectLight actors ──────────────────────────────────────
-    WIP_CachedWorldRectLights.Empty();
-    if (UWorld* W = GetWorld())
-    {
-        for (TActorIterator<ARectLight> It(W); It; ++It)
+        if (CompPtr.IsValid())
         {
-            ARectLight* RLActor = *It;
-            if (IsValid(RLActor) && !RLActor->IsHidden())
-            {
-                WIP_CachedWorldRectLights.Add(RLActor);
-                RLActor->SetActorHiddenInGame(true);
-            }
+            // Only components that were VISIBLE get hidden by the fallback,
+            // so restoring visibility is sufficient and cannot clobber a
+            // designer's deliberate hidden state.
+            CompPtr->SetVisibility(true);
         }
     }
-
-    // ── Hide world ADirectionalLight actors during preview ────────────────────
-    for (const auto& Pair : WIP_CachedWorldDirLights)
-    {
-        if (Pair.Key.IsValid())
-        {
-            Pair.Key->SetActorHiddenInGame(true);
-        }
-    }
-
-    // Schedule lock-in for Tick N+2 so Tick N+1's GPU pass finishes capturing
-    if (UWorld* W = GetWorld())
-    {
-        W->GetTimerManager().SetTimerForNextTick(this, &AFurniturePreviewActor::LockInSkyLightCubemap);
-    }
-
-    UE_LOG(LogTemp, Log, TEXT("[PreviewActor] DeferredHideWorldLights executed on Tick N+1. SkyLight RecaptureSky triggered."));
+    WIP_CachedHiddenWallComponents.Empty();
 }
 
-void AFurniturePreviewActor::LockInSkyLightCubemap()
+// ─────────────────────────────────────────────────────────────────────────────
+// Conflicting post-process material suspension
+//
+// The level PostProcessVolume carries M_PostProcessOutline for the Room Planner's
+// selection outlines, driven by custom-depth stencil values. The preview subject
+// must render custom depth (stencil 250) for its own isolation dim, so while the
+// preview is open the outline material would tint the subject.
+//
+// Solution: pull ONLY the listed materials out of the volumes' blendable arrays
+// for the duration of the preview, and put them back (same object, same weight,
+// same volume) on exit. Every other volume setting — exposure, bloom, grading —
+// keeps applying throughout, which level-accurate material appearance requires.
+// The Room Planner is not usable while Viewmode is open (its UI is closed), so
+// suspending its outline for exactly that window changes nothing it does.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AFurniturePreviewActor::SuspendConflictingPostProcessMaterials()
 {
-    if (IsValid(PreviewSkyLight))
+    UWorld* World = GetWorld();
+    if (!World) { return; }
+
+    // Resolve the configured materials. They are referenced by the level's volumes,
+    // so they are already in memory; LoadSynchronous is effectively a lookup.
+    TArray<UMaterialInterface*> MaterialsToSuspend;
+    for (const TSoftObjectPtr<UMaterialInterface>& SoftMat : PostProcessMaterialsToSuspend)
     {
-        PreviewSkyLight->bRealTimeCapture = false;
-        PreviewSkyLight->MarkRenderStateDirty();
-    }
-    if (UWorld* W = GetWorld())
-    {
-        for (TActorIterator<ASkyLight> SkyIt(W); SkyIt; ++SkyIt)
+        if (UMaterialInterface* Mat = SoftMat.LoadSynchronous())
         {
-            if (IsValid(*SkyIt) && IsValid((*SkyIt)->GetLightComponent()))
+            MaterialsToSuspend.Add(Mat);
+        }
+    }
+
+    auto ShouldSuspend = [&MaterialsToSuspend](UObject* BlendableObject) -> bool
+    {
+        if (!IsValid(BlendableObject)) { return false; }
+
+        // Name fallback: catches the outline material even if the asset was moved
+        // or the configured soft reference failed to resolve (Content differs per
+        // machine in this project).
+        if (BlendableObject->GetName().Contains(TEXT("PostProcessOutline")))
+        {
+            return true;
+        }
+
+        UMaterialInterface* AsMaterial = Cast<UMaterialInterface>(BlendableObject);
+        for (UMaterialInterface* Mat : MaterialsToSuspend)
+        {
+            if (BlendableObject == Mat)
             {
-                (*SkyIt)->GetLightComponent()->bRealTimeCapture = false;
-                (*SkyIt)->GetLightComponent()->MarkRenderStateDirty();
+                return true;
+            }
+            // Also match dynamic/instanced versions of the listed material.
+            if (AsMaterial && Mat && AsMaterial->GetMaterial() == Mat->GetMaterial())
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (TActorIterator<APostProcessVolume> It(World); It; ++It)
+    {
+        APostProcessVolume* Volume = *It;
+        if (!IsValid(Volume)) { continue; }
+
+        TArray<FWeightedBlendable>& Blendables = Volume->Settings.WeightedBlendables.Array;
+        for (int32 Index = Blendables.Num() - 1; Index >= 0; --Index)
+        {
+            if (ShouldSuspend(Blendables[Index].Object))
+            {
+                FSuspendedPPBlendable Record;
+                Record.Volume          = Volume;
+                Record.BlendableObject = Blendables[Index].Object;
+                Record.Weight          = Blendables[Index].Weight;
+                SuspendedPostProcessBlendables.Add(Record);
+
+                Blendables.RemoveAt(Index);
             }
         }
     }
-    UE_LOG(LogTemp, Log, TEXT("[PreviewActor] LockInSkyLightCubemap executed on Tick N+2. SkyLight cubemap locked in."));
+
+    if (SuspendedPostProcessBlendables.Num() > 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[PreviewActor] Suspended %d conflicting post-process blendable(s) for the preview session."),
+            SuspendedPostProcessBlendables.Num());
+    }
+}
+
+void AFurniturePreviewActor::RestoreSuspendedPostProcessMaterials()
+{
+    for (const FSuspendedPPBlendable& Record : SuspendedPostProcessBlendables)
+    {
+        if (Record.Volume.IsValid() && Record.BlendableObject.IsValid())
+        {
+            Record.Volume->Settings.WeightedBlendables.Array.Add(
+                FWeightedBlendable(Record.Weight, Record.BlendableObject.Get()));
+        }
+    }
+    SuspendedPostProcessBlendables.Empty();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -368,98 +330,22 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
                                                 const FShowroomBoothConfigState& ActiveState,
                                                 AShowroomBooth* SourceBooth)
 {
-    // ── TWO-TICK SKYLIGHT CAPTURE FIX ──────────────────────────────────────
-    //
-    // RecaptureSky() does NOT capture immediately. It only sets a dirty flag:
-    //     bCaptureDirty = true;  MarkRenderStateDirty();
-    // The actual GPU cubemap generation happens at the END OF THE RENDER PASS,
-    // which runs AFTER all C++ code in this game tick has finished.
-    //
-    // Previous approach (all hiding synchronous): every operation after
-    // RecaptureSky() still ran in the SAME tick, so the GPU always saw a
-    // stripped scene (booth hidden, rect lights off, sun zeroed) — a grey void.
-    //
-    // Correct approach (two ticks):
-    //   Tick N  (this function): RecaptureSky() → GPU captures fully-lit scene
-    //   Tick N+1 (deferred):     Hide booth, disable rect lights, zero world sun
-    //
-    // This guarantees the SkyLight cubemap is built from the warm unmodified
-    // room, then the scene is cleaned up for preview on the following tick.
-
-    // TICK N — Step 1: Position SkyLight at the furniture's world location so it
-    // captures the correct indoor environment (not an unrelated part of the level).
-    if (IsValid(SourceBooth) && IsValid(PreviewSkyLight))
+    // ── Take the real booth's place ────────────────────────────────────────
+    // The preview duplicates the booth at its exact world transform, so the real
+    // booth is hidden to avoid z-fighting (restored in EndPlay). This is the only
+    // world actor the preview hides: the level's lights, SkyLights and
+    // PostProcessVolumes are deliberately left untouched so Lumen GI, reflections
+    // and exposure on the subject come from the ACTUAL room.
+    if (IsValid(SourceBooth))
     {
-        PreviewSkyLight->SetWorldLocation(SourceBooth->GetActorLocation());
+        WIP_CachedSourceBooth = SourceBooth;
+        SourceBooth->SetActorHiddenInGame(true);
     }
 
-    // TICK N — Step 2: Cache world sun properties NOW (before zeroing on next tick)
-    // so SetFocusComponent() can read them correctly when it runs.
-    WIP_CachedWorldDirLights.Empty();
-    WIP_CachedWorldSunRotation  = FRotator(-46.f, -46.f, 0.f);
-    WIP_CachedWorldSunIntensity = 8.f;
-    WIP_CachedWorldSunColor     = FLinearColor::White;
-    WIP_CachedWorldSunUseTemp   = false;
-    WIP_CachedWorldSunTemp      = 6500.f;
-    WIP_CachedWorldSunIndirect  = 1.0f;
-    if (UWorld* W = GetWorld())
-    {
-        for (TActorIterator<ADirectionalLight> It(W); It; ++It)
-        {
-            ADirectionalLight* DLActor = *It;
-            if (IsValid(DLActor) && !DLActor->IsHidden() && DLActor->GetLightComponent())
-            {
-                ULightComponent* LightComp = DLActor->GetLightComponent();
-                WIP_CachedWorldDirLights.Emplace(DLActor, LightComp->Intensity);
-                WIP_CachedWorldSunRotation  = DLActor->GetActorRotation();
-                WIP_CachedWorldSunIntensity = LightComp->Intensity;
-                WIP_CachedWorldSunColor     = LightComp->GetLightColor();
-                WIP_CachedWorldSunUseTemp   = LightComp->bUseTemperature;
-                WIP_CachedWorldSunTemp      = LightComp->Temperature;
-                WIP_CachedWorldSunIndirect  = LightComp->IndirectLightingIntensity;
-                // NOTE: Do NOT zero intensity here — that happens in DeferredHideWorldLights.
-            }
-        }
-    }
-
-    // TICK N — Step 3: Trigger real-time GPU capture of the live booth environment.
-    if (UWorld* W = GetWorld())
-    {
-        for (TActorIterator<ASkyLight> SkyIt(W); SkyIt; ++SkyIt)
-        {
-            ASkyLight* WorldSky = *SkyIt;
-            if (IsValid(WorldSky) && IsValid(WorldSky->GetLightComponent()))
-            {
-                USkyLightComponent* SLC = WorldSky->GetLightComponent();
-                SLC->SetVisibility(true);
-                SLC->SourceType = ESkyLightSourceType::SLS_CapturedScene;
-                SLC->bRealTimeCapture = true;
-                SLC->RecaptureSky();
-                SLC->MarkRenderStateDirty();
-                UE_LOG(LogTemp, Error, TEXT("[SKYLIGHT RECAPTURE DIAG] Executed RecaptureSky on Level SkyLight Actor '%s'"), *WorldSky->GetName());
-            }
-        }
-    }
-
-    if (IsValid(PreviewSkyLight))
-    {
-        PreviewSkyLight->SetVisibility(true);
-        PreviewSkyLight->SourceType       = ESkyLightSourceType::SLS_CapturedScene;
-        PreviewSkyLight->bRealTimeCapture = true;
-        PreviewSkyLight->RecaptureSky();
-        PreviewSkyLight->MarkRenderStateDirty();
-        UE_LOG(LogTemp, Error, TEXT("[SKYLIGHT RECAPTURE DIAG] Executed RecaptureSky on PreviewSkyLight"));
-    }
-
-    // TICK N — Step 4: Store SourceBooth for DeferredHideWorldLights (runs next tick).
-    WIP_DeferredSourceBooth = SourceBooth;
-    WIP_CachedWorldRectLights.Empty(); // Will be populated in deferred step
-
-    // Schedule all hiding for Tick N+1 so the GPU capture sees the clean scene.
-    if (UWorld* W = GetWorld())
-    {
-        W->GetTimerManager().SetTimerForNextTick(this, &AFurniturePreviewActor::DeferredHideWorldLights);
-    }
+    // Pull ONLY the stencil-keyed outline material out of the level volumes for the
+    // duration of the preview (see SuspendConflictingPostProcessMaterials). All other
+    // volume settings keep applying. Restored exactly in EndPlay.
+    SuspendConflictingPostProcessMaterials();
 
     if (IsValid(MeshRoot))
     {
@@ -640,11 +526,13 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
 // SetFocusComponent
 //
 // Unified entry point for:
-//   1. Component isolation  — hide all groups, show only the focused one.
-//   2. Per-component config — pull zoom limits and cast shadow from FPreviewComponentConfig.
+//   1. Component isolation   — hide all groups, show only the focused one.
+//   2. Per-component config  — zoom limits, exposure and fill rig from FPreviewComponentConfig.
 //   3. Stencil-250 isolation — apply CustomDepth on the focused group.
-//   4. SpringArm pivot      — move to the focused mesh's bounds center.
-//   5. Wall occlusion       — one-shot sphere overlap, hides everything in orbit volume.
+//   4. Swept clearance       — relocate the pivot into free space so 360-degree
+//                              rotation cannot clip walls/floor (ResolveClearPivot).
+//   5. SpringArm placement   — entry view along booth forward; max zoom clamped
+//                              once against the wall behind the camera.
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetType)
@@ -664,67 +552,63 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     ActiveMinZoom = Config ? Config->MinZoomDistance : 30.f;
     ActiveMaxZoom = Config ? Config->MaxZoomDistance : 500.f;
 
-    // ── 1. Component isolation and CastShadow configuration ─────────────
-    // Hidden meshes MUST have SetCastShadow(false) so they don't cast shadow artifacts onto active preview objects.
-    auto ApplyMeshState = [](UStaticMeshComponent* C, bool bShow, bool bCastShadow)
+    // ── 0b. Undo any previous clearance fallback before re-evaluating ─────
+    // Switching focus recomputes the swept clearance from scratch; components
+    // hidden for the previous focus must come back first.
+    RestoreClearanceHiddenComponents();
+
+    // ── 1. Component isolation ────────────────────────────────────────────
+    // Preview meshes never cast shadows (they are lit by the shadowless channel-1
+    // rig only), so isolation is purely a visibility concern.
+    auto ApplyMeshState = [](UStaticMeshComponent* C, bool bShow)
     {
         if (IsValid(C))
         {
             const bool bHasMesh = IsValid(C->GetStaticMesh());
-            const bool bFinalVisibility = bShow && bHasMesh;
-            C->SetVisibility(bFinalVisibility);
-            C->SetCastShadow(bFinalVisibility ? bCastShadow : false);
-            C->SetCastHiddenShadow(false);
+            C->SetVisibility(bShow && bHasMesh);
         }
     };
 
     const bool bShowAll = (TargetType == EFurnitureComponentType::None);
 
-    const bool bCabinetShadow    = CabinetConfig.bCastShadow;
-    const bool bClosetShadow     = ClosetConfig.bCastShadow;
-    const bool bCountertopShadow = CountertopConfig.bCastShadow;
-    const bool bSinkShadow       = SinkConfig.bCastShadow;
-    const bool bFaucetShadow     = FaucetConfig.bCastShadow;
-    const bool bMirrorShadow     = MirrorConfig.bCastShadow;
+    // First hide all preview meshes.
+    ApplyMeshState(CabinetMesh.Get(),          bShowAll);
+    ApplyMeshState(DoorMeshSlot0.Get(),        bShowAll);
+    ApplyMeshState(DoorMeshSlot1.Get(),        bShowAll);
+    ApplyMeshState(CountertopMesh.Get(),       bShowAll);
+    ApplyMeshState(SinkMesh.Get(),             bShowAll);
+    ApplyMeshState(FaucetMesh.Get(),           bShowAll);
+    ApplyMeshState(MirrorMesh.Get(),           bShowAll);
+    ApplyMeshState(ClosetMesh.Get(),           bShowAll);
+    ApplyMeshState(ClosetDoorMeshSlot0.Get(),  bShowAll);
+    ApplyMeshState(ClosetDoorMeshSlot1.Get(),  bShowAll);
 
-    // First hide & disable shadows for all preview meshes.
-    ApplyMeshState(CabinetMesh.Get(),          bShowAll, bCabinetShadow);
-    ApplyMeshState(DoorMeshSlot0.Get(),        bShowAll, bCabinetShadow);
-    ApplyMeshState(DoorMeshSlot1.Get(),        bShowAll, bCabinetShadow);
-    ApplyMeshState(CountertopMesh.Get(),       bShowAll, bCountertopShadow);
-    ApplyMeshState(SinkMesh.Get(),             bShowAll, bSinkShadow);
-    ApplyMeshState(FaucetMesh.Get(),           bShowAll, bFaucetShadow);
-    ApplyMeshState(MirrorMesh.Get(),           bShowAll, bMirrorShadow);
-    ApplyMeshState(ClosetMesh.Get(),           bShowAll, bClosetShadow);
-    ApplyMeshState(ClosetDoorMeshSlot0.Get(),  bShowAll, bClosetShadow);
-    ApplyMeshState(ClosetDoorMeshSlot1.Get(),  bShowAll, bClosetShadow);
-
-    // Reveal and enable shadows ONLY for the active focus group.
+    // Reveal ONLY the active focus group.
     if (!bShowAll)
     {
         switch (TargetType)
         {
         case EFurnitureComponentType::Cabinet:
-            ApplyMeshState(CabinetMesh.Get(),   true, bCabinetShadow);
-            ApplyMeshState(DoorMeshSlot0.Get(), true, bCabinetShadow);
-            ApplyMeshState(DoorMeshSlot1.Get(), true, bCabinetShadow);
+            ApplyMeshState(CabinetMesh.Get(),   true);
+            ApplyMeshState(DoorMeshSlot0.Get(), true);
+            ApplyMeshState(DoorMeshSlot1.Get(), true);
             break;
         case EFurnitureComponentType::Closet:
-            ApplyMeshState(ClosetMesh.Get(),          true, bClosetShadow);
-            ApplyMeshState(ClosetDoorMeshSlot0.Get(), true, bClosetShadow);
-            ApplyMeshState(ClosetDoorMeshSlot1.Get(), true, bClosetShadow);
+            ApplyMeshState(ClosetMesh.Get(),          true);
+            ApplyMeshState(ClosetDoorMeshSlot0.Get(), true);
+            ApplyMeshState(ClosetDoorMeshSlot1.Get(), true);
             break;
         case EFurnitureComponentType::Countertop:
-            ApplyMeshState(CountertopMesh.Get(), true, bCountertopShadow);
+            ApplyMeshState(CountertopMesh.Get(), true);
             break;
         case EFurnitureComponentType::Sink:
-            ApplyMeshState(SinkMesh.Get(), true, bSinkShadow);
+            ApplyMeshState(SinkMesh.Get(), true);
             break;
         case EFurnitureComponentType::Faucet:
-            ApplyMeshState(FaucetMesh.Get(), true, bFaucetShadow);
+            ApplyMeshState(FaucetMesh.Get(), true);
             break;
         case EFurnitureComponentType::Mirror:
-            ApplyMeshState(MirrorMesh.Get(), true, bMirrorShadow);
+            ApplyMeshState(MirrorMesh.Get(), true);
             break;
         default: break;
         }
@@ -789,7 +673,7 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         MeshRoot->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
     }
 
-    // ── 6. Compute focus pivot and adaptive initial view distance ─────────
+    // ── 6. Compute focus pivot and swept radius ───────────────────────────
     FVector FocusPivot = WIP_GetFocusPivotWorld();
     float MeshRadius = 80.f;
     if (IsValid(TargetComp) && TargetComp->GetStaticMesh())
@@ -797,43 +681,80 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         MeshRadius = FMath::Max(15.f, TargetComp->Bounds.SphereRadius);
     }
     WIP_MeshBoundsRadius = MeshRadius;
-    WIP_FocusPivotWorld  = FocusPivot;
+
+    // ── 6b. Swept-clearance pivot relocation ("pick it off the shelf") ────
+    // Booths stand against bathroom walls, so a full 360-degree rotation (yaw AND
+    // pitch) sweeps a sphere of MeshRadius that would clip through the wall behind
+    // the booth and, when pitched, the floor below. Relocate the pivot to the
+    // nearest free spot instead of hiding the room - the room must stay intact
+    // because it is what Lumen reflections and GI on the subject come from.
+    const FVector ClearPivot = ResolveClearPivot(FocusPivot, MeshRadius);
+    if (!ClearPivot.Equals(FocusPivot, 0.1f) && IsValid(MeshRoot))
+    {
+        MeshRoot->AddWorldOffset(ClearPivot - FocusPivot);
+        FocusPivot = ClearPivot;
+    }
+    WIP_FocusPivotWorld = FocusPivot;
 
     // Cache initial MeshRoot state and pivot for exact rotation around bounds center
     if (IsValid(MeshRoot))
     {
-        MeshRoot->SetRelativeRotation(FRotator::ZeroRotator);
         WIP_MeshRootLocAtReset  = MeshRoot->GetComponentLocation();
         WIP_InitialMeshRootQuat = MeshRoot->GetComponentQuat();
         WIP_MeshPivotWorld      = FocusPivot;
     }
 
-    // Adaptive initial distance: 2.5× the mesh radius, clamped to per-component limits.
+    // ── 7. Entry view: consistent front view for every component ──────────
+    // Base direction: the booth's facing axis (booths face into the open side of
+    // the bathroom), so the entry view is booth-relative and therefore identical
+    // for any placement or rotation of the booth in any level. Two corrections
+    // make the view a natural product-shot front view for ALL components:
+    //   - Per-component EntryYawOffsetDegrees fixes meshes whose authored front
+    //     does not align with the booth's forward axis (the "enters showing its
+    //     side" problem) — set once in BP_FurniturePreviewActor.
+    //   - Actor-wide EntryPitchDegrees tilts the camera slightly above the mesh
+    //     for the classic three-quarter presentation.
+    // The channel-1 rig is camera-relative, so the subject is lit identically
+    // regardless of the chosen entry direction.
+    const float EntryYawOffset = Config ? Config->EntryYawOffsetDegrees : 0.f;
+    const float EntryYaw       = GetActorRotation().Yaw + 180.f + EntryYawOffset;
+    WIP_InitialOrbitRot        = FRotator(EntryPitchDegrees, EntryYaw, 0.f);
+
+    // ── 7b. Clamp max zoom against the wall behind the camera ─────────────
+    // The camera never moves during rotation, so the only way it can end up inside
+    // a wall is by zooming out. One entry-time trace fixes that permanently:
+    // never auto-adjust distance afterwards (stable-viewing-distance requirement).
+    ActiveMaxZoom = FMath::Max(ActiveMaxZoom, ActiveMinZoom + 10.f);
+    if (UWorld* World = GetWorld())
+    {
+        const FVector TowardCamera = -WIP_InitialOrbitRot.Vector(); // pivot -> camera
+        FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(PreviewZoomClamp), /*bTraceComplex*/ false);
+        TraceParams.AddIgnoredActor(this);
+        if (WIP_CachedSourceBooth.IsValid()) { TraceParams.AddIgnoredActor(WIP_CachedSourceBooth.Get()); }
+        if (ACharacter* Char = UGameplayStatics::GetPlayerCharacter(World, 0)) { TraceParams.AddIgnoredActor(Char); }
+
+        FHitResult ZoomHit;
+        if (World->LineTraceSingleByChannel(ZoomHit, FocusPivot,
+                FocusPivot + TowardCamera * (ActiveMaxZoom + 60.f), ECC_Visibility, TraceParams))
+        {
+            const float CameraWallMarginCm = 30.f;
+            ActiveMaxZoom = FMath::Clamp(ZoomHit.Distance - CameraWallMarginCm,
+                                         ActiveMinZoom + 10.f, ActiveMaxZoom);
+        }
+    }
+
+    // Adaptive initial distance: 2.5x the mesh radius, clamped to per-component limits.
     const float AdaptiveDist = FMath::Clamp(MeshRadius * 2.5f, ActiveMinZoom, ActiveMaxZoom);
     WIP_CurrentViewDist = AdaptiveDist;
     WIP_InitialViewDist = AdaptiveDist;
     CurrentZoomLength   = AdaptiveDist;
 
-    // ── 7. FIX 2: Canonical initial orbit rotation (player-position-independent)
-    // Previously derived from the player camera's live world rotation, which caused
-    // the PreviewDirectionalLight (camera-attached) to point in a different world
-    // direction from every player position — producing color shifts and random
-    // shower shadows depending on where the client stood in the room.
-    //
-    // We now force a fixed canonical orientation: the camera always enters preview
-    // facing the mesh from world -Y (Yaw=0, looking toward +Y / "north" in UE coords).
-    // This means:
-    //   • PreviewDirectionalLight world direction = canonical + DLRelRot = identical every time.
-    //   • Color appearance of the cabinet is the same regardless of player position.
-    //   • Shower / room shadows are fully deterministic and can be tuned once.
-    //
-    // The user rotates the MESH (not the camera) during preview, so this fixed
-    // starting angle does not restrict 360° inspection.
-    WIP_InitialOrbitRot = FRotator(0.f, 0.f, 0.f); // Camera looks toward world +Y
-
     // ── 8. Position SpringArm at pivot ───────────────────────────────────
     if (IsValid(SpringArm))
     {
+        // Collision test stays OFF by design: the camera position is validated once
+        // above; a live collision test would change the viewing distance whenever
+        // geometry brushed the arm, violating the stable-distance requirement.
         SpringArm->bDoCollisionTest        = false;
         SpringArm->bUsePawnControlRotation = false;
         SpringArm->SetWorldLocation(FocusPivot);
@@ -855,51 +776,51 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         }
     }
 
-    // ── 10. Wall occlusion (one-shot sphere overlap) ──────────────────────
-    // Must be called AFTER WIP_FocusPivotWorld and ActiveMaxZoom are set.
-    WIP_UpdateWallOcclusion();
-
-    // ── 11. Apply per-component preview lighting config ───────────────────
-    if (IsValid(PreviewKeyLight) && IsValid(PreviewFillLight) && IsValid(PreviewRimLight))
+    // ── 10. Configure the channel-1 subject fill rig ──────────────────────
+    // Both lights are children of the SpringArm root at the pivot; the arm's
+    // rotation is fixed during mesh rotation, so the rig is screen-stable: the
+    // subject is lit identically at every rotation angle. Shadows are always off
+    // (evenness requirement), so nearby walls cannot block or shadow the rig.
+    if (IsValid(PreviewKeyLight) && IsValid(PreviewFillLight))
     {
-        const float KeyIntensity   = Config ? Config->KeyLightIntensity          : 0.f;
-        const float FillRimMult    = Config ? Config->FillRimMultiplier          : 0.4f;
+        const float KeyIntensity   = Config ? Config->PreviewKeyIntensity        : 800.f;
+        const float FillMult       = Config ? Config->FillRimMultiplier          : 0.4f;
         const FLinearColor LColor  = Config ? Config->LightColor                 : FLinearColor::White;
-        const float SrcW           = Config ? Config->LightSourceWidth           : 80.f;
-        const float SrcH           = Config ? Config->LightSourceHeight          : 100.f;
-        const float KeyOffset      = Config ? Config->KeyLightOffset             : 200.f;
+        const float SrcW           = Config ? Config->LightSourceWidth           : 100.f;
+        const float SrcH           = Config ? Config->LightSourceHeight          : 120.f;
+        const float RigOffset      = Config ? Config->KeyLightOffset             : 200.f;
         const float AttenuRadius   = Config ? Config->KeyLightAttenuationRadius  : 800.f;
-        const bool bCastShadows    = Config ? Config->bPreviewLightCastShadows   : false;
 
-        // Key Light: fixed orbit offset + user-configured attenuation radius.
-        PreviewKeyLight->SetRelativeLocation(FVector(-KeyOffset, 0.f, 0.f));
+        // Soft key: camera side, raised and offset left of the view axis, aimed at
+        // the pivot. Large source area = broad gentle speculars, not hard glints.
+        const FVector KeyLoc(-RigOffset, -RigOffset * 0.45f, RigOffset * 0.55f);
+        PreviewKeyLight->SetRelativeLocation(KeyLoc);
+        PreviewKeyLight->SetRelativeRotation((-KeyLoc).Rotation());
         PreviewKeyLight->AttenuationRadius = AttenuRadius;
-        PreviewKeyLight->MarkRenderStateDirty();
         PreviewKeyLight->SetIntensity(KeyIntensity);
         PreviewKeyLight->SetLightColor(LColor);
         PreviewKeyLight->SourceWidth  = SrcW;
         PreviewKeyLight->SourceHeight = SrcH;
-        PreviewKeyLight->SetCastShadows(bCastShadows);
+        PreviewKeyLight->SetCastShadows(false);
+        PreviewKeyLight->MarkRenderStateDirty();
         PreviewKeyLight->SetVisibility(KeyIntensity > 0.f);
 
-        // Fill Light: scaled fraction of key, always shadow-free.
-        PreviewFillLight->SetIntensity(KeyIntensity * FillRimMult);
+        // Wrap fill: opposite side, slightly below, so the far side of the subject
+        // never reads as a dark half while it rotates.
+        const FVector FillLoc(RigOffset * 0.8f, RigOffset * 0.5f, -RigOffset * 0.15f);
+        PreviewFillLight->SetRelativeLocation(FillLoc);
+        PreviewFillLight->SetRelativeRotation((-FillLoc).Rotation());
+        PreviewFillLight->AttenuationRadius = AttenuRadius;
+        PreviewFillLight->SetIntensity(KeyIntensity * FillMult);
         PreviewFillLight->SetLightColor(LColor);
         PreviewFillLight->SourceWidth  = SrcW * 1.5f;
         PreviewFillLight->SourceHeight = SrcH * 1.5f;
         PreviewFillLight->SetCastShadows(false);
-        PreviewFillLight->SetVisibility(KeyIntensity > 0.f);
-
-        // Rim / Top Light: scaled fraction, always shadow-free.
-        PreviewRimLight->SetIntensity(KeyIntensity * FillRimMult * 0.6f);
-        PreviewRimLight->SetLightColor(LColor);
-        PreviewRimLight->SourceWidth  = SrcW * 0.75f;
-        PreviewRimLight->SourceHeight = SrcH * 0.75f;
-        PreviewRimLight->SetCastShadows(false);
-        PreviewRimLight->SetVisibility(KeyIntensity > 0.f);
+        PreviewFillLight->MarkRenderStateDirty();
+        PreviewFillLight->SetVisibility(KeyIntensity * FillMult > 0.f);
     }
 
-    // ── 11b. Per-component camera exposure compensation ───────────────────
+    // ── 11. Per-component camera exposure compensation ────────────────────
     // Non-destructive brightness control: uses existing Lumen GI, preserves
     // AO and normal map depth. Preferred over Rect Lights for most meshes.
     if (IsValid(Camera))
@@ -919,57 +840,7 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         }
     }
 
-    // ── 12. Studio SkyLight ambient fill (universal 360° studio fill) ──────────
-    if (IsValid(PreviewSkyLight))
-    {
-        // Enforce minimum 3.0 lux studio fill so backfacing polygons are never pitch black
-        const float ConfigSL       = Config ? Config->SkyLightIntensity : 3.0f;
-        const float SLIntensity    = FMath::Max(3.0f, ConfigSL);
-        const FLinearColor SLColor = Config ? Config->SkyLightColor     : FLinearColor::White;
-        PreviewSkyLight->bLowerHemisphereIsBlack = false;
-        PreviewSkyLight->SetIntensity(SLIntensity);
-        PreviewSkyLight->SetLightColor(SLColor);
-        PreviewSkyLight->SetVisibility(true);
-    }
-
-    // ── 13. Camera-Attached Studio Key & Backfill Lights ─────────────────────
-    // Attached directly to CameraComponent so illumination moves 1:1 with camera view line.
-    // Every face (front, back, left, right, top, bottom) of ANY mesh is evenly lit.
-    if (IsValid(PreviewDirectionalLight) && IsValid(Camera))
-    {
-        PreviewDirectionalLight->SetMobility(EComponentMobility::Movable);
-        PreviewDirectionalLight->bAtmosphereSunLight = false;
-
-        // Camera-Attached Key Light: positioned top-front-left relative to camera view
-        PreviewDirectionalLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
-        PreviewDirectionalLight->SetRelativeLocation(FVector::ZeroVector);
-        PreviewDirectionalLight->SetRelativeRotation(FRotator(-20.f, 25.f, 0.f));
-        PreviewDirectionalLight->SetIntensity(5.0f);
-        PreviewDirectionalLight->SetLightColor(FLinearColor(1.0f, 0.96f, 0.92f));
-        PreviewDirectionalLight->SetUseTemperature(false);
-        PreviewDirectionalLight->SetCastShadows(true);
-        PreviewDirectionalLight->SetVisibility(true);
-    }
-
-    // Camera-Attached Backfill Light: fills the opposite/back side so backplates and rear faces never go pitch-black
-    if (IsValid(PreviewFillLight) && IsValid(Camera))
-    {
-        PreviewFillLight->SetMobility(EComponentMobility::Movable);
-        PreviewFillLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetIncludingScale);
-        PreviewFillLight->SetRelativeLocation(FVector(0.f, 0.f, 0.f));
-        PreviewFillLight->SetRelativeRotation(FRotator(20.f, -155.f, 0.f));
-        PreviewFillLight->SetIntensity(800.f);
-        PreviewFillLight->SetLightColor(FLinearColor(0.9f, 0.92f, 1.0f));
-        PreviewFillLight->SourceWidth  = 300.f;
-        PreviewFillLight->SourceHeight = 300.f;
-        PreviewFillLight->AttenuationRadius = 2500.f;
-        PreviewFillLight->SetCastShadows(false);
-        PreviewFillLight->SetVisibility(true);
-    }
-
-
-
-    // ── 14. Stencil isolation post-process material ───────────────────────
+    // ── 12. Stencil isolation post-process material ───────────────────────
     WIP_ApplyStencilIsolation();
 }
 
@@ -1091,81 +962,146 @@ void AFurniturePreviewActor::WIP_ApplyStencilIsolation()
     PP.bOverride_DepthOfFieldNearBlurSize  = false;
     PP.bOverride_DepthOfFieldFarBlurSize   = false;
 
-    // Soft vignette for a natural room-booth separation.
-    PP.bOverride_VignetteIntensity = true;
-    PP.VignetteIntensity           = 0.8f;
+    // Optional soft vignette for room-subject separation. At 0 the level's own
+    // vignette (from its PostProcessVolume) applies unchanged.
+    if (PreviewVignetteIntensity > KINDA_SMALL_NUMBER)
+    {
+        PP.bOverride_VignetteIntensity = true;
+        PP.VignetteIntensity           = PreviewVignetteIntensity;
+    }
+    else
+    {
+        PP.bOverride_VignetteIntensity = false;
+    }
 
-    PP.bOverride_ReflectionMethod       = true;
-    PP.bOverride_LumenReflectionQuality = true;
-    PP.LumenReflectionQuality           = 2.f;
+    // NOTE: deliberately NO reflection-method or Lumen-quality overrides here.
+    // Reflections on the subject must render exactly as the level renders them.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WIP_UpdateWallOcclusion — ONE-SHOT sphere overlap
+// ResolveClearPivot — swept-clearance pivot relocation
 //
-// Called ONCE from SetFocusComponent after the pivot and ActiveMaxZoom are set.
-// Sphere radius = ActiveMaxZoom + 100cm buffer, so ANY camera position the user
-// can reach by rotating or zooming will never see hidden geometry through a wall.
+// A rotating mesh sweeps a sphere of its bounds radius around the pivot. Booths
+// stand against bathroom walls, so at the raw pivot that sphere usually
+// intersects the wall behind the booth and (once pitch rotation is involved)
+// the floor. Rather than hiding the room — which would gut the Lumen
+// reflections and GI this whole preview design exists to keep — the pivot is
+// moved to the nearest position where the sphere is free:
 //
-// Components belonging to the preview actor itself or the player character
-// are ignored. Everything else within the sphere is hidden (shadows kept via
-// SetCastHiddenShadow), and cached for restoration in EndPlay.
+//   1. Lift above the floor so a pitched (tumbling) mesh cannot sweep into it.
+//   2. Walk forward along the booth's facing direction (then right, then left)
+//      in small steps until an overlap test comes back clean.
+//   3. Only if no free spot exists within MaxPivotSearchDistanceCm (very small
+//      bathrooms) and the fallback is allowed: hide just the components that
+//      intersect the swept sphere at the best candidate, cached for restore.
+//
+// Entry-time only — nothing here runs during rotation or zoom.
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AFurniturePreviewActor::WIP_UpdateWallOcclusion()
+FVector AFurniturePreviewActor::ResolveClearPivot(const FVector& DesiredPivot, float SweptRadius)
 {
-    if (!GetWorld()) { return; }
+    UWorld* World = GetWorld();
+    if (!World) { return DesiredPivot; }
 
-    const float SphereRadius = ActiveMaxZoom + 100.f; // 100 cm beyond farthest zoom
+    const float Clearance = SweptRadius + FMath::Max(0.f, PivotClearanceMarginCm);
 
-    TArray<FOverlapResult> Overlaps;
-    FCollisionQueryParams Params;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(PreviewPivotClearance), /*bTraceComplex*/ false);
     Params.AddIgnoredActor(this);
-    if (WIP_CachedCharacter.IsValid())
+    if (WIP_CachedSourceBooth.IsValid()) { Params.AddIgnoredActor(WIP_CachedSourceBooth.Get()); }
+    if (ACharacter* Char = UGameplayStatics::GetPlayerCharacter(World, 0)) { Params.AddIgnoredActor(Char); }
+
+    const FCollisionShape Sphere = FCollisionShape::MakeSphere(Clearance);
+
+    auto IsFree = [&](const FVector& Candidate) -> bool
     {
-        Params.AddIgnoredActor(WIP_CachedCharacter.Get());
+        return !World->OverlapBlockingTestByChannel(Candidate, FQuat::Identity, ECC_WorldStatic, Sphere, Params);
+    };
+
+    // 1. Floor clearance: the actor sits at the booth's root (floor level), so a
+    //    pivot lower than the swept radius would sweep a pitched mesh into the floor.
+    FVector Base = DesiredPivot;
+    const float FloorZ = GetActorLocation().Z;
+    Base.Z = FMath::Max(Base.Z, FloorZ + Clearance + 2.f);
+
+    // 2. Search order: straight out of the booth first (into the open room), then
+    //    diagonals, then sideways. Flattened to the horizontal plane.
+    const FVector Fwd   = GetActorForwardVector().GetSafeNormal2D();
+    const FVector Right = GetActorRightVector().GetSafeNormal2D();
+    const FVector SearchDirs[] =
+    {
+        Fwd,
+        (Fwd + Right * 0.5f).GetSafeNormal(),
+        (Fwd - Right * 0.5f).GetSafeNormal(),
+        Right,
+        -Right
+    };
+
+    const float StepCm  = 20.f;
+    const float MaxDist = FMath::Max(0.f, MaxPivotSearchDistanceCm);
+
+    if (IsFree(Base))
+    {
+        return Base;
     }
 
-    GetWorld()->OverlapMultiByChannel(
-        Overlaps,
-        WIP_FocusPivotWorld,
-        FQuat::Identity,
-        ECC_WorldStatic,
-        FCollisionShape::MakeSphere(SphereRadius),
-        Params
-    );
-
-    for (const FOverlapResult& Overlap : Overlaps)
+    for (const FVector& Dir : SearchDirs)
     {
-        UPrimitiveComponent* Comp = Overlap.GetComponent();
-        if (!IsValid(Comp)) { continue; }
-
-        // Skip our own preview furniture meshes — they're already handled by
-        // component isolation above.
-        if (Comp == CabinetMesh.Get()          || Comp == ClosetMesh.Get()             ||
-            Comp == CountertopMesh.Get()        || Comp == SinkMesh.Get()               ||
-            Comp == FaucetMesh.Get()            || Comp == MirrorMesh.Get()             ||
-            Comp == DoorMeshSlot0.Get()         || Comp == DoorMeshSlot1.Get()          ||
-            Comp == ClosetDoorMeshSlot0.Get()   || Comp == ClosetDoorMeshSlot1.Get())
+        for (float Dist = StepCm; Dist <= MaxDist; Dist += StepCm)
         {
-            continue;
+            const FVector Candidate = Base + Dir * Dist;
+            if (IsFree(Candidate))
+            {
+                return Candidate;
+            }
+        }
+    }
+
+    // 3. No free spot exists in this room. Fall back to the least-blocked candidate
+    //    (as far into the room as allowed) and, if permitted, hide only the world
+    //    components that actually intersect the swept sphere there.
+    const FVector BestEffort = Base + Fwd * (MaxDist * 0.5f);
+
+    if (bAllowGeometryHideFallback)
+    {
+        TArray<FOverlapResult> Overlaps;
+        World->OverlapMultiByChannel(Overlaps, BestEffort, FQuat::Identity,
+                                     ECC_WorldStatic, Sphere, Params);
+
+        for (const FOverlapResult& Overlap : Overlaps)
+        {
+            UPrimitiveComponent* Comp = Overlap.GetComponent();
+            if (!IsValid(Comp) || !Comp->IsVisible()) { continue; }
+            if (Comp->GetOwner() == this) { continue; }
+
+            Comp->SetVisibility(false);
+            WIP_CachedHiddenWallComponents.AddUnique(Comp);
         }
 
-        Comp->SetCastHiddenShadow(false);
-        Comp->SetCastShadow(false);
-        Comp->SetVisibility(false);
-        WIP_CachedHiddenWallComponents.AddUnique(Comp);
+        UE_LOG(LogTemp, Log,
+            TEXT("[PreviewActor] Clearance fallback: no free pivot within %.0fcm; hid %d blocking component(s)."),
+            MaxDist, WIP_CachedHiddenWallComponents.Num());
     }
+
+    return BestEffort;
 }
 
 void AFurniturePreviewActor::ConfigureMesh(UStaticMeshComponent* Comp) const
 {
     if (!IsValid(Comp)) { return; }
     Comp->SetMobility(EComponentMobility::Movable);
-    Comp->SetCastShadow(true);
     Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    Comp->LightingChannels.bChannel0 = true;
-    Comp->LightingChannels.bChannel1 = false;
+
+    // Shadows off: the subject is lit by the shadowless channel-1 rig, so its own
+    // shadow casting would only produce artifacts against channel-0 world lighting.
+    Comp->SetCastShadow(false);
+    Comp->SetCastHiddenShadow(false);
+
+    // LIGHTING CHANNEL 1: world lights (channel 0) do not light the preview meshes
+    // directly — this is what keeps illumination even through a full rotation.
+    // Lumen GI and reflections are not channel-filtered, so the intact room still
+    // provides realistic ambient light and reflections on the subject.
+    Comp->LightingChannels.bChannel0 = false;
+    Comp->LightingChannels.bChannel1 = true;
     Comp->LightingChannels.bChannel2 = false;
 }
 

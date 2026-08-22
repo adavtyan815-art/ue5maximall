@@ -6,13 +6,26 @@
 // KEY GUARANTEE: bReplicates = false hard-coded. Spawned exclusively by
 // AAwsTutorial_PlayerController on the owning client at the SourceBooth location.
 //
-// Architecture (WorldInPlace only):
-//   - Mirrors the AShowroomBooth mesh layout driven from a local product snapshot.
-//   - Camera ORBITS around the focused mesh via SpringArm.
+// Architecture ("Real room, neutral subject"):
+//   - Mirrors the AShowroomBooth mesh layout driven from a local product snapshot,
+//     spawned at the booth's real world position so Lumen GI and reflections come
+//     from the ACTUAL room. The level's lights, PostProcessVolumes and SkyLights
+//     are never touched.
+//   - The MESH rotates; the camera stays fixed. Viewing distance therefore never
+//     changes during rotation - only explicit zoom moves the camera.
+//   - Even illumination: preview meshes live on LIGHTING CHANNEL 1, so the world's
+//     directional/rect lights (channel 0) do not light them directly - no bright
+//     side/dark side, no shadows sweeping across the mesh while it turns. A small
+//     shadowless two-light rig on channel 1 lights only the subject, while Lumen
+//     GI and reflections from the intact room keep materials looking real.
+//   - Swept clearance: before rotating, the pivot is relocated to the nearest free
+//     spot (forward/up, "picked off the shelf") so a wall-backed cabinet cannot
+//     clip through walls or floor during 360-degree rotation. Only if no free spot
+//     exists are the few intersecting components temporarily hidden (restored on
+//     EndPlay).
 //   - Component isolation: only the focused mesh group is visible during preview.
-//   - Stencil-250 CustomDepth isolation dims the background via PP material.
-//   - Wall occlusion: one-shot sphere overlap at SetFocusComponent time hides
-//     all world geometry within the max orbit radius, restoring it on EndPlay.
+//   - Stencil-250 CustomDepth isolation dims the background via PP material (post
+//     only - reflections of the room stay undimmed).
 //
 // Compatible: UE 5.3 → UE 5.6+
 
@@ -27,12 +40,8 @@ class UStaticMeshComponent;
 class USpringArmComponent;
 class UCameraComponent;
 class URectLightComponent;
-class USkyLightComponent;
-class UDirectionalLightComponent;
 class ACharacter;
 class AShowroomBooth;
-class ARectLight;
-class ADirectionalLight;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-Component Preview Configuration
@@ -61,97 +70,62 @@ struct FPreviewComponentConfig
               meta = (DisplayName = "Camera Exposure Offset (EV)", ClampMin = "-4.0", ClampMax = "4.0", UIMin = "-2.0", UIMax = "2.0"))
     float ExposureCompensation = 0.f;
 
-    // ── Mesh Rendering ───────────────────────────────────────────────────────
+    /**
+     * Yaw offset (degrees) added to the entry view direction for THIS component.
+     * The base entry view faces the booth's front (its forward axis). If a mesh is
+     * authored or mounted facing a different local direction and enters Viewmode
+     * showing its side, correct it here once — the offset is booth-relative, so it
+     * holds for every placement and rotation of the booth in any bathroom.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera & Zoom",
+              meta = (DisplayName = "Entry View Yaw Offset (deg)", ClampMin = "-180.0", ClampMax = "180.0"))
+    float EntryYawOffsetDegrees = 0.f;
 
-    /** Enables or disables dynamic shadow casting for the focused mesh component during preview. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Rendering",
-              meta = (DisplayName = "Enable Mesh Dynamic Shadows"))
-    bool bCastShadow = true;
-
-    // ── Studio SkyLight Environment ──────────────────────────────────────────
-
-    /** Intensity of the 360° studio SkyLight fill component (0 = rely purely on level ambient). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Environment",
-              meta = (DisplayName = "SkyLight Fill Intensity", ClampMin = "0.0", ClampMax = "20.0", UIMin = "0.0", UIMax = "10.0"))
-    float SkyLightIntensity = 2.5f;
-
-    /** Color tint for the 360° studio SkyLight ambient fill. Neutral white preserves PBR materials. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Environment",
-              meta = (DisplayName = "SkyLight Ambient Color"))
-    FLinearColor SkyLightColor = FLinearColor::White;
-
-    // ── Directional Sun Light ────────────────────────────────────────────────
+    // ── Subject Fill Lighting ────────────────────────────────────────────────
+    // A shadowless two-light rig on LIGHTING CHANNEL 1 that lights ONLY the preview
+    // meshes. The room's own lights never touch the subject (channel 0 vs 1), so the
+    // subject stays evenly lit through a full rotation; Lumen GI and reflections from
+    // the intact room still apply and keep materials looking like they do in the level.
 
     /**
-     * If true, inherits ALL lighting properties (intensity, color, temperature, indirect bounce)
-     * directly from the level's main World Sun light, greyed out in UI.
-     * If false, allows manual override values below.
+     * Intensity of the soft key light (camera side, above-left).
+     * NOTE: intentionally renamed from the old "KeyLightIntensity" so that stale
+     * Blueprint overrides saved for the previous studio rig (which defaulted this
+     * to 0) do not silently switch the new rig off.
      */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
-              meta = (DisplayName = "Inherit World Sun Settings"))
-    bool bUseWorldSunDefaults = false;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
+              meta = (DisplayName = "Key Light Intensity", ClampMin = "0.0", ClampMax = "5000.0", UIMin = "0.0", UIMax = "2000.0"))
+    float PreviewKeyIntensity = 800.f;
 
-    /** Manual intensity override for the directional sun light (lux). Active when inherit = false. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
-              meta = (DisplayName = "Sun Light Intensity Override (lux)", ClampMin = "0.0", ClampMax = "100.0", UIMin = "0.0", UIMax = "30.0", EditCondition = "!bUseWorldSunDefaults"))
-    float DirectionalLightIntensity = 4.0f;
-
-    /** Manual color tint override for the directional sun light. Active when inherit = false. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
-              meta = (DisplayName = "Sun Light Color Override", EditCondition = "!bUseWorldSunDefaults"))
-    FLinearColor DirectionalLightColor = FLinearColor(1.f, 0.96f, 0.92f);
-
-    /** Local rotation offset relative to camera view line. Active when inherit = false. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
-              meta = (DisplayName = "Sun Light Relative Rotation", EditCondition = "!bUseWorldSunDefaults"))
-    FRotator DirectionalLightRelativeRotation = FRotator(-25.f, 25.f, 0.f);
-
-    /** Toggles real-time shadow casting for directional sun light. Active when inherit = false. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Directional Sun Light",
-              meta = (DisplayName = "Sun Light Casts Shadows", EditCondition = "!bUseWorldSunDefaults"))
-    bool bDirectionalLightCastShadows = true;
-
-    // ── Preview Rect Lights ──────────────────────────────────────────────────
-
-    /** Intensity of key RectLight component (lux). Default 0 (off to prevent rectangular beam artifacts). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
-              meta = (DisplayName = "Key Rect Intensity (lux)", ClampMin = "0.0", ClampMax = "5000.0", UIMin = "0.0", UIMax = "1000.0"))
-    float KeyLightIntensity = 0.f;
-
-    /** Color tint applied to 3-light RectLight rig. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
-              meta = (DisplayName = "Rect Light Color Tint"))
+    /** Color tint applied to both rig lights. Neutral white preserves PBR material color. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
+              meta = (DisplayName = "Light Color Tint"))
     FLinearColor LightColor = FLinearColor::White;
 
-    /** Intensity fraction for Fill & Rim rect lights relative to Key (0 = off, 1 = same). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
-              meta = (DisplayName = "Fill & Rim Intensity Ratio", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+    /** Wrap-fill intensity as a fraction of the key (lights the opposite side; 0 = off). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
+              meta = (DisplayName = "Fill Intensity Ratio", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
     float FillRimMultiplier = 0.4f;
 
-    /** Source width (cm) for rect light soft shadows. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
-              meta = (DisplayName = "Rect Source Width (cm)", ClampMin = "5.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "300.0"))
+    /** Key light source width (cm). Larger = softer, broader speculars on glossy surfaces. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
+              meta = (DisplayName = "Source Width (cm)", ClampMin = "5.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "300.0"))
     float LightSourceWidth = 100.f;
 
-    /** Source height (cm) for rect light soft shadows. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
-              meta = (DisplayName = "Rect Source Height (cm)", ClampMin = "5.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "300.0"))
+    /** Key light source height (cm). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
+              meta = (DisplayName = "Source Height (cm)", ClampMin = "5.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "300.0"))
     float LightSourceHeight = 120.f;
 
-    /** Distance offset of key rect light from pivot along orbit arm (cm). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
-              meta = (DisplayName = "Rect Key Offset Distance (cm)", ClampMin = "50.0", ClampMax = "1000.0", UIMin = "100.0", UIMax = "500.0"))
+    /** Distance of the rig lights from the pivot (cm). Constant regardless of zoom. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
+              meta = (DisplayName = "Light Distance From Pivot (cm)", ClampMin = "50.0", ClampMax = "1000.0", UIMin = "100.0", UIMax = "500.0"))
     float KeyLightOffset = 200.f;
 
-    /** Falloff attenuation radius (cm) for key rect light. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
-              meta = (DisplayName = "Rect Key Attenuation Radius (cm)", ClampMin = "100.0", ClampMax = "5000.0", UIMin = "200.0", UIMax = "2000.0"))
+    /** Falloff attenuation radius (cm) for the rig lights. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
+              meta = (DisplayName = "Attenuation Radius (cm)", ClampMin = "100.0", ClampMax = "5000.0", UIMin = "200.0", UIMax = "2000.0"))
     float KeyLightAttenuationRadius = 800.f;
-
-    /** Toggles real-time shadow casting for key rect light. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Rect Lights",
-              meta = (DisplayName = "Rect Key Casts Shadows"))
-    bool bPreviewLightCastShadows = true;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,39 +199,21 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UCameraComponent> Camera;
 
-    // ── Preview Lighting Rig ──────────────────────────────────────────────
-    // Three URectLightComponents providing even illumination of the focused mesh.
-    // Key orbits with the camera; Fill and Rim stay at the orbit pivot.
+    // ── Subject Fill Rig (LIGHTING CHANNEL 1, shadowless) ─────────────────
+    // Lights ONLY the preview meshes (also channel 1). The room and its lights
+    // (channel 0) are untouched, so the level's look is never modified.
+    // Both lights are children of the SpringArm root at the pivot: their distance
+    // to the subject is constant regardless of zoom, and because the camera never
+    // rotates during mesh rotation, illumination is identical from every angle.
+    // Shadowless lights ignore occluders, so a light "inside" a nearby wall is fine.
 
-    /** Key light — at fixed orbit offset, always illuminates the mesh face the camera sees. */
+    /** Soft key — camera side, above and to the left of the view axis. */
     UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
     TObjectPtr<URectLightComponent> PreviewKeyLight;
 
-    /** Fill light — at orbit pivot, angled below/behind, provides soft backfill. */
+    /** Wrap fill — opposite side, below-right, prevents a dark back side. */
     UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
     TObjectPtr<URectLightComponent> PreviewFillLight;
-
-    /** Rim / top light — at orbit pivot, angled from above, provides edge definition. */
-    UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
-    TObjectPtr<URectLightComponent> PreviewRimLight;
-
-    /**
-     * Studio SkyLight — provides 360° diffuse fill from all directions.
-     * Activated once in LoadProductPreview (RecaptureSky) and configured
-     * per-component in SetFocusComponent via SkyLightIntensity / SkyLightColor.
-     * Eliminates pitch-black back-side artifacts caused by wall occlusion.
-     */
-    UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
-    TObjectPtr<USkyLightComponent> PreviewSkyLight;
-
-    /**
-     * Camera-Headlight Directional Key Light.
-     * Attached directly to CameraComponent with a strict local rotation offset.
-     * Moves and rotates 1:1 with camera view, ensuring whichever face the camera
-     * looks at (horizontal, from above, or from below) is always illuminated.
-     */
-    UPROPERTY(BlueprintReadOnly, Category = "Components | Preview Lighting")
-    TObjectPtr<UDirectionalLightComponent> PreviewDirectionalLight;
 
     // ─────────────────────────────────────────────────────────────────────
     // PREVIEW CONFIG
@@ -272,9 +228,68 @@ public:
     UPROPERTY()
     TObjectPtr<UMaterialInstanceDynamic> StencilIsolationMID;
 
+    /**
+     * Camera vignette while the preview is active (0 = none, use the level's own).
+     * Applied on the preview camera only; the level's PostProcessVolumes stay enabled.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config",
+              meta = (DisplayName = "Preview Vignette Intensity", ClampMin = "0.0", ClampMax = "1.0"))
+    float PreviewVignetteIntensity = 0.4f;
+
+    /**
+     * Downward tilt (degrees, negative = camera above looking down) of the entry
+     * view for every component — the classic product-shot three-quarter angle.
+     * 0 = perfectly level entry view.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config",
+              meta = (DisplayName = "Entry View Pitch (deg)", ClampMin = "-60.0", ClampMax = "10.0"))
+    float EntryPitchDegrees = -15.f;
+
+    /**
+     * Post-process MATERIALS (not volumes) to suspend while the preview is open,
+     * restored exactly on exit. Needed for stencil-keyed materials like
+     * M_PostProcessOutline: the Room Planner drives it via custom-depth stencil
+     * values, but the preview subject also renders custom depth (stencil 250) for
+     * its isolation dim, so the outline material would tint the previewed mesh.
+     * Only the listed materials are pulled from the volumes' blendable arrays —
+     * every other volume setting (exposure, bloom, grading) keeps applying, which
+     * is required for level-accurate material appearance.
+     * As a safety net for renamed assets, any volume blendable whose object name
+     * contains "PostProcessOutline" is suspended as well.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config",
+              meta = (DisplayName = "Post Process Materials To Suspend"))
+    TArray<TSoftObjectPtr<UMaterialInterface>> PostProcessMaterialsToSuspend;
+
+    // ── Swept-Clearance Pivot Relocation ──────────────────────────────────
+    // Booths normally stand against bathroom walls, so a rotating mesh would sweep
+    // through the wall (and, when pitched, the floor). Before rotation starts, the
+    // pivot is moved to the nearest position where a sphere of the mesh's swept
+    // radius fits - visually, the product is "picked off the shelf" to be inspected.
+
+    /** Extra clearance (cm) added around the mesh's swept radius. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Clearance",
+              meta = (DisplayName = "Clearance Margin (cm)", ClampMin = "0.0", ClampMax = "100.0"))
+    float PivotClearanceMarginCm = 15.f;
+
+    /** How far (cm) the pivot may be moved from the booth to find free space. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Clearance",
+              meta = (DisplayName = "Max Pivot Search Distance (cm)", ClampMin = "0.0", ClampMax = "1000.0"))
+    float MaxPivotSearchDistanceCm = 300.f;
+
+    /**
+     * If no fully free pivot exists within the search distance (very small bathrooms),
+     * temporarily hide just the world components intersecting the swept sphere
+     * (restored automatically when the preview closes). Off = the mesh may visibly
+     * clip through nearby geometry in cramped layouts.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Clearance",
+              meta = (DisplayName = "Hide Blocking Geometry As Fallback"))
+    bool bAllowGeometryHideFallback = true;
+
     // ── Per-Component Configuration ────────────────────────────────────────
-    // Set MinZoomDistance / MaxZoomDistance / bCastShadow per component in
-    // the BP_FurniturePreviewActor Details panel.
+    // Zoom limits, exposure nudge and subject fill lighting per component type,
+    // set in the BP_FurniturePreviewActor Details panel.
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Components",
               meta = (DisplayName = "Cabinet"))
@@ -316,9 +331,11 @@ public:
      * Handles:
      *   1. Visibility isolation (hides all other mesh groups).
      *   2. Stencil-250 CustomDepth on the focused group.
-     *   3. SpringArm repositioned to the focused mesh's bounds center.
-     *   4. Per-component zoom limits applied from the matching Config.
-     *   5. One-shot sphere overlap to hide all world geometry in the orbit volume.
+     *   3. Swept-clearance pivot relocation so 360-degree rotation cannot clip
+     *      through walls/floor (see ResolveClearPivot).
+     *   4. SpringArm placed at the pivot, entry view along the booth's forward
+     *      axis; max zoom clamped by the wall behind the camera.
+     *   5. Per-component zoom limits and subject fill rig from the matching Config.
      */
     UFUNCTION(BlueprintCallable, Category = "Preview | Control",
               meta = (DisplayName = "Set Focus Component"))
@@ -341,9 +358,6 @@ public:
 
 private:
 
-    void DeferredHideWorldLights();
-    void LockInSkyLightCubemap();
-
     // ── Active zoom limits (set from the focused component's FPreviewComponentConfig) ──
     float ActiveMinZoom = 30.f;
     float ActiveMaxZoom = 400.f;
@@ -362,29 +376,14 @@ private:
     // ── Scene restore ──────────────────────────────────────────────────────
     TWeakObjectPtr<ACharacter>      WIP_CachedCharacter;
     TWeakObjectPtr<AShowroomBooth>  WIP_CachedSourceBooth;
-    TArray<TWeakObjectPtr<UPrimitiveComponent>> WIP_CachedHiddenWallComponents;
-
-    /** World ARectLight actors that were visible before preview; restored on EndPlay. */
-    TArray<TWeakObjectPtr<AActor>>  WIP_CachedWorldRectLights;
-
-    /** World ADirectionalLight actors cached with their original intensities.
-     *  Intensity is set to 0 during preview and restored on EndPlay. */
-    TArray<TPair<TWeakObjectPtr<ADirectionalLight>, float>> WIP_CachedWorldDirLights;
-
-    /** World properties of the primary ADirectionalLight captured in LoadProductPreview. */
-    FRotator     WIP_CachedWorldSunRotation  = FRotator(-46.f, -46.f, 0.f);
-    float        WIP_CachedWorldSunIntensity = 8.f;
-    FLinearColor WIP_CachedWorldSunColor     = FLinearColor(1.f, 0.95f, 0.85f);
-    bool         WIP_CachedWorldSunUseTemp   = false;
-    float        WIP_CachedWorldSunTemp      = 6500.f;
-    float        WIP_CachedWorldSunIndirect  = 1.0f;
 
     /**
-     * Holds the SourceBooth pointer across the two-tick SkyLight capture split.
-     * Set in LoadProductPreview (Tick N) and consumed in DeferredHideWorldLights (Tick N+1).
-     * Using TWeakObjectPtr so a destroyed booth doesn't cause a stale-pointer crash.
+     * World components temporarily hidden by the swept-clearance FALLBACK only
+     * (cramped layouts where no free pivot exists). Restored to visible on EndPlay
+     * and before every re-focus. This is the ONLY world state the preview may touch
+     * besides hiding the source booth and the player character mesh.
      */
-    TWeakObjectPtr<AShowroomBooth>  WIP_DeferredSourceBooth;
+    TArray<TWeakObjectPtr<UPrimitiveComponent>> WIP_CachedHiddenWallComponents;
 
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
@@ -397,8 +396,41 @@ private:
     // ── Private helpers ────────────────────────────────────────────────────
     FVector WIP_GetFocusPivotWorld() const;
     void    WIP_ApplyStencilIsolation();
-    void    WIP_UpdateWallOcclusion();   // One-shot sphere overlap. Called from SetFocusComponent.
     void    ConfigureMesh(UStaticMeshComponent* Comp) const;
+
+    /**
+     * Finds the nearest pivot position where a sphere of SweptRadius (+ margin) is
+     * free of world geometry: lifts above the floor if needed, then walks forward /
+     * right / left from the desired pivot. Returns the chosen position; when no free
+     * spot exists it returns the best candidate and, if allowed, hides the few
+     * components blocking it (cached in WIP_CachedHiddenWallComponents).
+     */
+    FVector ResolveClearPivot(const FVector& DesiredPivot, float SweptRadius);
+
+    /** Restores any components hidden by the clearance fallback. */
+    void RestoreClearanceHiddenComponents();
+
+    // ── Suspended post-process blendables ─────────────────────────────────
+    // One removed volume-blendable entry, with everything needed to put it back.
+    struct FSuspendedPPBlendable
+    {
+        TWeakObjectPtr<class APostProcessVolume> Volume;
+        TWeakObjectPtr<UObject>                  BlendableObject;
+        float                                    Weight = 1.f;
+    };
+
+    TArray<FSuspendedPPBlendable> SuspendedPostProcessBlendables;
+
+    /**
+     * Removes the configured conflicting materials (plus the "PostProcessOutline"
+     * name fallback) from every PostProcessVolume's blendable array, recording each
+     * removal for exact restoration. Idempotent: already-removed entries are not
+     * found again on a second call.
+     */
+    void SuspendConflictingPostProcessMaterials();
+
+    /** Re-adds every suspended blendable with its original weight. */
+    void RestoreSuspendedPostProcessMaterials();
 
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                         const FFurnitureComponentOptions& Options,
