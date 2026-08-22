@@ -1,4 +1,4 @@
-﻿// Copyright awsTutorial. All Rights Reserved.
+// Copyright awsTutorial. All Rights Reserved.
 
 #pragma once
 
@@ -27,6 +27,7 @@ class AWSTUTORIAL_API UColorCatalogSwatchWidget : public UUserWidget, public IUs
 public:
 	virtual void NativeConstruct() override;
 	virtual void NativeOnListItemObjectSet(UObject* ListItemObject) override;
+	virtual void NativeOnItemSelectionChanged(bool bIsSelected) override;
 
 	UPROPERTY(BlueprintAssignable, Category = "Color Catalog Swatch")
 	FOnColorSwatchClickedSignature OnColorSwatchClicked;
@@ -34,15 +35,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Color Catalog Swatch")
 	void RefreshDisplay();
 
+public:
+	/** Scale factor for the selected shade (larger than inactive shades) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Swatch|Styling")
+	float ActiveScale = 1.20f;
+
+	/** Scale factor for inactive shades */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Swatch|Styling")
+	float InactiveScale = 1.0f;
+
 protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	UImage* Image_ColorBox;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	UTextBlock* Text_ColorCode;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	UBorder* Border_Selection;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	UButton* Button_SwatchClick;

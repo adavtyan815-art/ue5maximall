@@ -1,4 +1,4 @@
-﻿// Copyright 2026 MaxiMall. All Rights Reserved.
+// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #pragma once
 
@@ -27,7 +27,12 @@ class AWSTUTORIAL_API URoomPlannerWidget : public UUserWidget
 
 public:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
+	/** Closes this room planner widget, restores 3D character view, and removes from parent. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	void ClosePlanner();
 
 	/** Toggle between 2D Top-Down Drawing Mode and 3D Inspection Mode. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
@@ -42,6 +47,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void UpdateViewModeButtonStyles();
+
+	/** Updates contextual guidance hint texts based on current tool, view mode, and selection. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	void UpdateGuidanceHintText();
 
 	/** Build default 4x4m square room layout. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
@@ -130,6 +139,12 @@ public:
 
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UButton> BtnCeiling;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnClose;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnBack;
 
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UTextBlock> TxtLiveLength;
@@ -223,6 +238,7 @@ private:
 
 	UFUNCTION() void OnClearLayoutClicked();
 	UFUNCTION() void OnToggleCeilingClicked();
+	UFUNCTION() void OnCloseClicked();
 
 	UFUNCTION()
 	void OnApplyPropertiesClicked();

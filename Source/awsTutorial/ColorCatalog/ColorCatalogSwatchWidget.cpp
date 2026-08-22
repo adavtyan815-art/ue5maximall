@@ -1,7 +1,8 @@
-﻿// Copyright awsTutorial. All Rights Reserved.
+// Copyright awsTutorial. All Rights Reserved.
 
 #include "ColorCatalog/ColorCatalogSwatchWidget.h"
 #include "ColorCatalog/ColorCatalogItemObject.h"
+#include "ColorCatalog/ColorCatalogWidget.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Components/Border.h"
@@ -20,6 +21,23 @@ void UColorCatalogSwatchWidget::NativeConstruct()
 void UColorCatalogSwatchWidget::NativeOnListItemObjectSet(UObject* ListItemObject)
 {
 	CachedItemObject = Cast<UColorCatalogItemObject>(ListItemObject);
+
+	if (UColorCatalogWidget* ParentCatalog = GetTypedOuter<UColorCatalogWidget>())
+	{
+		ActiveScale = ParentCatalog->ActiveSwatchScale;
+		InactiveScale = ParentCatalog->InactiveSwatchScale;
+	}
+
+	RefreshDisplay();
+}
+
+void UColorCatalogSwatchWidget::NativeOnItemSelectionChanged(bool bIsSelected)
+{
+	IUserObjectListEntry::NativeOnItemSelectionChanged(bIsSelected);
+	if (CachedItemObject)
+	{
+		CachedItemObject->bIsSelected = bIsSelected;
+	}
 	RefreshDisplay();
 }
 
@@ -31,10 +49,12 @@ void UColorCatalogSwatchWidget::RefreshDisplay()
 	}
 
 	const FColorCatalogItem& Item = CachedItemObject->ColorItem;
+	bool bSelected = CachedItemObject->bIsSelected;
 
 	if (Image_ColorBox)
 	{
 		Image_ColorBox->SetColorAndOpacity(Item.Color);
+		Image_ColorBox->SetRenderScale(FVector2D(1.0f, 1.0f));
 	}
 
 	if (Text_ColorCode)
@@ -42,16 +62,18 @@ void UColorCatalogSwatchWidget::RefreshDisplay()
 		Text_ColorCode->SetText(FText::FromString(Item.Code));
 	}
 
-	if (Border_Selection)
-	{
-		Border_Selection->SetVisibility(CachedItemObject->bIsSelected ? ESlateVisibility::Visible : ESlateVisibility::Hidden);
-	}
+	// Apply scale to the ENTIRE WBP_ColorSwatchItem (Color Box + Text)
+	SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	float TargetScale = bSelected ? ActiveScale : InactiveScale;
+	SetRenderScale(FVector2D(TargetScale, TargetScale));
 }
 
 void UColorCatalogSwatchWidget::HandleSwatchClicked()
 {
 	if (CachedItemObject)
 	{
+		CachedItemObject->bIsSelected = true;
+		RefreshDisplay();
 		OnColorSwatchClicked.Broadcast(CachedItemObject->ColorItem);
 	}
 }

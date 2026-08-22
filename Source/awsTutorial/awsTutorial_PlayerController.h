@@ -182,7 +182,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> MainWidgetInstance;
 
-    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> RoomPlannerInstance;
 
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")

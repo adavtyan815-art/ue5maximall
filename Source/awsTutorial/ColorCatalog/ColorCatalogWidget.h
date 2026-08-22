@@ -1,4 +1,4 @@
-﻿// Copyright awsTutorial. All Rights Reserved.
+// Copyright awsTutorial. All Rights Reserved.
 
 #pragma once
 
@@ -61,12 +61,71 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
 	void SetActiveCategory(EColorShadeCategory NewCategory);
 
+	/** Updates visual highlight for RAL and NCS buttons */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void UpdateTabButtonStyles();
+
+	/** Updates visual highlight for color category buttons */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void UpdateCategoryButtonStyles();
+
 	/** Refresh grid items */
 	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
 	void RefreshGrid();
 
 	UPROPERTY(BlueprintAssignable, Category = "Color Catalog Controller")
 	FOnColorCatalogClosedSignature OnCatalogClosed;
+
+	/** Color applied to active RAL/NCS tab button (Editable in UMG Details panel or Blueprint) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config|Styling")
+	FLinearColor ActiveTabColor = FLinearColor(0.04f, 0.52f, 1.0f, 1.0f);
+
+	/** Color applied to inactive RAL/NCS tab button (Editable in UMG Details panel or Blueprint) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config|Styling")
+	FLinearColor InactiveTabColor = FLinearColor(0.07f, 0.11f, 0.18f, 1.0f);
+
+	/** Color for active 'All' category button */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config|Styling")
+	FLinearColor ActiveCategoryAllColor = FLinearColor(0.04f, 0.52f, 1.0f, 1.0f);
+
+	/** Color for inactive 'All' category button */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config|Styling")
+	FLinearColor InactiveCategoryAllColor = FLinearColor(0.12f, 0.16f, 0.22f, 1.0f);
+
+	/** Scale factor for the selected category orb (larger than inactive orbs) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config|Styling")
+	float ActiveCategoryScale = 1.25f;
+
+	/** Scale factor for inactive category orbs */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config|Styling")
+	float InactiveCategoryScale = 1.0f;
+
+	/** Scale factor for the selected shade in the grid (larger than inactive shades) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config|Styling")
+	float ActiveSwatchScale = 1.20f;
+
+	/** Scale factor for inactive shades in the grid */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config|Styling")
+	float InactiveSwatchScale = 1.0f;
+
+	/** Set active and inactive tab colors dynamically */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void SetTabColors(FLinearColor InActiveColor, FLinearColor InInactiveColor);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
+	EColorCatalogType DefaultCatalogType = EColorCatalogType::RAL;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
+	EColorShadeCategory DefaultCategory = EColorShadeCategory::Red;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
+	TSubclassOf<UColorCatalogItemObject> ItemObjectClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
+	FName ColorParameterName = FName("BaseColor");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
+	UMaterialInterface* OverrideMaterial = nullptr;
 
 protected:
 
@@ -104,15 +163,6 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryBeige;
 	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryBlack;
 	UPROPERTY(meta = (BindWidgetOptional)) UButton* Button_CategoryNeutral;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
-	TSubclassOf<UColorCatalogItemObject> ItemObjectClass;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
-	FName ColorParameterName = FName("BaseColor");
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color Catalog Config")
-	UMaterialInterface* OverrideMaterial = nullptr;
 
 private:
 	UPROPERTY()

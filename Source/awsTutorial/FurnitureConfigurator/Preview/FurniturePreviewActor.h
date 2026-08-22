@@ -88,13 +88,34 @@ struct FPreviewComponentConfig
     // the intact room still apply and keep materials looking like they do in the level.
 
     /**
-     * Intensity of the soft key light (camera side, above-left).
+     * Match the rig brightness and color to the level's real lights (recommended).
+     * The subject is on channel 1, so it receives NO direct light from the room;
+     * with a fixed rig intensity it reads darker/greyer than in the level whenever
+     * the room's lights are brighter than the rig. When enabled, the direct
+     * illuminance (lux) that the room's visible, unoccluded lights deliver at the
+     * mesh's original booth position is measured at focus time, and the rig is
+     * sized to deliver the same illuminance (and the lights' combined color) to
+     * the subject - level-accurate brightness in every room, no hand-tuning.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
+              meta = (DisplayName = "Match Level Lighting (Auto)"))
+    bool bMatchLevelLighting = true;
+
+    /** Fine-tune multiplier on the matched level brightness (1 = exact match). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
+              meta = (DisplayName = "Level Match Intensity Scale", ClampMin = "0.1", ClampMax = "4.0", UIMin = "0.25", UIMax = "2.0", EditCondition = "bMatchLevelLighting"))
+    float LevelMatchIntensityScale = 1.f;
+
+    /**
+     * Manual intensity (CANDELAS) of the soft key light (camera side, above-left).
+     * Used only when "Match Level Lighting" is off, or when it measures no light
+     * at the booth (e.g. purely emissive- or sky-lit rooms).
      * NOTE: intentionally renamed from the old "KeyLightIntensity" so that stale
      * Blueprint overrides saved for the previous studio rig (which defaulted this
      * to 0) do not silently switch the new rig off.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Subject Fill Lighting",
-              meta = (DisplayName = "Key Light Intensity", ClampMin = "0.0", ClampMax = "5000.0", UIMin = "0.0", UIMax = "2000.0"))
+              meta = (DisplayName = "Key Light Intensity (Manual, cd)", ClampMin = "0.0", ClampMax = "5000.0", UIMin = "0.0", UIMax = "2000.0"))
     float PreviewKeyIntensity = 800.f;
 
     /** Color tint applied to both rig lights. Neutral white preserves PBR material color. */
@@ -409,6 +430,23 @@ private:
 
     /** Restores any components hidden by the clearance fallback. */
     void RestoreClearanceHiddenComponents();
+
+    /**
+     * Measures the direct illuminance (lux) the world's channel-0 lights deliver
+     * at WorldPoint, i.e. the direct lighting the mesh received there in the level:
+     *   - Directional lights count only when unoccluded (indoor booths normally
+     *     exclude the sun), at their intensity in lux.
+     *   - Local lights (point/spot/rect) count when within attenuation range and
+     *     with line of sight, converted to candelas via their configured units,
+     *     with inverse-square + radial-window falloff, spot cone falloff and rect
+     *     hemisphere/cosine emission respected.
+     *   - The hidden source booth's own display lights (if any) still count: they
+     *     lit the product in the level and the rig must reproduce them.
+     * Returns the max RGB channel of the accumulated lux; OutLightColor receives
+     * the lux-weighted combined light color (normalized, alpha 1). Approximation:
+     * IES profiles and barn doors are ignored.
+     */
+    float MeasureWorldIlluminanceAt(const FVector& WorldPoint, FLinearColor& OutLightColor) const;
 
     // ── Suspended post-process blendables ─────────────────────────────────
     // One removed volume-blendable entry, with everything needed to put it back.

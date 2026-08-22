@@ -47,7 +47,7 @@ The level uses **Lumen GI + Lumen Reflections in software mode** (`r.DynamicGlob
 | File | Class / Scope | Nature of change |
 |---|---|---|
 | `Source/awsTutorial/FurnitureConfigurator/Preview/FurniturePreviewActor.h` | `AFurniturePreviewActor`, `FPreviewComponentConfig` | Config struct redesigned; obsolete components/members removed; clearance, entry-orientation and post-process-suspension settings added |
-| `Source/awsTutorial/FurnitureConfigurator/Preview/FurniturePreviewActor.cpp` | `AFurniturePreviewActor` | Core rewrite of constructor, `EndPlay`, `LoadProductPreview`, `SetFocusComponent`, `ConfigureMesh`, `WIP_ApplyStencilIsolation`; new `ResolveClearPivot`, `RestoreClearanceHiddenComponents`, `SuspendConflictingPostProcessMaterials`, `RestoreSuspendedPostProcessMaterials` |
+| `Source/awsTutorial/FurnitureConfigurator/Preview/FurniturePreviewActor.cpp` | `AFurniturePreviewActor` | Core rewrite of constructor, `EndPlay`, `LoadProductPreview`, `SetFocusComponent`, `ConfigureMesh`, `WIP_ApplyStencilIsolation`; new `ResolveClearPivot`, `RestoreClearanceHiddenComponents`, `SuspendConflictingPostProcessMaterials`, `RestoreSuspendedPostProcessMaterials`, `MeasureWorldIlluminanceAt` (level-match rig calibration, §4.2b) |
 | `Source/awsTutorial/awsTutorial_PlayerController.cpp` | `AAwsTutorial_PlayerController::OpenFurniturePreview` / `CloseFurniturePreview` | Removed the two loops that disabled/re-enabled every `APostProcessVolume` |
 
 No other classes or systems were modified. All changed functions belong to `AFurniturePreviewActor` except the two PlayerController functions above.
@@ -69,7 +69,20 @@ Two `URectLightComponent`s, both children of the **SpringArm root at the pivot**
 - **Key** — camera side, raised and offset left of the view axis, aimed at the pivot. Large source area produces broad, gentle speculars rather than hard glints.
 - **Fill** — opposite side, slightly below, so the far side never reads as a dark half.
 
-Both are **shadowless by design** (evenness requirement). Because they hang off the SpringArm root, their distance to the subject is constant regardless of zoom, and because the camera does not move during mesh rotation, the on-screen illumination is identical at every rotation angle. Shadowless lights ignore occluders, so a rig light positioned inside nearby wall geometry still works correctly.
+Both are **shadowless by design** (evenness requirement). Because they hang off the SpringArm root, their distance to the subject is constant regardless of zoom, and because the camera does not move during mesh rotation, the on-screen illumination is identical at every rotation angle. Shadowless lights ignore occluders, so a rig light positioned inside nearby wall geometry still works correctly. The rig has `IndirectLightingIntensity = 0`, so it never bleeds into the room's Lumen GI.
+
+### 4.2b Level-match calibration (`MeasureWorldIlluminanceAt`)
+
+Because the subject is on channel 1, it receives **no direct light from the room**. With a fixed rig intensity the subject reads **darker/greyer/beige** than in the level whenever the room's lights are brighter than the rig — only warm Lumen bounce remains on the surface. A fixed constant can never be right for every room, so the rig is calibrated at focus time:
+
+1. `MeasureWorldIlluminanceAt()` measures the direct illuminance (lux, per RGB channel) the room's channel-0 lights deliver at the mesh's **original booth position** (captured before clearance relocation — that is the appearance being reproduced):
+   - **Directional lights** count at their lux intensity only when unoccluded (an indoor booth normally excludes the sun via the line trace).
+   - **Point / spot / rect lights** count when within attenuation range and with line of sight, converted to candelas via their configured units (`GetUnitsConversionFactor`), with inverse-square + UE's radial-window falloff, spot-cone falloff and rect hemisphere/cosine emission respected. A hit on the light's own fixture mesh does not count as occlusion.
+   - The **hidden source booth's own display lights** (if any) still count — they lit the product in the level.
+2. The key intensity (candelas) is solved so key + fill together deliver the measured lux at the pivot: `Key/dK² + (Key·FillRatio)/dF² = TargetLux`.
+3. The rig color is the lux-weighted combined color of the contributing lights (normalized), multiplied by the config's `Light Color Tint` — so a warm-lit room previews warm, exactly like the level.
+
+Approximations (documented, intentional): IES profiles and rect barn doors are ignored; target lux is clamped to 20 000, key to 100 000 cd. Fallback: when **Match Level Lighting** is off, or nothing measurable reaches the booth (purely emissive-/sky-lit rooms), the manual **Key Light Intensity** (candelas) is used, as before. Both rig lights run in explicit **candela** units so behaviour does not depend on the project's default light-unit setting.
 
 ### 4.3 What preserves material parity
 
@@ -77,10 +90,11 @@ Both are **shadowless by design** (evenness requirement). Because they hang off 
 |---|---|---|
 | Environment reflection | Lumen reflecting the **intact real room** | Yes — same mechanism, same scene |
 | Ambient / bounce | Lumen GI from the real room | Yes |
-| Direct speculars | Camera-relative soft rig | **Deliberately different** — even instead of directional |
+| Direct light **amount & color** | Rig calibrated to the measured level illuminance (§4.2b) | Yes — same lux and combined light color as at the booth |
+| Direct light **direction** | Camera-relative soft rig | **Deliberately different** — even instead of directional |
 | Exposure / bloom / grading | The level's own PostProcessVolume | Yes |
 
-The single intentional departure is direct speculars — and that departure *is* requirement 3. As the mesh rotates, the room's reflection slides across glossy surfaces realistically, while no shadowed light ever crosses it.
+The single intentional departure is direct light *direction* — and that departure *is* requirement 3. As the mesh rotates, the room's reflection slides across glossy surfaces realistically, while no shadowed light ever crosses it. The *amount* of direct light, however, is matched to the level (§4.2b): without that, the subject reads darker/greyer than in the level because channel separation removes all direct world light.
 
 Preview meshes have `SetCastShadow(false)`: they are lit only by the shadowless rig, so their own shadow casting would produce artifacts against channel-0 world lighting.
 
@@ -195,8 +209,10 @@ Available for **Cabinet, Closet, Countertop, Sink, Faucet, Mirror**.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| **Key Light Intensity** | `800` | Main rig light intensity. `0` = subject lit by room GI only. |
-| **Light Color Tint** | White | Tint for both rig lights. Neutral white preserves PBR material colour. |
+| **Match Level Lighting (Auto)** | `true` | Calibrates rig intensity & color to the measured level illuminance at the booth (§4.2b). Recommended. |
+| **Level Match Intensity Scale** | `1.0` | Fine-tune multiplier on the matched brightness (`1` = exact match). Only active while matching is on. |
+| **Key Light Intensity (Manual, cd)** | `800` | Manual candela fallback — used only when matching is off or measures no light. `0` = subject lit by room GI only. |
+| **Light Color Tint** | White | Tint for both rig lights (multiplies the matched level color when matching is on). Neutral white preserves PBR material colour. |
 | **Fill Intensity Ratio** | `0.4` | Wrap-fill intensity as a fraction of the key. `0` = key only. |
 | **Source Width (cm)** | `100` | Key source width. Larger = softer, broader speculars. |
 | **Source Height (cm)** | `120` | Key source height. |
@@ -275,7 +291,9 @@ Verified manually in PIE (approved):
 6. **A third stencil-keyed post-process material** added to the level volume in future would need adding to `Post Process Materials To Suspend`.
 7. **`Content/` is per-machine.** `BP_FurniturePreviewActor` must be checked on the second workstation: the removed settings will be gone from the Details panel and the new ones will show defaults. Re-save the Blueprint there. `Entry View Yaw Offset` may need setting per component on that machine too.
 8. **Lighting channels and Lumen**: channel filtering applies to *direct* lighting. Lumen GI/reflections intentionally still reach the subject — that is the mechanism providing material parity, not a leak.
+9. **Level-match calibration is analytic, not rendered** (§4.2b). It ignores IES profiles and rect barn doors, and treats a light as fully occluded or fully visible (one line trace). For rooms lit almost entirely by emissive materials or sky through windows it measures ~0 and falls back to the manual candela value — use `Camera Exposure Offset (EV)` or the manual intensity there. `Level Match Intensity Scale` fine-tunes per component if a room measures slightly bright/dark.
 
 ---
 
-*Document Version: 1.0.0 — Viewmode / Furniture Preview System, awsTutorial*
+*Document Version: 1.1.0 — Viewmode / Furniture Preview System, awsTutorial*
+*(1.1.0: level-match rig calibration — rig brightness/color now measured from the room's real lights)*

@@ -3,6 +3,7 @@
 #include "ColorCatalog/ColorCatalogWidget.h"
 #include "ColorCatalog/ColorCatalogSubsystem.h"
 #include "ColorCatalog/ColorCatalogItemObject.h"
+#include "ColorCatalog/ColorCatalogSwatchWidget.h"
 #include "awsTutorial_PlayerController.h"
 #include "Components/TileView.h"
 #include "Components/EditableTextBox.h"
@@ -83,7 +84,12 @@ void UColorCatalogWidget::NativeConstruct()
 		TileView_Swatches->OnItemClicked().AddUObject(this, &UColorCatalogWidget::OnTileViewEntryClicked);
 	}
 
+	CurrentCatalogType = DefaultCatalogType;
+	CurrentCategory = DefaultCategory;
+
 	BindCategoryButtons();
+	UpdateTabButtonStyles();
+	UpdateCategoryButtonStyles();
 	RefreshGrid();
 }
 
@@ -97,16 +103,75 @@ void UColorCatalogWidget::SetParentCallingWidget(UUserWidget* InParentWidget)
 	ParentCallingWidget = InParentWidget;
 }
 
+void UColorCatalogWidget::SetTabColors(FLinearColor InActiveColor, FLinearColor InInactiveColor)
+{
+	ActiveTabColor = InActiveColor;
+	InactiveTabColor = InInactiveColor;
+	UpdateTabButtonStyles();
+}
+
 void UColorCatalogWidget::SetCatalogType(EColorCatalogType NewCatalogType)
 {
 	CurrentCatalogType = NewCatalogType;
+	UpdateTabButtonStyles();
 	RefreshGrid();
 }
 
 void UColorCatalogWidget::SetActiveCategory(EColorShadeCategory NewCategory)
 {
 	CurrentCategory = NewCategory;
+	UpdateCategoryButtonStyles();
 	RefreshGrid();
+}
+
+void UColorCatalogWidget::UpdateTabButtonStyles()
+{
+	bool bIsRAL = (CurrentCatalogType == EColorCatalogType::RAL);
+
+	if (Button_RAL)
+	{
+		Button_RAL->SetBackgroundColor(bIsRAL ? ActiveTabColor : InactiveTabColor);
+	}
+
+	if (Button_NCS)
+	{
+		Button_NCS->SetBackgroundColor(!bIsRAL ? ActiveTabColor : InactiveTabColor);
+	}
+}
+
+void UColorCatalogWidget::UpdateCategoryButtonStyles()
+{
+	TArray<TPair<UButton*, EColorShadeCategory>> CatButtons = {
+		{ Button_CategoryAll,     EColorShadeCategory::All },
+		{ Button_CategoryRed,     EColorShadeCategory::Red },
+		{ Button_CategoryOrange,  EColorShadeCategory::Orange },
+		{ Button_CategoryYellow,  EColorShadeCategory::Yellow },
+		{ Button_CategoryGreen,   EColorShadeCategory::Green },
+		{ Button_CategoryBlue,    EColorShadeCategory::Blue },
+		{ Button_CategoryViolet,  EColorShadeCategory::Violet },
+		{ Button_CategoryGrey,    EColorShadeCategory::Grey },
+		{ Button_CategoryWhite,   EColorShadeCategory::White },
+		{ Button_CategoryBrown,   EColorShadeCategory::Brown },
+		{ Button_CategoryBeige,   EColorShadeCategory::Beige },
+		{ Button_CategoryBlack,   EColorShadeCategory::Black },
+		{ Button_CategoryNeutral, EColorShadeCategory::Neutral }
+	};
+
+	for (const auto& Pair : CatButtons)
+	{
+		if (UButton* Btn = Pair.Key)
+		{
+			bool bIsSelected = (Pair.Value == CurrentCategory);
+			Btn->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+			float Scale = bIsSelected ? ActiveCategoryScale : InactiveCategoryScale;
+			Btn->SetRenderScale(FVector2D(Scale, Scale));
+
+			if (Pair.Value == EColorShadeCategory::All)
+			{
+				Btn->SetBackgroundColor(bIsSelected ? ActiveCategoryAllColor : InactiveCategoryAllColor);
+			}
+		}
+	}
 }
 
 void UColorCatalogWidget::OnSearchTextChanged(const FText& NewText)
@@ -171,12 +236,69 @@ void UColorCatalogWidget::RefreshGrid()
 
 	TArray<FColorCatalogItem> FilteredItems = ColorSubsystem->FilterColors(CurrentCatalogType, CurrentCategory, CurrentSearchQuery);
 
+	// Check if current active selection is in the filtered list
+	bool bFoundActive = false;
+	if (bHasActiveSelection)
+	{
+		for (const FColorCatalogItem& ItemData : FilteredItems)
+		{
+			if (ActiveSelectedColorItem.Code.Equals(ItemData.Code, ESearchCase::IgnoreCase))
+			{
+				bFoundActive = true;
+				break;
+			}
+		}
+	}
+
+	// Default selection: if no active selection exists in this list, select the 1st shade by default!
+	if (!bFoundActive && FilteredItems.Num() > 0)
+	{
+		ActiveSelectedColorItem = FilteredItems[0];
+		bHasActiveSelection = true;
+
+		if (Text_ActiveColor)
+		{
+			FString ActiveLabelStr = FString::Printf(TEXT("Активный цвет: %s"), *ActiveSelectedColorItem.Code);
+			Text_ActiveColor->SetText(FText::FromString(ActiveLabelStr));
+		}
+
+		BroadcastColorSelected(ActiveSelectedColorItem.Color, OverrideMaterial);
+	}
+
+	UColorCatalogItemObject* DefaultSelectedObj = nullptr;
+
 	for (const FColorCatalogItem& ItemData : FilteredItems)
 	{
 		UColorCatalogItemObject* ItemObj = NewObject<UColorCatalogItemObject>(this);
 		bool bIsSelected = (bHasActiveSelection && ActiveSelectedColorItem.Code.Equals(ItemData.Code, ESearchCase::IgnoreCase));
 		ItemObj->Init(ItemData, bIsSelected);
 		TileView_Swatches->AddItem(ItemObj);
+
+		if (bIsSelected)
+		{
+			DefaultSelectedObj = ItemObj;
+		}
+	}
+
+	if (DefaultSelectedObj)
+	{
+		TileView_Swatches->SetSelectedItem(DefaultSelectedObj);
+	}
+
+	for (UObject* ListObj : TileView_Swatches->GetListItems())
+	{
+		if (UColorCatalogItemObject* SwatchObj = Cast<UColorCatalogItemObject>(ListObj))
+		{
+			if (UUserWidget* EntryWidget = TileView_Swatches->GetEntryWidgetFromItem(SwatchObj))
+			{
+				if (UColorCatalogSwatchWidget* SwatchWidget = Cast<UColorCatalogSwatchWidget>(EntryWidget))
+				{
+					SwatchWidget->ActiveScale = ActiveSwatchScale;
+					SwatchWidget->InactiveScale = InactiveSwatchScale;
+					SwatchWidget->RefreshDisplay();
+				}
+			}
+		}
 	}
 }
 
@@ -190,8 +312,30 @@ void UColorCatalogWidget::OnTileViewEntryClicked(UObject* Item)
 
 	if (Text_ActiveColor)
 	{
-		FString ActiveLabelStr = FString::Printf(TEXT("Активный: %s"), *ActiveSelectedColorItem.Code);
+		FString ActiveLabelStr = FString::Printf(TEXT("Активный цвет: %s"), *ActiveSelectedColorItem.Code);
 		Text_ActiveColor->SetText(FText::FromString(ActiveLabelStr));
+	}
+
+	if (TileView_Swatches)
+	{
+		TileView_Swatches->SetSelectedItem(ItemObj);
+
+		for (UObject* ListObj : TileView_Swatches->GetListItems())
+		{
+			if (UColorCatalogItemObject* SwatchObj = Cast<UColorCatalogItemObject>(ListObj))
+			{
+				SwatchObj->bIsSelected = (SwatchObj->ColorItem.Code.Equals(ActiveSelectedColorItem.Code, ESearchCase::IgnoreCase));
+				if (UUserWidget* EntryWidget = TileView_Swatches->GetEntryWidgetFromItem(SwatchObj))
+				{
+					if (UColorCatalogSwatchWidget* SwatchWidget = Cast<UColorCatalogSwatchWidget>(EntryWidget))
+					{
+						SwatchWidget->ActiveScale = ActiveSwatchScale;
+						SwatchWidget->InactiveScale = InactiveSwatchScale;
+						SwatchWidget->RefreshDisplay();
+					}
+				}
+			}
+		}
 	}
 
 	// Live Preview on target mesh

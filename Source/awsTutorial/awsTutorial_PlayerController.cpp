@@ -15,6 +15,7 @@
 #include "EngineUtils.h"
 #include "Engine/PostProcessVolume.h"
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetTree.h"
 #include "FurnitureConfigurator/UI/ConfiguratorMainWidget.h"
 #include "FurnitureConfigurator/UI/ViewmodeOverlayWidget.h"
 #include "Framework/Application/SlateApplication.h"
@@ -55,10 +56,10 @@ AAwsTutorial_PlayerController::AAwsTutorial_PlayerController()
     PixelStreamingInput = CreateDefaultSubobject<UPixelStreamingInput>(TEXT("PixelStreamingInputComponent"));
 }
 
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// SendDiag_PC вЂ” sends a DIAG diagnostic string to the browser via PS data channel.
+// ─────────────────────────────────────────────────────────────────────────────
+// SendDiag_PC — sends a DIAG diagnostic string to the browser via PS data channel.
 // Works in Shipping builds (no UE_LOG dependency for browser visibility).
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// ─────────────────────────────────────────────────────────────────────────────
 static void SendDiag_PC(UPixelStreamingInput* PSInput, const FString& Message)
 {
     if (!PSInput)
@@ -80,20 +81,20 @@ void AAwsTutorial_PlayerController::BeginPlay()
     if (IsLocalController())
     {
         ARoomPlannerManager::GetOrCreateInstance(GetWorld());
-        // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ─────────────────────────────────────────────────────────────
         // FIX 2 APPLIED: No CreateDefaultSubobject (removed from ctor).
         //
         // The PS plugin attaches UPixelStreamingInput to this controller ONLY
         // when a browser connects via WebRTC. This happens AFTER BeginPlay on
-        // a persistent server вЂ” so GetComponentByClass may return null here.
+        // a persistent server — so GetComponentByClass may return null here.
         //
         // Strategy:
         //   1. Try once in BeginPlay (handles pre-connected / single-session builds).
         //   2. If not found, PlayerTick retries every tick until it is found.
         //      AddUniqueDynamic prevents duplicate bindings (the old per-tick scan
         //      used plain AddDynamic, which stacked duplicates every tick and caused
-        //      the PS handshake to process messages twice в†’ kickbacks).
-        // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        //      the PS handshake to process messages twice → kickbacks).
+        // ─────────────────────────────────────────────────────────────
         if (!PixelStreamingInput)
         {
             PixelStreamingInput = GetComponentByClass<UPixelStreamingInput>();
@@ -109,15 +110,15 @@ void AAwsTutorial_PlayerController::BeginPlay()
 
             SendDiag_PC(PixelStreamingInput,
                 TEXT("[PC] BeginPlay OK"
-                     " | FIX1: shader-pipeline Fast-batch removed вЂ” no game-thread stall"
+                     " | FIX1: shader-pipeline Fast-batch removed — no game-thread stall"
                      " | FIX2: PS component bound in BeginPlay via GetComponentByClass"
                      " | Level transition should be < 5 s now."));
         }
         else
         {
-            // Component not yet attached вЂ” PlayerTick will retry once per tick.
+            // Component not yet attached — PlayerTick will retry once per tick.
             UE_LOG(LogTemp, Warning,
-                TEXT("[awsTutorial|PC] PS Input NOT found in BeginPlay вЂ” will retry in PlayerTick."));
+                TEXT("[awsTutorial|PC] PS Input NOT found in BeginPlay — will retry in PlayerTick."));
         }
 
         // Force Epic quality scalability settings to prevent virtual server fallbacks
@@ -131,7 +132,7 @@ void AAwsTutorial_PlayerController::BeginPlay()
                 GameUserSettings->ApplySettings(false);
 
                 SendDiag_PC(PixelStreamingInput,
-                    TEXT("[PC] Scalability set to Epic (3) вЂ” quality override applied."));
+                    TEXT("[PC] Scalability set to Epic (3) — quality override applied."));
             }
         }
         else
@@ -147,17 +148,8 @@ void AAwsTutorial_PlayerController::BeginPlay()
         bEnableClickEvents = true;
         bEnableMouseOverEvents = true;
 
-        if (RoomPlannerClass && !RoomPlannerInstance)
-        {
-            RoomPlannerInstance = CreateWidget<UUserWidget>(this, RoomPlannerClass);
-            if (RoomPlannerInstance)
-            {
-                RoomPlannerInstance->AddToViewport();
-            }
-        }
-
         UE_LOG(LogTemp, Warning,
-            TEXT("[awsTutorial|PC] ===== BeginPlay END вЂ” input mode set, cursor enabled. ====="));
+            TEXT("[awsTutorial|PC] ===== BeginPlay END — input mode set, cursor enabled. ====="));
     }
 }
 
@@ -165,12 +157,48 @@ static bool IsWidgetHoveredGeometrically(UUserWidget* Widget)
 {
     if (!Widget || !Widget->IsInViewport()) return false;
 
-    if (Widget->IsHovered()) return true;
-
     if (FSlateApplication::IsInitialized())
     {
-        FGeometry WidgetGeo = Widget->GetCachedGeometry();
         FVector2D CursorPos = FSlateApplication::Get().GetCursorPos();
+
+        // If it's a ConfiguratorMainWidget, check if the mouse is hovering its interactive panel/children
+        if (UConfiguratorMainWidget* CfgWidget = Cast<UConfiguratorMainWidget>(Widget))
+        {
+            bool bChildHovered = false;
+            if (CfgWidget->WidgetTree)
+            {
+                CfgWidget->WidgetTree->ForEachWidget([&](UWidget* Child)
+                {
+                    if (bChildHovered || !Child) return;
+                    if (Child == CfgWidget->GetRootWidget()) return;
+
+                    if (Child->GetVisibility() == ESlateVisibility::Visible ||
+                        Child->GetVisibility() == ESlateVisibility::HitTestInvisible ||
+                        Child->GetVisibility() == ESlateVisibility::SelfHitTestInvisible)
+                    {
+                        TSharedPtr<SWidget> CachedSWidget = Child->GetCachedWidget();
+                        if (CachedSWidget.IsValid())
+                        {
+                            FGeometry ChildGeo = CachedSWidget->GetTickSpaceGeometry();
+                            FVector2D LocalPos = ChildGeo.AbsoluteToLocal(CursorPos);
+                            FVector2D LocalSize = ChildGeo.GetLocalSize();
+                            if (LocalSize.X > 0.f && LocalSize.Y > 0.f &&
+                                LocalSize.X < 900.f && // Exclude full-width root containers
+                                LocalPos.X >= 0.f && LocalPos.X <= LocalSize.X &&
+                                LocalPos.Y >= 0.f && LocalPos.Y <= LocalSize.Y)
+                            {
+                                bChildHovered = true;
+                            }
+                        }
+                    }
+                });
+            }
+            return bChildHovered;
+        }
+
+        if (Widget->IsHovered()) return true;
+
+        FGeometry WidgetGeo = Widget->GetCachedGeometry();
         FVector2D LocalPos = WidgetGeo.AbsoluteToLocal(CursorPos);
         FVector2D LocalSize = WidgetGeo.GetLocalSize();
 
@@ -1070,7 +1098,7 @@ bool AAwsTutorial_PlayerController::TraceFurnitureComponent(AShowroomBooth*& Out
     {
         return false;
     }
-    if (MainWidgetInstance && MainWidgetInstance->IsInViewport())
+    if (IsWidgetHoveredGeometrically(MainWidgetInstance))
     {
         return false;
     }

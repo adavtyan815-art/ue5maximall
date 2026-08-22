@@ -1,4 +1,4 @@
-﻿// Copyright 2026 MaxiMall. All Rights Reserved.
+// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #include "FurnitureConfigurator/UI/RoomPlannerWidget.h"
 #include "Constructor/RoomPlannerManager.h"
@@ -27,6 +27,23 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnToggleCeiling) { BtnToggleCeiling->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnToggleCeilingClicked); }
 	if (Btn_ToggleCeiling) { Btn_ToggleCeiling->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnToggleCeilingClicked); }
 	if (BtnCeiling) { BtnCeiling->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnToggleCeilingClicked); }
+	if (BtnClose) { BtnClose->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCloseClicked); }
+	if (BtnBack) { BtnBack->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCloseClicked); }
+
+	// Set descriptive tooltips on tools and actions
+	if (Btn2DView) Btn2DView->SetToolTipText(FText::FromString(TEXT("2D Вид: Режим черчения стен")));
+	if (Btn_2DView) Btn_2DView->SetToolTipText(FText::FromString(TEXT("2D Вид: Режим черчения стен")));
+	if (Btn3DView) Btn3DView->SetToolTipText(FText::FromString(TEXT("3D Вид: Осмотр созданной комнаты")));
+	if (Btn_3DView) Btn_3DView->SetToolTipText(FText::FromString(TEXT("3D Вид: Осмотр созданной комнаты")));
+	if (BtnPresetRoom) BtnPresetRoom->SetToolTipText(FText::FromString(TEXT("Построить готовую квадратную комнату 4х4 метра")));
+	if (BtnClearLayout) BtnClearLayout->SetToolTipText(FText::FromString(TEXT("Очистить все стены и проёмы")));
+	if (BtnToggleCeiling) BtnToggleCeiling->SetToolTipText(FText::FromString(TEXT("Включить / скрыть потолок в 3D виде")));
+	if (Btn_ToggleCeiling) Btn_ToggleCeiling->SetToolTipText(FText::FromString(TEXT("Включить / скрыть потолок в 3D виде")));
+	if (BtnCeiling) BtnCeiling->SetToolTipText(FText::FromString(TEXT("Включить / скрыть потолок в 3D виде")));
+	if (BtnAddDoor) BtnAddDoor->SetToolTipText(FText::FromString(TEXT("Добавить дверь на выбранную стену")));
+	if (BtnAddWindow) BtnAddWindow->SetToolTipText(FText::FromString(TEXT("Добавить окно на выбранную стену")));
+	if (BtnClose) BtnClose->SetToolTipText(FText::FromString(TEXT("Закрыть планировщик")));
+	if (BtnBack) BtnBack->SetToolTipText(FText::FromString(TEXT("Назад")));
 
 	if (EditableTxtOpeningWidth) { EditableTxtOpeningWidth->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnOpeningWidthCommitted); }
 	if (EditableTxtOpeningHeight) { EditableTxtOpeningHeight->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnOpeningHeightCommitted); }
@@ -45,6 +62,10 @@ void URoomPlannerWidget::NativeConstruct()
 
 	if (BtnApplyProperties) { BtnApplyProperties->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnApplyPropertiesClicked); }
 
+	// Automatically enter 2D Top-Down Drawing Mode on open
+	SetViewMode(ERoomPlannerViewMode::View2D);
+	SetToolMode(EPlannerToolMode::DrawWall);
+
 	// Initialize UI state
 	UpdateViewModeButtonStyles();
 	UpdateDynamicPropertiesPanel();
@@ -52,6 +73,20 @@ void URoomPlannerWidget::NativeConstruct()
 	UpdateSummaryStatsUI();
 	UpdateToolModeButtonStyles();
 	UpdateViewModeButtonStyles();
+}
+
+void URoomPlannerWidget::NativeDestruct()
+{
+	if (PlannerManager)
+	{
+		PlannerManager->OnInteractiveWallDragProgress.RemoveAll(this);
+		PlannerManager->OnWallSelected.RemoveAll(this);
+		PlannerManager->OnRoomPlannerUpdated.RemoveAll(this);
+
+		PlannerManager->SetViewMode(false);
+	}
+
+	Super::NativeDestruct();
 }
 
 void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -109,6 +144,8 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 		if (EditableTxtOpeningWidth_1) EditableTxtOpeningWidth_1->SetVisibility(DoorWinVis);
 		if (EditableTxtOpeningHeight_1) EditableTxtOpeningHeight_1->SetVisibility(DoorWinVis);
 		if (EditableTxtOpeningSillHeight) EditableTxtOpeningSillHeight->SetVisibility(DoorWinVis);
+
+		UpdateGuidanceHintText();
 	}
 }
 
@@ -122,6 +159,7 @@ void URoomPlannerWidget::SetViewMode(ERoomPlannerViewMode NewMode)
 	}
 	UpdateViewModeButtonStyles();
 	UpdateDynamicPropertiesPanel();
+	UpdateGuidanceHintText();
 }
 
 void URoomPlannerWidget::SetToolMode(EPlannerToolMode NewToolMode)
@@ -131,6 +169,7 @@ void URoomPlannerWidget::SetToolMode(EPlannerToolMode NewToolMode)
 		PlannerManager->SetToolMode(NewToolMode);
 	}
 	UpdateToolModeButtonStyles();
+	UpdateGuidanceHintText();
 }
 
 void URoomPlannerWidget::UpdateToolModeButtonStyles()
@@ -149,14 +188,26 @@ void URoomPlannerWidget::UpdateToolModeButtonStyles()
 		if (PlannerManager && PlannerManager->GetWallCount() == 0)
 		{
 			BtnSelectTool->SetBackgroundColor(FLinearColor(0.05f, 0.05f, 0.05f, 1.0f)); // Visually disabled
+			BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Инструмент недоступен: пока нет построенных стен")));
 		}
 		else
 		{
 			BtnSelectTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Select ? ActiveColor : InactiveColor);
+			BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Выделение: кликните стену или проём для редактирования")));
 		}
 	}
-	if (BtnDrawWallTool) BtnDrawWallTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::DrawWall ? ActiveColor : InactiveColor);
-	if (BtnDeleteTool) BtnDeleteTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Erase ? ActiveColor : InactiveColor);
+	if (BtnDrawWallTool)
+	{
+		BtnDrawWallTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::DrawWall ? ActiveColor : InactiveColor);
+		BtnDrawWallTool->SetToolTipText(FText::FromString(TEXT("Инструмент 'Стена': зажмите и тяните ЛКМ на плане")));
+	}
+	if (BtnDeleteTool)
+	{
+		BtnDeleteTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Erase ? ActiveColor : InactiveColor);
+		BtnDeleteTool->SetToolTipText(FText::FromString(TEXT("Удалить выбранный элемент или войти в режим удаления")));
+	}
+
+	UpdateGuidanceHintText();
 }
 
 void URoomPlannerWidget::UpdateViewModeButtonStyles()
@@ -182,19 +233,77 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 	if (BtnPresetRoom) BtnPresetRoom->SetVisibility(ToolsVis);
 	if (Image_1) Image_1->SetVisibility(ToolsVis);
 
-	if (TxtGuidanceHint)
+	UpdateGuidanceHintText();
+}
+
+void URoomPlannerWidget::UpdateGuidanceHintText()
+{
+	if (!TxtGuidanceHint)
 	{
-		if (bIs2D)
+		return;
+	}
+
+	if (CurrentViewMode == ERoomPlannerViewMode::View3D)
+	{
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("3D Просмотр: Удерживайте ПКМ для вращения камеры • Колесо мыши для зума • Кликните '2D Вид' для редактирования")));
+		return;
+	}
+
+	if (!PlannerManager)
+	{
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("2D Режим: Зажмите и тяните ЛКМ для создания стены")));
+		return;
+	}
+
+	if (PlannerManager->IsWallDrawingActive())
+	{
+		if (bIsAngleSnapped)
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("2D Режим: Нажмите и тяните ЛКМ для создания стены")));
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Привязка активна. Отпустите ЛКМ для фиксации/стыковки стены")));
 		}
 		else
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("3D Просмотр:\n• Удерживайте ПКМ для вращения камеры\n• Колесо мыши для масштабирования")));
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Тяните стену до нужной длины. Отпустите ЛКМ, чтобы зафиксировать")));
 		}
+		return;
 	}
-	
-	// BtnSelectTool is handled by NativeTick, but we can also force it here
+
+	switch (PlannerManager->ActiveToolMode)
+	{
+	case EPlannerToolMode::DrawWall:
+		if (PlannerManager->GetWallCount() == 0)
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или выберите пресет 4х4 м")));
+		}
+		else
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите и тяните ЛКМ для создания стены. Подведите к существующему углу для соединения")));
+		}
+		break;
+
+	case EPlannerToolMode::Select:
+		if (PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Проём выбран: зажмите ЛКМ и двигайте вдоль стены для перемещения, или настройте размеры справа")));
+		}
+		else if (PlannerManager->SelectedSegmentID != -1)
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Стена выбрана: измените длину в панели справа, добавьте дверь/окно или нажмите Delete для удаления")));
+		}
+		else
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Кликните по любой стене или двери/окну, чтобы настроить их параметры")));
+		}
+		break;
+
+	case EPlannerToolMode::Erase:
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("Режим удаления: Кликните по любой стене, чтобы удалить её")));
+		break;
+
+	default:
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("2D Режим: Нажмите и тяните ЛКМ для создания стены")));
+		break;
+	}
 }
 
 AAwsTutorial_PlayerController* URoomPlannerWidget::GetPreviewController() const
@@ -278,9 +387,20 @@ void URoomPlannerWidget::OnPresetRoomClicked() { BuildPreset4x4mRoom(); }
 void URoomPlannerWidget::OnClearLayoutClicked() { ClearLayout(); }
 void URoomPlannerWidget::OnToggleCeilingClicked() { if (PlannerManager) PlannerManager->ToggleCeilingVisibility(); UpdateViewModeButtonStyles(); }
 
+void URoomPlannerWidget::ClosePlanner()
+{
+	RemoveFromParent();
+}
+
+void URoomPlannerWidget::OnCloseClicked()
+{
+	ClosePlanner();
+}
+
 void URoomPlannerWidget::OnWallSelected(int32 SegmentID, float LengthMeters)
 {
 	UpdateDynamicPropertiesPanel();
+	UpdateGuidanceHintText();
 
 	// Update creation tool fields with some defaults if they are empty
 	if (EditableTxtOpeningWidth && EditableTxtOpeningWidth->GetText().IsEmpty()) EditableTxtOpeningWidth->SetText(FText::FromString(TEXT("90")));
@@ -543,6 +663,7 @@ void URoomPlannerWidget::HandleWallDragProgress(float LengthMeters, FVector Midp
 	}
 
 	UpdateSummaryStatsUI();
+	UpdateGuidanceHintText();
 	OnWallDragProgress(LengthMeters, MidpointWorld, AngleDeg, bIsSnapped);
 }
 

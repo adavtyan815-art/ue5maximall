@@ -12,6 +12,12 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/OverlapResult.h"
 #include "Components/RectLightComponent.h"
+#include "Components/LightComponent.h"
+#include "Components/LocalLightComponent.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Components/SpotLightComponent.h"
+#include "Engine/Scene.h"                 // ELightUnits
+#include "UObject/UObjectIterator.h"
 #include "CollisionQueryParams.h"
 #include "EngineUtils.h"
 #include "Engine/PostProcessVolume.h"
@@ -120,6 +126,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     auto InitRigLight = [](URectLightComponent* Light)
     {
         Light->SetMobility(EComponentMobility::Movable);
+        Light->IntensityUnits = ELightUnits::Candelas; // rig math is in candelas
         Light->SetIntensity(0.f);                 // configured on focus
         Light->SetLightColor(FLinearColor::White);
         Light->AttenuationRadius = 800.f;
@@ -128,6 +135,9 @@ AFurniturePreviewActor::AFurniturePreviewActor()
         Light->SetVisibility(false);              // shown only during active preview
         Light->LightingChannels.bChannel0 = false;
         Light->LightingChannels.bChannel1 = true; // subject-only
+        // The rig may run at thousands of candelas after level-match calibration;
+        // it must light ONLY the subject, never bleed into the room's Lumen GI.
+        Light->IndirectLightingIntensity = 0.f;
     };
 
     PreviewKeyLight = CreateDefaultSubobject<URectLightComponent>(TEXT("PreviewKeyLight"));
@@ -219,6 +229,165 @@ void AFurniturePreviewActor::RestoreClearanceHiddenComponents()
         }
     }
     WIP_CachedHiddenWallComponents.Empty();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MeasureWorldIlluminanceAt — level-match light calibration
+//
+// The preview subject (channel 1) receives no direct light from the room, so the
+// rig must deliver the same direct illuminance the room's channel-0 lights would
+// have delivered at the mesh's booth position - otherwise the subject reads
+// darker/greyer than in the level. This measures that illuminance analytically.
+// Runs once per SetFocusComponent; one line trace per candidate light.
+// ─────────────────────────────────────────────────────────────────────────────
+float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoint,
+                                                        FLinearColor& OutLightColor) const
+{
+    OutLightColor = FLinearColor::White;
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return 0.f;
+    }
+
+    FCollisionQueryParams TraceParams(FName(TEXT("PreviewLightCalibration")), /*bTraceComplex*/ false);
+    TraceParams.AddIgnoredActor(this);
+    if (WIP_CachedSourceBooth.IsValid())
+    {
+        TraceParams.AddIgnoredActor(WIP_CachedSourceBooth.Get());
+    }
+    if (ACharacter* Char = UGameplayStatics::GetPlayerCharacter(World, 0))
+    {
+        TraceParams.AddIgnoredActor(Char);
+    }
+
+    // Per-channel accumulation: a light's color scales its output, so summing
+    // Color * lux and driving the rig with (normalized color, max channel) makes
+    // the rig reproduce the per-channel total exactly.
+    FLinearColor LuxRGB(0.f, 0.f, 0.f, 0.f);
+
+    for (TObjectIterator<ULightComponent> It; It; ++It)
+    {
+        ULightComponent* Light = *It;
+        if (!IsValid(Light) || Light->IsTemplate() || Light->GetWorld() != World)
+        {
+            continue;
+        }
+        if (!Light->IsRegistered() || !Light->IsVisible() || !Light->bAffectsWorld)
+        {
+            continue;
+        }
+        // Only WORLD lights (channel 0). This also excludes the preview rig itself.
+        if (!Light->LightingChannels.bChannel0)
+        {
+            continue;
+        }
+        AActor* LightOwner = Light->GetOwner();
+        if (!LightOwner || LightOwner == this)
+        {
+            continue;
+        }
+        // Hidden actors' lights do not illuminate - EXCEPT the source booth's own
+        // display lights (the preview itself hides the booth): they lit the product
+        // in the level, so the rig must reproduce their contribution too.
+        if (LightOwner->IsHidden() && LightOwner != WIP_CachedSourceBooth.Get())
+        {
+            continue;
+        }
+
+        FLinearColor Color = Light->GetLightColor();
+        if (Light->bUseTemperature)
+        {
+            Color *= FLinearColor::MakeFromColorTemperature(Light->Temperature);
+        }
+
+        float Lux = 0.f;
+        if (const UDirectionalLightComponent* Dir = Cast<UDirectionalLightComponent>(Light))
+        {
+            // Directional intensity is already in lux. Count it only with a clear
+            // path to the sky - an occluded sun (the normal indoor case) did not
+            // light the booth in the level and must not brighten the preview.
+            const FVector TowardSun = -Dir->GetDirection();
+            FHitResult Hit;
+            const bool bBlocked = World->LineTraceSingleByChannel(
+                Hit, WorldPoint, WorldPoint + TowardSun * 100000.f, ECC_Visibility, TraceParams);
+            if (!bBlocked)
+            {
+                Lux = Dir->Intensity;
+            }
+        }
+        else if (const ULocalLightComponent* Local = Cast<ULocalLightComponent>(Light))
+        {
+            const FVector LightPos = Local->GetComponentLocation();
+            const float   DistCm   = FVector::Dist(WorldPoint, LightPos);
+            const float   Radius   = Local->AttenuationRadius;
+            if (DistCm >= Radius || DistCm < 1.f)
+            {
+                continue;
+            }
+
+            // Angular falloff per light shape. Approximation: IES profiles and
+            // rect barn doors ignored - this is a calibration, not a render.
+            float CosHalfCone    = -1.f; // lumens->candelas solid angle (spot only)
+            float AngularFalloff = 1.f;
+            const FVector DirToPoint = (WorldPoint - LightPos) / DistCm;
+            if (const USpotLightComponent* Spot = Cast<USpotLightComponent>(Light))
+            {
+                const float CosOuter = FMath::Cos(FMath::DegreesToRadians(Spot->OuterConeAngle));
+                const float CosInner = FMath::Cos(FMath::DegreesToRadians(Spot->InnerConeAngle));
+                const float CosDir   = float(FVector::DotProduct(Spot->GetDirection(), DirToPoint));
+                if (CosDir <= CosOuter)
+                {
+                    continue; // outside the cone
+                }
+                AngularFalloff = FMath::Square(FMath::Clamp(
+                    (CosDir - CosOuter) / FMath::Max(CosInner - CosOuter, 1e-4f), 0.f, 1.f));
+                CosHalfCone = CosOuter;
+            }
+            else if (const URectLightComponent* Rect = Cast<URectLightComponent>(Light))
+            {
+                // Rect lights emit into their forward hemisphere, ~cosine distribution.
+                const float CosDir = float(FVector::DotProduct(Rect->GetForwardVector(), DirToPoint));
+                if (CosDir <= 0.f)
+                {
+                    continue; // behind the panel
+                }
+                AngularFalloff = CosDir;
+            }
+
+            // Line of sight: a light that could not reach the booth in the level
+            // (other room, behind a divider) must not brighten the preview either.
+            // A hit on the light's own fixture mesh (lamp housing) does not count
+            // as occlusion.
+            FHitResult Hit;
+            const bool bBlocked = World->LineTraceSingleByChannel(
+                Hit, WorldPoint, LightPos, ECC_Visibility, TraceParams);
+            if (bBlocked && Hit.GetActor() != LightOwner)
+            {
+                continue;
+            }
+
+            const float Candelas = Local->Intensity * ULocalLightComponent::GetUnitsConversionFactor(
+                Local->IntensityUnits, ELightUnits::Candelas, CosHalfCone);
+            const float DistM  = DistCm / 100.f;
+            // UE's radial attenuation window: (1 - (d/r)^4)^2 on top of inverse-square.
+            const float Window = FMath::Square(1.f - FMath::Min(1.f, FMath::Pow(DistCm / Radius, 4.f)));
+            Lux = (Candelas / FMath::Max(DistM * DistM, 0.0025f)) * AngularFalloff * Window;
+        }
+
+        if (Lux > 0.f)
+        {
+            LuxRGB += Color * Lux;
+        }
+    }
+
+    const float MaxChannel = FMath::Max3(LuxRGB.R, LuxRGB.G, LuxRGB.B);
+    if (MaxChannel > KINDA_SMALL_NUMBER)
+    {
+        OutLightColor = FLinearColor(LuxRGB.R / MaxChannel, LuxRGB.G / MaxChannel,
+                                     LuxRGB.B / MaxChannel, 1.f);
+    }
+    return MaxChannel;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -675,6 +844,11 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
     // ── 6. Compute focus pivot and swept radius ───────────────────────────
     FVector FocusPivot = WIP_GetFocusPivotWorld();
+
+    // Original (booth) pivot: the position whose level lighting the rig must
+    // reproduce (step 10). Captured BEFORE the clearance relocation below - the
+    // reference appearance the user compares against is the mesh AT the booth.
+    const FVector CalibrationPivot = FocusPivot;
     float MeshRadius = 80.f;
     if (IsValid(TargetComp) && TargetComp->GetStaticMesh())
     {
@@ -783,9 +957,8 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // (evenness requirement), so nearby walls cannot block or shadow the rig.
     if (IsValid(PreviewKeyLight) && IsValid(PreviewFillLight))
     {
-        const float KeyIntensity   = Config ? Config->PreviewKeyIntensity        : 800.f;
         const float FillMult       = Config ? Config->FillRimMultiplier          : 0.4f;
-        const FLinearColor LColor  = Config ? Config->LightColor                 : FLinearColor::White;
+        const FLinearColor Tint    = Config ? Config->LightColor                 : FLinearColor::White;
         const float SrcW           = Config ? Config->LightSourceWidth           : 100.f;
         const float SrcH           = Config ? Config->LightSourceHeight          : 120.f;
         const float RigOffset      = Config ? Config->KeyLightOffset             : 200.f;
@@ -793,26 +966,60 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
         // Soft key: camera side, raised and offset left of the view axis, aimed at
         // the pivot. Large source area = broad gentle speculars, not hard glints.
-        const FVector KeyLoc(-RigOffset, -RigOffset * 0.45f, RigOffset * 0.55f);
+        // Wrap fill: opposite side, slightly below, so the far side of the subject
+        // never reads as a dark half while it rotates.
+        const FVector KeyLoc (-RigOffset,        -RigOffset * 0.45f,  RigOffset * 0.55f);
+        const FVector FillLoc( RigOffset * 0.8f,  RigOffset * 0.5f,  -RigOffset * 0.15f);
+
+        // ── Level-match calibration ──────────────────────────────────────
+        // The subject is on channel 1, so it receives NO direct light from the
+        // room; with a fixed rig intensity it reads darker/greyer than in the
+        // level whenever the room's lights are brighter than the rig (only warm
+        // Lumen bounce remains). Measure the direct illuminance (and combined
+        // color) the room's lights deliver at the mesh's original booth position
+        // and size the rig so the subject receives the same amount -
+        // level-accurate brightness in every room, no per-room tuning. Manual
+        // candela fallback when matching is off or nothing measurable reaches
+        // the booth (purely emissive- or sky-lit rooms).
+        float        KeyIntensity = Config ? Config->PreviewKeyIntensity : 800.f; // candelas
+        FLinearColor RigColor     = Tint;
+        if (!Config || Config->bMatchLevelLighting)
+        {
+            FLinearColor LevelColor = FLinearColor::White;
+            const float  LevelLux   = MeasureWorldIlluminanceAt(CalibrationPivot, LevelColor);
+            if (LevelLux > 1.f)
+            {
+                const float Scale     = Config ? Config->LevelMatchIntensityScale : 1.f;
+                const float TargetLux = FMath::Clamp(LevelLux * Scale, 0.f, 20000.f);
+                const float DistKeyM  = FMath::Max(KeyLoc.Size()  / 100.f, 0.5f);
+                const float DistFillM = FMath::Max(FillLoc.Size() / 100.f, 0.5f);
+                // Key and fill together must reproduce TargetLux at the pivot:
+                //   Key/dK^2 + (Key * FillMult)/dF^2 = TargetLux   (candelas, meters)
+                KeyIntensity = FMath::Clamp(
+                    TargetLux / (1.f / (DistKeyM * DistKeyM) + FillMult / (DistFillM * DistFillM)),
+                    0.f, 100000.f);
+                RigColor = LevelColor * Tint; // componentwise; Tint defaults to white
+            }
+        }
+
         PreviewKeyLight->SetRelativeLocation(KeyLoc);
         PreviewKeyLight->SetRelativeRotation((-KeyLoc).Rotation());
         PreviewKeyLight->AttenuationRadius = AttenuRadius;
+        PreviewKeyLight->SetIntensityUnits(ELightUnits::Candelas);
         PreviewKeyLight->SetIntensity(KeyIntensity);
-        PreviewKeyLight->SetLightColor(LColor);
+        PreviewKeyLight->SetLightColor(RigColor);
         PreviewKeyLight->SourceWidth  = SrcW;
         PreviewKeyLight->SourceHeight = SrcH;
         PreviewKeyLight->SetCastShadows(false);
         PreviewKeyLight->MarkRenderStateDirty();
         PreviewKeyLight->SetVisibility(KeyIntensity > 0.f);
 
-        // Wrap fill: opposite side, slightly below, so the far side of the subject
-        // never reads as a dark half while it rotates.
-        const FVector FillLoc(RigOffset * 0.8f, RigOffset * 0.5f, -RigOffset * 0.15f);
         PreviewFillLight->SetRelativeLocation(FillLoc);
         PreviewFillLight->SetRelativeRotation((-FillLoc).Rotation());
         PreviewFillLight->AttenuationRadius = AttenuRadius;
+        PreviewFillLight->SetIntensityUnits(ELightUnits::Candelas);
         PreviewFillLight->SetIntensity(KeyIntensity * FillMult);
-        PreviewFillLight->SetLightColor(LColor);
+        PreviewFillLight->SetLightColor(RigColor);
         PreviewFillLight->SourceWidth  = SrcW * 1.5f;
         PreviewFillLight->SourceHeight = SrcH * 1.5f;
         PreviewFillLight->SetCastShadows(false);
