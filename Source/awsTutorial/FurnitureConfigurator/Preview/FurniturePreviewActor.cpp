@@ -241,9 +241,6 @@ void AFurniturePreviewActor::RestoreClearanceHiddenComponents()
 // Runs once per SetFocusComponent; one line trace per candidate light.
 // ─────────────────────────────────────────────────────────────────────────────
 float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoint,
-                                                        const FBox& SubjectBox,
-                                                        const FVector& ToCameraDir,
-                                                        const FVector& ToKeyLightDir,
                                                         FLinearColor& OutLightColor) const
 {
     OutLightColor = FLinearColor::White;
@@ -252,57 +249,6 @@ float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoin
     {
         return 0.f;
     }
-
-    // ── Entry-view face weighting ─────────────────────────────────────────
-    // Point illuminance alone overexposes components whose visible surfaces face
-    // AWAY from the room's lights: a ceiling light delivers its full lux to a
-    // countertop's horizontal top face (cos ~ 1) but almost nothing to a cabinet
-    // front or faucet wall plate (cos ~ 0) - in the level those verticals are
-    // GI-lit and read dark. So every light is weighted by the cosine-law
-    // irradiance it puts on the faces the user actually SEES at entry:
-    // the subject's bounding-box faces, each weighted by its projected area
-    // toward the entry camera.
-    const FVector FaceNormals[6] =
-    {
-        FVector( 1, 0, 0), FVector(-1, 0, 0),
-        FVector( 0, 1, 0), FVector( 0,-1, 0),
-        FVector( 0, 0, 1), FVector( 0, 0,-1)
-    };
-    const FVector Ext = SubjectBox.GetExtent().ComponentMax(FVector(1.f));
-    const float FaceAreas[6] =
-    {
-        float(Ext.Y * Ext.Z), float(Ext.Y * Ext.Z),
-        float(Ext.X * Ext.Z), float(Ext.X * Ext.Z),
-        float(Ext.X * Ext.Y), float(Ext.X * Ext.Y)
-    };
-    float VisibleWeight[6];
-    float VisibleWeightSum = 0.f;
-    for (int32 i = 0; i < 6; ++i)
-    {
-        VisibleWeight[i] = FaceAreas[i] *
-            FMath::Max(0.f, float(FVector::DotProduct(FaceNormals[i], ToCameraDir)));
-        VisibleWeightSum += VisibleWeight[i];
-    }
-    // Visible-face-averaged cosine of light arriving from TowardLight (unit, surface->light).
-    auto FaceFactor = [&VisibleWeight, &VisibleWeightSum, &FaceNormals](const FVector& TowardLight) -> float
-    {
-        if (VisibleWeightSum <= KINDA_SMALL_NUMBER)
-        {
-            return 1.f;
-        }
-        float Sum = 0.f;
-        for (int32 i = 0; i < 6; ++i)
-        {
-            Sum += VisibleWeight[i] *
-                FMath::Max(0.f, float(FVector::DotProduct(FaceNormals[i], TowardLight)));
-        }
-        return Sum / VisibleWeightSum;
-    };
-    // The rig delivers cosine-law light to those same faces from the key
-    // direction; normalizing by its factor keeps the returned value in
-    // "rig-delivery lux" terms, so a direct-lit case (countertop under a ceiling
-    // light) calibrates to the same brightness as with plain point lux.
-    const float RigFaceFactor = FMath::Clamp(FaceFactor(ToKeyLightDir), 0.2f, 1.f);
 
     FCollisionQueryParams TraceParams(FName(TEXT("PreviewLightCalibration")), /*bTraceComplex*/ false);
     TraceParams.AddIgnoredActor(this);
@@ -319,6 +265,13 @@ float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoin
     // Color * lux and driving the rig with (normalized color, max channel) makes
     // the rig reproduce the per-channel total exactly.
     FLinearColor LuxRGB(0.f, 0.f, 0.f, 0.f);
+
+    // Calibration diagnostics: every considered light logs what the measurement
+    // saw, so a wrong-looking preview can be diagnosed from data in the Output
+    // Log ("[PreviewCalib]") instead of inference. Lights outside their
+    // attenuation radius are not logged (unambiguous, and there may be many).
+    UE_LOG(LogTemp, Log, TEXT("[PreviewCalib] --- measuring level illuminance at %s ---"),
+           *WorldPoint.ToCompactString());
 
     for (TObjectIterator<ULightComponent> It; It; ++It)
     {
@@ -367,7 +320,17 @@ float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoin
                 Hit, WorldPoint, WorldPoint + TowardSun * 100000.f, ECC_Visibility, TraceParams);
             if (!bBlocked)
             {
-                Lux = Dir->Intensity * FaceFactor(TowardSun);
+                Lux = Dir->Intensity;
+                UE_LOG(LogTemp, Log,
+                       TEXT("[PreviewCalib]   ADD dir '%s' (owner '%s'): %.1f lux (unoccluded sun!), color %s"),
+                       *Light->GetName(), *LightOwner->GetName(), Lux, *Color.ToString());
+            }
+            else
+            {
+                UE_LOG(LogTemp, Log,
+                       TEXT("[PreviewCalib]   SKIP dir '%s' (owner '%s'): sun occluded by '%s' (%.1f lux not counted)"),
+                       *Light->GetName(), *LightOwner->GetName(),
+                       Hit.GetActor() ? *Hit.GetActor()->GetName() : TEXT("?"), Dir->Intensity);
             }
         }
         else if (const ULocalLightComponent* Local = Cast<ULocalLightComponent>(Light))
@@ -392,6 +355,9 @@ float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoin
                 const float CosDir   = float(FVector::DotProduct(Spot->GetDirection(), DirToPoint));
                 if (CosDir <= CosOuter)
                 {
+                    UE_LOG(LogTemp, Log,
+                           TEXT("[PreviewCalib]   SKIP spot '%s' (owner '%s'): outside cone (dist %.0f cm)"),
+                           *Light->GetName(), *LightOwner->GetName(), DistCm);
                     continue; // outside the cone
                 }
                 AngularFalloff = FMath::Square(FMath::Clamp(
@@ -404,6 +370,9 @@ float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoin
                 const float CosDir = float(FVector::DotProduct(Rect->GetForwardVector(), DirToPoint));
                 if (CosDir <= 0.f)
                 {
+                    UE_LOG(LogTemp, Log,
+                           TEXT("[PreviewCalib]   SKIP rect '%s' (owner '%s'): point behind panel (dist %.0f cm)"),
+                           *Light->GetName(), *LightOwner->GetName(), DistCm);
                     continue; // behind the panel
                 }
                 AngularFalloff = CosDir;
@@ -418,6 +387,10 @@ float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoin
                 Hit, WorldPoint, LightPos, ECC_Visibility, TraceParams);
             if (bBlocked && Hit.GetActor() != LightOwner)
             {
+                UE_LOG(LogTemp, Log,
+                       TEXT("[PreviewCalib]   SKIP %s '%s' (owner '%s'): occluded by '%s' (dist %.0f cm)"),
+                       *Light->GetClass()->GetName(), *Light->GetName(), *LightOwner->GetName(),
+                       Hit.GetActor() ? *Hit.GetActor()->GetName() : TEXT("?"), DistCm);
                 continue;
             }
 
@@ -426,11 +399,14 @@ float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoin
             const float DistM  = DistCm / 100.f;
             // UE's radial attenuation window: (1 - (d/r)^4)^2 on top of inverse-square.
             const float Window = FMath::Square(1.f - FMath::Min(1.f, FMath::Pow(DistCm / Radius, 4.f)));
-            // Distance floor 0.5 m: a fixture right next to the pivot (booth strip,
-            // wall sconce by the faucet) lights a small SPOT in the level, not the
-            // whole subject - unbounded inverse-square would blow the rig out.
-            Lux = (Candelas / FMath::Max(DistM * DistM, 0.25f)) * AngularFalloff * Window
-                * FaceFactor(-DirToPoint); // -DirToPoint = surface -> light
+            Lux = (Candelas / FMath::Max(DistM * DistM, 0.0025f)) * AngularFalloff * Window;
+
+            UE_LOG(LogTemp, Log,
+                   TEXT("[PreviewCalib]   ADD %s '%s' (owner '%s'): %.1f lux  [%.1f cd raw %.1f @ %s units, dist %.0f cm, angular %.2f, window %.2f, color %s]"),
+                   *Light->GetClass()->GetName(), *Light->GetName(), *LightOwner->GetName(),
+                   Lux, Candelas, Local->Intensity,
+                   *UEnum::GetValueAsString(Local->IntensityUnits),
+                   DistCm, AngularFalloff, Window, *Color.ToString());
         }
 
         if (Lux > 0.f)
@@ -445,7 +421,10 @@ float AFurniturePreviewActor::MeasureWorldIlluminanceAt(const FVector& WorldPoin
         OutLightColor = FLinearColor(LuxRGB.R / MaxChannel, LuxRGB.G / MaxChannel,
                                      LuxRGB.B / MaxChannel, 1.f);
     }
-    return MaxChannel / RigFaceFactor;
+    UE_LOG(LogTemp, Log,
+           TEXT("[PreviewCalib]   TOTAL: %.1f lux (max RGB channel), combined color %s"),
+           MaxChannel, *OutLightColor.ToString());
+    return MaxChannel;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1036,39 +1015,53 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         // Lumen bounce remains). Measure the direct illuminance (and combined
         // color) the room's lights deliver at the mesh's original booth position
         // and size the rig so the subject receives the same amount -
-        // level-accurate brightness in every room, no per-room tuning. Manual
-        // candela fallback when matching is off or nothing measurable reaches
-        // the booth (purely emissive- or sky-lit rooms).
+        // level-accurate brightness in every room, no per-room tuning.
+        //
+        // The measurement is used UNCONDITIONALLY - including a result of ~0.
+        // In GI/sky-lit rooms the direct component really is near zero and the
+        // subject is already correctly lit by Lumen GI alone (GI ignores
+        // lighting channels), so the correct rig there is OFF. An earlier
+        // revision substituted the manual intensity below a 1-lux threshold,
+        // which is what split the components: Countertop measured 1.0 lux ->
+        // 3.8 cd rig -> correct; Cabinet measured 0.9 lux -> fell under the
+        // gate -> 800 cd manual -> wrong. The manual candela value applies
+        // ONLY when matching is disabled.
         float        KeyIntensity = Config ? Config->PreviewKeyIntensity : 800.f; // candelas
         FLinearColor RigColor     = Tint;
+        float        MeasuredLux  = -1.f; // diagnostics: -1 = matching disabled
         if (!Config || Config->bMatchLevelLighting)
         {
-            // Geometry for the entry-view face weighting (see the function docs):
-            // the subject's bounds, the direction toward the entry camera, and the
-            // world-space direction from the subject toward the rig key light.
-            const FBox SubjectBox = IsValid(CurrentFocusedComponent)
-                ? CurrentFocusedComponent->Bounds.GetBox()
-                : FBox(CalibrationPivot - FVector(50.f), CalibrationPivot + FVector(50.f));
-            const FVector ToCam = -WIP_InitialOrbitRot.Vector();
-            const FVector ToKey = WIP_InitialOrbitRot.RotateVector(KeyLoc).GetSafeNormal();
+            UE_LOG(LogTemp, Log,
+                   TEXT("[PreviewCalib] === focus %s: comp '%s', boundsR %.0f cm, pivot(booth) %s, pivot(final) %s ==="),
+                   *UEnum::GetValueAsString(TargetType),
+                   IsValid(CurrentFocusedComponent) ? *CurrentFocusedComponent->GetName() : TEXT("none"),
+                   WIP_MeshBoundsRadius,
+                   *CalibrationPivot.ToCompactString(),
+                   *WIP_FocusPivotWorld.ToCompactString());
 
             FLinearColor LevelColor = FLinearColor::White;
-            const float  LevelLux   = MeasureWorldIlluminanceAt(CalibrationPivot, SubjectBox,
-                                                                ToCam, ToKey, LevelColor);
-            if (LevelLux > 1.f)
-            {
-                const float Scale     = Config ? Config->LevelMatchIntensityScale : 1.f;
-                const float TargetLux = FMath::Clamp(LevelLux * Scale, 0.f, 20000.f);
-                const float DistKeyM  = FMath::Max(KeyLoc.Size()  / 100.f, 0.5f);
-                const float DistFillM = FMath::Max(FillLoc.Size() / 100.f, 0.5f);
-                // Key and fill together must reproduce TargetLux at the pivot:
-                //   Key/dK^2 + (Key * FillMult)/dF^2 = TargetLux   (candelas, meters)
-                KeyIntensity = FMath::Clamp(
-                    TargetLux / (1.f / (DistKeyM * DistKeyM) + FillMult / (DistFillM * DistFillM)),
-                    0.f, 100000.f);
-                RigColor = LevelColor * Tint; // componentwise; Tint defaults to white
-            }
+            const float  LevelLux   = MeasureWorldIlluminanceAt(CalibrationPivot, LevelColor);
+            MeasuredLux = LevelLux;
+
+            const float Scale     = Config ? Config->LevelMatchIntensityScale : 1.f;
+            const float TargetLux = FMath::Clamp(LevelLux * Scale, 0.f, 20000.f);
+            const float DistKeyM  = FMath::Max(KeyLoc.Size()  / 100.f, 0.5f);
+            const float DistFillM = FMath::Max(FillLoc.Size() / 100.f, 0.5f);
+            // Key and fill together must reproduce TargetLux at the pivot:
+            //   Key/dK^2 + (Key * FillMult)/dF^2 = TargetLux   (candelas, meters)
+            KeyIntensity = FMath::Clamp(
+                TargetLux / (1.f / (DistKeyM * DistKeyM) + FillMult / (DistFillM * DistFillM)),
+                0.f, 100000.f);
+            RigColor = LevelColor * Tint; // componentwise; Tint defaults to white
         }
+        UE_LOG(LogTemp, Log,
+               TEXT("[PreviewCalib] RESULT %s: measured %.1f lux -> key %.1f cd + fill %.1f cd (ratio %.2f, rig offset %.0f cm), rig color %s, scale %.2f, expEV %+.2f%s"),
+               *UEnum::GetValueAsString(TargetType),
+               MeasuredLux, KeyIntensity, KeyIntensity * FillMult, FillMult, RigOffset,
+               *RigColor.ToString(),
+               Config ? Config->LevelMatchIntensityScale : 1.f,
+               Config ? Config->ExposureCompensation : 0.f,
+               MeasuredLux < 0.f ? TEXT("  [matching disabled: manual intensity]") : TEXT(""));
 
         PreviewKeyLight->SetRelativeLocation(KeyLoc);
         PreviewKeyLight->SetRelativeRotation((-KeyLoc).Rotation());

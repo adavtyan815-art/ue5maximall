@@ -76,15 +76,13 @@ Both are **shadowless by design** (evenness requirement). Because they hang off 
 Because the subject is on channel 1, it receives **no direct light from the room**. With a fixed rig intensity the subject reads **darker/greyer/beige** than in the level whenever the room's lights are brighter than the rig — only warm Lumen bounce remains on the surface. A fixed constant can never be right for every room, so the rig is calibrated at focus time:
 
 1. `MeasureWorldIlluminanceAt()` measures the direct illuminance (lux, per RGB channel) the room's channel-0 lights deliver at the mesh's **original booth position** (captured before clearance relocation — that is the appearance being reproduced):
-   - **Entry-view face weighting**: every light is weighted by the cosine-law irradiance it puts on the faces the user actually *sees* at entry (bounding-box face proxy, projected-area-weighted toward the entry camera), normalized by the rig's own delivery factor. Point lux alone would overexpose components whose visible faces point away from the room's lights: a ceiling light delivers full lux to a countertop's top face but almost nothing to a cabinet front or faucet wall plate — those verticals are GI-lit and dark in the level, and must stay that way in the preview.
-   - **Distance floor 0.5 m** on inverse-square: a fixture right next to the pivot lights a small spot in the level, not the whole subject.
    - **Directional lights** count at their lux intensity only when unoccluded (an indoor booth normally excludes the sun via the line trace).
    - **Point / spot / rect lights** count when within attenuation range and with line of sight, converted to candelas via their configured units (`GetUnitsConversionFactor`), with inverse-square + UE's radial-window falloff, spot-cone falloff and rect hemisphere/cosine emission respected. A hit on the light's own fixture mesh does not count as occlusion.
    - The **hidden source booth's own display lights** (if any) still count — they lit the product in the level.
 2. The key intensity (candelas) is solved so key + fill together deliver the measured lux at the pivot: `Key/dK² + (Key·FillRatio)/dF² = TargetLux`.
 3. The rig color is the lux-weighted combined color of the contributing lights (normalized), multiplied by the config's `Light Color Tint` — so a warm-lit room previews warm, exactly like the level.
 
-Approximations (documented, intentional): IES profiles and rect barn doors are ignored; target lux is clamped to 20 000, key to 100 000 cd. Fallback: when **Match Level Lighting** is off, or nothing measurable reaches the booth (purely emissive-/sky-lit rooms), the manual **Key Light Intensity** (candelas) is used, as before. Both rig lights run in explicit **candela** units so behaviour does not depend on the project's default light-unit setting.
+Approximations (documented, intentional): IES profiles and rect barn doors are ignored; target lux is clamped to 20 000, key to 100 000 cd. The measurement is used **unconditionally, including a result of ~0 lux**: in GI/sky-lit rooms the direct component genuinely is near zero, the subject is already correctly lit by Lumen GI alone (GI ignores lighting channels), and the correct rig is *off*. An earlier revision substituted the manual intensity below a 1-lux threshold — that is exactly what split the components (Countertop 1.0 lux → 3.8 cd → correct; Cabinet 0.9 lux → 800 cd fallback → wrong). The manual **Key Light Intensity** (candelas) applies **only when Match Level Lighting is off**. Both rig lights run in explicit **candela** units so behaviour does not depend on the project's default light-unit setting. Every calibration logs `[PreviewCalib]` lines (per-light ADD/SKIP with reason, totals, chosen rig values) to the Output Log for diagnosis.
 
 ### 4.3 What preserves material parity
 
@@ -213,7 +211,7 @@ Available for **Cabinet, Closet, Countertop, Sink, Faucet, Mirror**.
 |---|---|---|
 | **Match Level Lighting (Auto)** | `true` | Calibrates rig intensity & color to the measured level illuminance at the booth (§4.2b). Recommended. |
 | **Level Match Intensity Scale** | `1.0` | Fine-tune multiplier on the matched brightness (`1` = exact match). Only active while matching is on. |
-| **Key Light Intensity (Manual, cd)** | `800` | Manual candela fallback — used only when matching is off or measures no light. `0` = subject lit by room GI only. |
+| **Key Light Intensity (Manual, cd)** | `800` | Manual candela value — used **only when matching is off** (never as a low-measurement fallback). `0` = subject lit by room GI only. |
 | **Light Color Tint** | White | Tint for both rig lights (multiplies the matched level color when matching is on). Neutral white preserves PBR material colour. |
 | **Fill Intensity Ratio** | `0.4` | Wrap-fill intensity as a fraction of the key. `0` = key only. |
 | **Source Width (cm)** | `100` | Key source width. Larger = softer, broader speculars. |
@@ -281,6 +279,11 @@ Verified manually in PIE (approved):
 - `M_PostProcessOutline` no longer tints the preview mesh, and Room Planner outlines still work after exiting Viewmode.
 - Consistent front-view entry orientation.
 
+Calibration diagnosis session (log-driven, PIE):
+
+- With calibration active, the Countertop was confirmed **correct from every angle** (the user's reference case) while the Cabinet read wrong. `[PreviewCalib]` Output Log lines pinned the cause: both measured ~1 lux in the GI-lit test room (its only direct light is an 8 cd rect light, sun occluded), but Countertop (1.0 lux) passed the then-existing `> 1 lux` gate → 3.8 cd rig ≈ off ≈ correct, while Cabinet (0.9 lux) fell under it → 800 cd manual fallback → wrong. Removing the gate (§4.2b) makes all six component types take the Countertop's proven path.
+- An interim revision that weighted the measurement by subject-face visibility (and a follow-up experiment normalizing by the rig's own face factor) was tested during this investigation and **reverted**: the log data showed the plain point-lux measurement was already correct and the fallback gate alone was the defect.
+
 ---
 
 ## 13. Limitations & Configuration Notes
@@ -293,9 +296,10 @@ Verified manually in PIE (approved):
 6. **A third stencil-keyed post-process material** added to the level volume in future would need adding to `Post Process Materials To Suspend`.
 7. **`Content/` is per-machine.** `BP_FurniturePreviewActor` must be checked on the second workstation: the removed settings will be gone from the Details panel and the new ones will show defaults. Re-save the Blueprint there. `Entry View Yaw Offset` may need setting per component on that machine too.
 8. **Lighting channels and Lumen**: channel filtering applies to *direct* lighting. Lumen GI/reflections intentionally still reach the subject — that is the mechanism providing material parity, not a leak.
-9. **Level-match calibration is analytic, not rendered** (§4.2b). It ignores IES profiles and rect barn doors, treats a light as fully occluded or fully visible (one line trace), and approximates the subject by its bounding box for the entry-view face weighting — concave shapes (a sink bowl) are represented coarsely. For rooms lit almost entirely by emissive materials or sky through windows it measures ~0 and falls back to the manual candela value — use `Camera Exposure Offset (EV)` or the manual intensity there. `Level Match Intensity Scale` fine-tunes per component if any component measures slightly bright/dark.
+9. **Level-match calibration is analytic, not rendered** (§4.2b). It ignores IES profiles and rect barn doors, and treats a light as fully occluded or fully visible (one line trace). A near-zero measurement is honoured, not replaced: in rooms lit almost entirely by GI, sky or emissive materials the rig correctly stays ~off and Lumen GI carries the subject. If such a room's subject needs a nudge, use `Camera Exposure Offset (EV)` or `Level Match Intensity Scale` — the manual candela value only applies with matching turned off.
 
 ---
 
-*Document Version: 1.1.0 — Viewmode / Furniture Preview System, awsTutorial*
+*Document Version: 1.2.0 — Viewmode / Furniture Preview System, awsTutorial*
 *(1.1.0: level-match rig calibration — rig brightness/color now measured from the room's real lights)*
+*(1.2.0: measurement honoured unconditionally — low-lux manual fallback removed after log-driven diagnosis (Countertop vs Cabinet); interim face-visibility weighting reverted; permanent `[PreviewCalib]` diagnostics added)*
