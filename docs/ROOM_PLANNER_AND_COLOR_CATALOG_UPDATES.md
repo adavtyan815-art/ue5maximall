@@ -1,73 +1,70 @@
-﻿# Room Planner, Multi-Mesh Inspection & Color Catalog Updates
+﻿# MaxiMall Feature Updates & Technical Changelog
 
 **Date:** 2026-08-22  
-**Author:** AI Pair Programmer / MaxiMall Engineering  
 **Target Branches:** 
 arek/current-dev, dev
 
 ---
 
-## 1. Room Planner Widget Lifecycle & Manual Control (URoomPlannerWidget)
+## Modified C++ Classes & Modules
 
-### Problem
-Previously, WBP_RoomPlannerWidget was automatically instantiated and added to the viewport inside AAwsTutorial_PlayerController::BeginPlay(), opening immediately on Play. Spawning it manually via Blueprints conflicted with controller initialization and camera blend logic.
-
-### Solution
-- **Removed Auto-Spawn:** Cleaned up BeginPlay() in wsTutorial_PlayerController.cpp to prevent automatic creation/viewport attachment.
-- **Blueprint Accessibility:** Changed RoomPlannerInstance in AAwsTutorial_PlayerController.h from BlueprintReadOnly to BlueprintReadWrite so Blueprints can manage widget instances cleanly.
-- **Self-Contained Lifecycle (NativeConstruct / NativeDestruct):**
-  - NativeConstruct(): Automatically triggers 2D Top-Down camera mode (SetViewMode(ERoomPlannerViewMode::View2D)), activates DrawWall tool, and binds BtnClose / BtnBack buttons to ClosePlanner().
-  - NativeDestruct() / ClosePlanner(): Unbinds all ARoomPlannerManager delegates, blends camera smoothly back behind CharPawn, restores player control rotation, and resets input mode to game defaults.
-
----
-
-## 2. Contextual Guidance Hint System (TxtGuidanceHint)
-
-### Overview
-Added dynamic, state-aware on-screen hints to guide users step-by-step through 2D drafting and 3D inspection.
-
-### Key Features
-- Bound safely via meta = (BindWidgetOptional) to TxtGuidanceHint in URoomPlannerWidget.
-- Contextual states supported:
-  1. **Empty 2D Canvas:** Prompts user to drag LMB for first wall or pick 4x4m preset.
-  2. **Wall Dragging:** Displays live wall length in meters and corner/angle snapping status.
-  3. **2D Draw Mode (Existing Walls):** Prompts user to drag for new wall or snap to existing corners.
-  4. **Select Mode (No selection):** Prompts user to click a wall or opening.
-  5. **Select Mode (Wall selected):** Instructions to edit length in panel, insert doors/windows, or delete.
-  6. **Select Mode (Opening selected):** Instructions to drag along wall to reposition, adjust dimensions, or delete.
-  7. **Erase Mode:** Prompts user to click any wall to delete it.
-  8. **3D View Mode:** Camera orbit (RMB), zoom (Scroll Wheel), and return to 2D instructions.
-- Added descriptive tooltips to all toolbar buttons.
+| C++ Class | Header File | Source File | Key Responsibilities & Changes |
+| :--- | :--- | :--- | :--- |
+| **AAwsTutorial_PlayerController** | Source/awsTutorial/awsTutorial_PlayerController.h | Source/awsTutorial/awsTutorial_PlayerController.cpp | Removed auto-spawning of Room Planner in BeginPlay(); unlocked multi-mesh interaction in TraceFurnitureComponent() while configurator UI is open; refined IsWidgetHoveredGeometrically() to sidebar bounds; exposed RoomPlannerInstance as BlueprintReadWrite. |
+| **URoomPlannerWidget** | Source/awsTutorial/FurnitureConfigurator/UI/RoomPlannerWidget.h | Source/awsTutorial/FurnitureConfigurator/UI/RoomPlannerWidget.cpp | Autonomous UI lifecycle (NativeConstruct / NativeDestruct); automated 2D Top-Down camera setup and smooth 3D camera restore; dynamic guidance hint engine (UpdateGuidanceHintText(), TxtGuidanceHint); toolbar tooltips. |
+| **UConfiguratorMainWidget** | Source/awsTutorial/FurnitureConfigurator/UI/ConfiguratorMainWidget.h | Source/awsTutorial/FurnitureConfigurator/UI/ConfiguratorMainWidget.cpp | Parent class for WBP_PreviewWindow; integrated seamless component re-initialization (SetupWidget) when switching between furniture elements (Sink, Mirror, Cabinet, Countertop). |
+| **UColorCatalogWidget** | Source/awsTutorial/ColorCatalog/ColorCatalogWidget.h | Source/awsTutorial/ColorCatalog/ColorCatalogWidget.cpp | Color catalog controller for RAL/NCS palettes; active tab styling (UpdateTabButtonStyles()); category orb scaling (UpdateCategoryButtonStyles(), ActiveCategoryScale = 1.25x); initial default selection (Red, RAL 3020); UMG Details styling properties. |
+| **UColorCatalogSwatchWidget** | Source/awsTutorial/ColorCatalog/ColorCatalogSwatchWidget.h | Source/awsTutorial/ColorCatalog/ColorCatalogSwatchWidget.cpp | Single color swatch item controller (WBP_ColorSwatchItem); uniform whole-item scaling on selection (ActiveScale = 1.20x, InactiveScale = 1.0x); automatic scale inheritance on spawn (NativeOnListItemObjectSet). |
+| **AFurniturePreviewActor** | Source/awsTutorial/FurnitureConfigurator/Preview/FurniturePreviewActor.h | Source/awsTutorial/FurnitureConfigurator/Preview/FurniturePreviewActor.cpp | Subject fill lighting rig with level-matching calibration (MatchLevelLighting, MeasureWorldIlluminanceAt) ensuring accurate lighting and PBR material representation across levels. |
 
 ---
 
-## 3. Multi-Mesh Right-Click Inspection (WBP_PreviewWindow)
+## 1. Room Planner Lifecycle & Manual Control
 
-### Problem
-When WBP_PreviewWindow was open, right-clicking other showroom booth meshes (e.g. Mirror, Countertop, Cabinet) did not work because TraceFurnitureComponent blocked all traces when MainWidgetInstance was in the viewport, and the full-screen canvas was treated as hovered across the entire screen.
-
-### Solution
-- **Trace Unlocked:** Removed the hard if (MainWidgetInstance && MainWidgetInstance->IsInViewport()) return false; check from TraceFurnitureComponent.
-- **Accurate Geometric Bounds:** Updated IsWidgetHoveredGeometrically to check only the active interactive child widgets of the left menu sidebar. Clicks over the 3D viewport area on the right pass straight through into 3D scene traces.
-- **Seamless Switching:** Right-clicking another mesh while the configurator is open updates MainWidgetInstance->SetupWidget(...) for the newly clicked component without closing/re-opening the UI or losing input locks. Movement and look input remain disabled (SetIgnoreMoveInput(true), SetIgnoreLookInput(true)).
+### Classes: AAwsTutorial_PlayerController, URoomPlannerWidget
+- **Removed Auto-Spawn:** BeginPlay() in AAwsTutorial_PlayerController no longer instantiates or displays WBP_RoomPlannerWidget on game startup.
+- **Blueprint Access:** RoomPlannerInstance changed to BlueprintReadWrite so Blueprints can instantiate, show, hide, or destroy the widget on demand.
+- **Autonomous Lifecycle:**
+  - URoomPlannerWidget::NativeConstruct() switches view mode to 2D Top-Down (SetViewMode(ERoomPlannerViewMode::View2D)), activates DrawWall tool, and binds close buttons.
+  - URoomPlannerWidget::NativeDestruct() / ClosePlanner() unbinds delegates, blends camera smoothly back to CharPawn, and restores player rotation and input.
 
 ---
 
-## 4. Color Catalog System (WBP_ColorCatalog & WBP_ColorCatalogSwatch)
+## 2. Dynamic Contextual Guidance Hint System
 
-### Key Improvements
-- **RAL vs NCS Tab Switcher (UpdateTabButtonStyles):**
-  - Active tab is highlighted with ActiveTabColor (default: #0A84FF Bright Accent Blue).
-  - Inactive tab is styled with InactiveTabColor (default: #111C2E Slate Navy).
-- **Color Category Grouping (UpdateCategoryButtonStyles):**
-  - Active category orb scales up cleanly (ActiveCategoryScale = 1.25x), centered at (0.5, 0.5).
-  - Default category on initial open is set to **Red** (DefaultCategory = EColorShadeCategory::Red).
-  - "Все" (All) button dynamically highlights in accent color when active and dark slate when inactive.
-- **Uniform Shade Scaling (WBP_ColorSwatchItem / UColorCatalogSwatchWidget):**
-  - Selected shade scales the entire swatch item (color box + text code) up to ActiveSwatchScale = 1.20x with center pivot.
-  - Default selection automatically selects and scales the first shade (RAL 3020) upon opening or switching category, eliminating initial layout jump on first click.
-- **Customizable Properties (Details Panel):**
+### Classes: URoomPlannerWidget
+- Bound via meta = (BindWidgetOptional) to TxtGuidanceHint.
+- UpdateGuidanceHintText() dynamically updates hints across 8 contextual states:
+  1. Empty 2D Canvas (draw first wall prompt).
+  2. Live wall drag (distance in meters, angle & corner snap status).
+  3. 2D Draw Mode with existing walls.
+  4. Select Mode without selection.
+  5. Select Mode with wall selected (length edit, add opening, delete).
+  6. Select Mode with opening selected (slide along wall, adjust dimensions, delete).
+  7. Erase Mode (click wall to delete).
+  8. 3D Inspection Mode (RMB orbit, zoom, return to 2D).
+- Descriptive tooltips added to all toolbar action buttons.
+
+---
+
+## 3. Multi-Mesh Right-Click Inspection
+
+### Classes: AAwsTutorial_PlayerController, UConfiguratorMainWidget
+- TraceFurnitureComponent() now operates freely even when MainWidgetInstance (WBP_PreviewWindow) is open in the viewport.
+- IsWidgetHoveredGeometrically() strictly checks the active left sidebar panel. Clicks in the 3D scene area pass through to line traces.
+- Right-clicking another mesh (e.g. Mirror, Countertop, Cabinet) reconfigures MainWidgetInstance->SetupWidget(...) for the target component without closing/reopening the widget. Look and movement inputs remain disabled during inspection.
+
+---
+
+## 4. Color Catalog (RAL & NCS System)
+
+### Classes: UColorCatalogWidget, UColorCatalogSwatchWidget
+- **RAL / NCS Switcher (UpdateTabButtonStyles):** Active tab styled with ActiveTabColor (#0A84FF), inactive styled with InactiveTabColor (#111C2E).
+- **Color Categories (UpdateCategoryButtonStyles):** Active category orb scales to ActiveCategoryScale = 1.25x (with Red active by default).
+- **Uniform Swatch Scaling:** The entire WBP_ColorSwatchItem (color box + text) scales up to ActiveSwatchScale = 1.20x upon selection.
+- **Default Selection:** First shade (RAL 3020) is selected by default on open and category switch, eliminating initial layout jumps.
+- **Customizable Properties:** Exposed in UColorCatalogWidget Details panel:
   - ActiveTabColor, InactiveTabColor, ActiveCategoryAllColor, InactiveCategoryAllColor
-  - ActiveCategoryScale (default 1.25), InactiveCategoryScale (default 1.0)
-  - ActiveSwatchScale (default 1.20), InactiveSwatchScale (default 1.0)
-  - DefaultCategory (default Red), DefaultCatalogType (default RAL)
+  - ActiveCategoryScale (1.25), InactiveCategoryScale (1.0)
+  - ActiveSwatchScale (1.20), InactiveSwatchScale (1.0)
+  - DefaultCategory (Red), DefaultCatalogType (RAL)
