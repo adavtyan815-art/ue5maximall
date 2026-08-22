@@ -442,11 +442,23 @@ private:
      *     hemisphere/cosine emission respected.
      *   - The hidden source booth's own display lights (if any) still count: they
      *     lit the product in the level and the rig must reproduce them.
+     * Every light is additionally weighted by the cosine-law irradiance it puts on
+     * the subject faces VISIBLE at entry (bounding-box face proxy, projected-area
+     * weighted toward the entry camera), normalized by the rig's own delivery
+     * factor. Without this, components whose visible faces point away from the
+     * room's lights (a cabinet front or faucet plate under a ceiling light — GI-lit
+     * and dark in the level) would be blasted head-on with the full point lux and
+     * read overexposed, while top-lit faces (countertop) calibrate correctly.
      * Returns the max RGB channel of the accumulated lux; OutLightColor receives
      * the lux-weighted combined light color (normalized, alpha 1). Approximation:
-     * IES profiles and barn doors are ignored.
+     * IES profiles and barn doors are ignored; the subject is approximated by its
+     * bounding box.
      */
-    float MeasureWorldIlluminanceAt(const FVector& WorldPoint, FLinearColor& OutLightColor) const;
+    float MeasureWorldIlluminanceAt(const FVector& WorldPoint,
+                                    const FBox& SubjectBox,
+                                    const FVector& ToCameraDir,
+                                    const FVector& ToKeyLightDir,
+                                    FLinearColor& OutLightColor) const;
 
     // ── Suspended post-process blendables ─────────────────────────────────
     // One removed volume-blendable entry, with everything needed to put it back.
