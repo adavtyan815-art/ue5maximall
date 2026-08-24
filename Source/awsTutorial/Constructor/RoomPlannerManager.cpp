@@ -1,4 +1,4 @@
-﻿// Copyright 2026 MaxiMall. All Rights Reserved.
+// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #include "Constructor/RoomPlannerManager.h"
 #include "Camera/CameraActor.h"
@@ -1483,7 +1483,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 
 				if (TopDownCameraActor)
 				{
-					PC->SetViewTargetWithBlend(TopDownCameraActor, 0.25f);
+					PC->SetViewTarget(TopDownCameraActor);
 				}
 
 				FInputModeGameAndUI InputMode;
@@ -1500,7 +1500,7 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 					PC->ResetIgnoreInputFlags();
 					PC->SetControlRotation(SavedControlRotation);
 					PC->SetIgnoreLookInput(false);
-					PC->SetViewTargetWithBlend(CharPawn, 0.3f);
+					PC->SetViewTarget(CharPawn);
 					
 					FInputModeGameAndUI InputMode;
 					InputMode.SetHideCursorDuringCapture(true);
