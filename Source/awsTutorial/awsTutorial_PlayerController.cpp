@@ -32,6 +32,7 @@
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "Constructor/RoomPlannerManager.h"
+#include "FurnitureConfigurator/UI/RoomPlannerWidget.h"
 
 AAwsTutorial_PlayerController::AAwsTutorial_PlayerController()
 {
@@ -1355,6 +1356,50 @@ void AAwsTutorial_PlayerController::ToggleConfiguratorUI(AShowroomBooth* Booth, 
                 StrongThis->bIsClosingUI = false;
             }
         });
+    }
+}
+
+void AAwsTutorial_PlayerController::ToggleRoomPlannerUI(bool bOpen)
+{
+    if (!IsLocalController())
+    {
+        return;
+    }
+
+    if (bOpen)
+    {
+        if (!RoomPlannerInstance && RoomPlannerClass)
+        {
+            RoomPlannerInstance = CreateWidget<UUserWidget>(this, RoomPlannerClass);
+        }
+
+        if (RoomPlannerInstance)
+        {
+            if (URoomPlannerWidget* PlannerWidget = Cast<URoomPlannerWidget>(RoomPlannerInstance))
+            {
+                PlannerWidget->PlannerRelocationLocation = RoomPlannerRelocationLocation;
+            }
+
+            if (!RoomPlannerInstance->IsInViewport())
+            {
+                RoomPlannerInstance->AddToViewport(10);
+            }
+        }
+    }
+    else
+    {
+        if (RoomPlannerInstance)
+        {
+            if (URoomPlannerWidget* PlannerWidget = Cast<URoomPlannerWidget>(RoomPlannerInstance))
+            {
+                PlannerWidget->ClosePlanner();
+            }
+            else
+            {
+                RoomPlannerInstance->RemoveFromParent();
+            }
+            RoomPlannerInstance = nullptr;
+        }
     }
 }
 

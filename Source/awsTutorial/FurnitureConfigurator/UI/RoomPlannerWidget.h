@@ -97,6 +97,27 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
 	bool bIsAngleSnapped = false;
 
+	// ── CONFIGURABLE CHARACTER RELOCATION ─────────────────────────────────
+	/** Configurable spawn/relocation location when Room Planner opens (Default: -10000, 0, 0). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner | Relocation Config", meta = (DisplayName = "Planner Relocation Location"))
+	FVector PlannerRelocationLocation = FVector(-10000.f, 0.f, 0.f);
+
+	/** Cached location of the character before opening the planner. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner | Relocation")
+	FVector CachedOriginalPlayerLocation = FVector::ZeroVector;
+
+	/** Cached rotation of the character before opening the planner. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner | Relocation")
+	FRotator CachedOriginalPlayerRotation = FRotator::ZeroRotator;
+
+	/** Cached control rotation of the player controller before opening the planner. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner | Relocation")
+	FRotator CachedOriginalControlRotation = FRotator::ZeroRotator;
+
+	/** True if original transform has been cached for restoration upon closing. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner | Relocation")
+	bool bHasCachedPlayerTransform = false;
+
 	// ── AUTOMATIC BIND WIDGETS (Matching UMG Designer Names) ───────────
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UButton> Btn2DView;

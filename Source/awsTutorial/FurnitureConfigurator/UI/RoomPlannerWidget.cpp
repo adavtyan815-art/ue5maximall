@@ -3,6 +3,8 @@
 #include "FurnitureConfigurator/UI/RoomPlannerWidget.h"
 #include "Constructor/RoomPlannerManager.h"
 #include "awsTutorial_PlayerController.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "Components/EditableTextBox.h"
@@ -12,6 +14,29 @@
 void URoomPlannerWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+
+	// ── RELOCATE CHARACTER TO PLANNER AREA ────────────────────────────────
+	if (UWorld* World = GetWorld())
+	{
+		ACharacter* CharPawn = UGameplayStatics::GetPlayerCharacter(World, 0);
+		AAwsTutorial_PlayerController* PC = GetPreviewController();
+		if (CharPawn)
+		{
+			CachedOriginalPlayerLocation = CharPawn->GetActorLocation();
+			CachedOriginalPlayerRotation = CharPawn->GetActorRotation();
+			CachedOriginalControlRotation = PC ? PC->GetControlRotation() : CharPawn->GetActorRotation();
+			bHasCachedPlayerTransform = true;
+
+			UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Relocating player to planner location: %s (Original was: %s)"),
+				*PlannerRelocationLocation.ToString(), *CachedOriginalPlayerLocation.ToString());
+
+			CharPawn->TeleportTo(PlannerRelocationLocation, FRotator::ZeroRotator, false, true);
+			if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
+			{
+				MoveComp->StopMovementImmediately();
+			}
+		}
+	}
 
 	if (Btn2DView) { Btn2DView->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::On2DViewClicked); }
 	if (Btn_2DView) { Btn_2DView->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::On2DViewClicked); }
@@ -84,6 +109,40 @@ void URoomPlannerWidget::NativeDestruct()
 		PlannerManager->OnRoomPlannerUpdated.RemoveAll(this);
 
 		PlannerManager->SetViewMode(false);
+	}
+
+	// ── RESTORE CHARACTER TO ORIGINAL LOCATION AND ORIENTATION ─────────────
+	if (bHasCachedPlayerTransform)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			ACharacter* CharPawn = UGameplayStatics::GetPlayerCharacter(World, 0);
+			AAwsTutorial_PlayerController* PC = GetPreviewController();
+			if (CharPawn)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Restoring player to original location: %s (Rot: %s)"),
+					*CachedOriginalPlayerLocation.ToString(), *CachedOriginalPlayerRotation.ToString());
+
+				CharPawn->TeleportTo(CachedOriginalPlayerLocation, CachedOriginalPlayerRotation, false, true);
+				if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
+				{
+					MoveComp->StopMovementImmediately();
+				}
+			}
+
+			if (PC)
+			{
+				PC->ResetIgnoreInputFlags();
+				PC->SetControlRotation(CachedOriginalControlRotation);
+				PC->SetIgnoreLookInput(false);
+				PC->SetIgnoreMoveInput(false);
+				if (CharPawn)
+				{
+					PC->SetViewTargetWithBlend(CharPawn, 0.3f);
+				}
+			}
+		}
+		bHasCachedPlayerTransform = false;
 	}
 
 	Super::NativeDestruct();
@@ -389,6 +448,39 @@ void URoomPlannerWidget::OnToggleCeilingClicked() { if (PlannerManager) PlannerM
 
 void URoomPlannerWidget::ClosePlanner()
 {
+	if (bHasCachedPlayerTransform)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			ACharacter* CharPawn = UGameplayStatics::GetPlayerCharacter(World, 0);
+			AAwsTutorial_PlayerController* PC = GetPreviewController();
+			if (CharPawn)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Restoring player to original location: %s (Rot: %s)"),
+					*CachedOriginalPlayerLocation.ToString(), *CachedOriginalPlayerRotation.ToString());
+
+				CharPawn->TeleportTo(CachedOriginalPlayerLocation, CachedOriginalPlayerRotation, false, true);
+				if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
+				{
+					MoveComp->StopMovementImmediately();
+				}
+			}
+
+			if (PC)
+			{
+				PC->ResetIgnoreInputFlags();
+				PC->SetControlRotation(CachedOriginalControlRotation);
+				PC->SetIgnoreLookInput(false);
+				PC->SetIgnoreMoveInput(false);
+				if (CharPawn)
+				{
+					PC->SetViewTargetWithBlend(CharPawn, 0.3f);
+				}
+			}
+		}
+		bHasCachedPlayerTransform = false;
+	}
+
 	RemoveFromParent();
 }
 
@@ -732,5 +824,18 @@ float URoomPlannerWidget::GetPerimeterLengthM() const
 		return PlannerManager->CalculatePerimeterM();
 	}
 	return 0.0f;
+}
+
+AAwsTutorial_PlayerController* URoomPlannerWidget::GetPreviewController() const
+{
+	if (APlayerController* PC = GetOwningPlayer())
+	{
+		return Cast<AAwsTutorial_PlayerController>(PC);
+	}
+	if (UWorld* World = GetWorld())
+	{
+		return Cast<AAwsTutorial_PlayerController>(UGameplayStatics::GetPlayerController(World, 0));
+	}
+	return nullptr;
 }
 

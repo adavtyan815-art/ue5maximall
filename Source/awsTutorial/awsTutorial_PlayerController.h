@@ -188,8 +188,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> ViewmodeOverlayInstance;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | RoomPlanner Config", meta = (DisplayName = "Planner Relocation Location"))
+    FVector RoomPlannerRelocationLocation = FVector(-10000.f, 0.f, 0.f);
+
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
+
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
+    void ToggleRoomPlannerUI(bool bOpen);
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | PixelStreaming", meta = (DisplayName = "Send Open URL to Browser"))
     void SendOpenURLToBrowser(const FString& URL);
