@@ -241,35 +241,6 @@ void UColorCatalogWidget::RefreshGrid()
 
 	TArray<FColorCatalogItem> FilteredItems = ColorSubsystem->FilterColors(CurrentCatalogType, CurrentCategory, CurrentSearchQuery);
 
-	// Check if current active selection is in the filtered list
-	bool bFoundActive = false;
-	if (bHasActiveSelection)
-	{
-		for (const FColorCatalogItem& ItemData : FilteredItems)
-		{
-			if (ActiveSelectedColorItem.Code.Equals(ItemData.Code, ESearchCase::IgnoreCase))
-			{
-				bFoundActive = true;
-				break;
-			}
-		}
-	}
-
-	// Default selection: if no active selection exists in this list, select the 1st shade by default!
-	if (!bFoundActive && FilteredItems.Num() > 0)
-	{
-		ActiveSelectedColorItem = FilteredItems[0];
-		bHasActiveSelection = true;
-
-		if (Text_ActiveColor)
-		{
-			FString ActiveLabelStr = FString::Printf(TEXT("Активный цвет: %s"), *ActiveSelectedColorItem.Code);
-			Text_ActiveColor->SetText(FText::FromString(ActiveLabelStr));
-		}
-
-		BroadcastColorSelected(ActiveSelectedColorItem.Color, OverrideMaterial);
-	}
-
 	UColorCatalogItemObject* DefaultSelectedObj = nullptr;
 
 	for (const FColorCatalogItem& ItemData : FilteredItems)
@@ -289,21 +260,9 @@ void UColorCatalogWidget::RefreshGrid()
 	{
 		TileView_Swatches->SetSelectedItem(DefaultSelectedObj);
 	}
-
-	for (UObject* ListObj : TileView_Swatches->GetListItems())
+	else
 	{
-		if (UColorCatalogItemObject* SwatchObj = Cast<UColorCatalogItemObject>(ListObj))
-		{
-			if (UUserWidget* EntryWidget = TileView_Swatches->GetEntryWidgetFromItem(SwatchObj))
-			{
-				if (UColorCatalogSwatchWidget* SwatchWidget = Cast<UColorCatalogSwatchWidget>(EntryWidget))
-				{
-					SwatchWidget->ActiveScale = ActiveSwatchScale;
-					SwatchWidget->InactiveScale = InactiveSwatchScale;
-					SwatchWidget->RefreshDisplay();
-				}
-			}
-		}
+		TileView_Swatches->ClearSelection();
 	}
 }
 
