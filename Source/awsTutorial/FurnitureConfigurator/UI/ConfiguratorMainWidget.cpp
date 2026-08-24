@@ -1,4 +1,4 @@
-﻿// Copyright MaxiMall Project. All Rights Reserved.
+// Copyright MaxiMall Project. All Rights Reserved.
 
 #include "FurnitureConfigurator/UI/ConfiguratorMainWidget.h"
 #include "Components/TextBlock.h"
@@ -90,9 +90,16 @@ void UConfiguratorMainWidget::RefreshSelections()
     FFurnitureProductRow ProductData;
     if (Booth->GetActiveProductData(ProductData))
     {
-        // Gate optional component visibility вЂ” if the component's mesh is missing/null, collapse the UI selectors
+        // Gate optional component visibility — if the component's mesh is missing/null, collapse the UI selectors
         bool bIsValidMesh = IsComponentMeshValid(Booth, ActiveComponent);
         ESlateVisibility TargetVisibility = bIsValidMesh ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+
+        // Gate Color Catalog button visibility based on DataTable configuration for this component
+        if (Btn_ColorCatalog)
+        {
+            bool bIsColorCatalogAllowed = bIsValidMesh && Booth->IsColorCatalogAllowedForComponent(ActiveComponent);
+            Btn_ColorCatalog->SetVisibility(bIsColorCatalogAllowed ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+        }
 
         // Clear option listeners when regenerating layout
         OptionListeners.Empty();
@@ -686,7 +693,7 @@ void UConfiguratorMainWidget::OnCloseUIClicked()
 void UConfiguratorMainWidget::OnColorCatalogClicked()
 {
     AShowroomBooth* Booth = TargetBooth.Get();
-    if (!Booth || !ColorCatalogWidgetClass)
+    if (!Booth || !ColorCatalogWidgetClass || !Booth->IsColorCatalogAllowedForComponent(ActiveComponent))
     {
         return;
     }

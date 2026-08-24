@@ -1,4 +1,4 @@
-﻿// Copyright MaxiMall Project. All Rights Reserved.
+// Copyright MaxiMall Project. All Rights Reserved.
 // ShowroomBooth.h
 //
 // AShowroomBooth вЂ” the replicated Exhibition Booth Actor.
@@ -272,6 +272,14 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "Booth | Query")
     bool GetResolvedComponentOptions(EFurnitureComponentType ComponentType, FFurnitureComponentOptions& OutOptions) const;
+
+    /**
+     * Checks if the RAL/NCS Color Catalog is allowed for the specified component
+     * based on product DataTable configuration.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Booth | Query",
+              meta = (DisplayName = "Is Color Catalog Allowed For Component"))
+    bool IsColorCatalogAllowedForComponent(EFurnitureComponentType ComponentType) const;
 
     /**
      * Returns the current open/closed state of a door slot.

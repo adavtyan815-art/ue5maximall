@@ -1,6 +1,6 @@
 ﻿# MaxiMall Feature Updates & Technical Changelog
 
-**Date:** 2026-08-22  
+**Date:** 2026-08-24  
 **Target Branches:** 
 arek/current-dev, dev
 
@@ -12,10 +12,12 @@ arek/current-dev, dev
 | :--- | :--- | :--- | :--- |
 | **AAwsTutorial_PlayerController** | Source/awsTutorial/awsTutorial_PlayerController.h | Source/awsTutorial/awsTutorial_PlayerController.cpp | Removed auto-spawning of Room Planner in BeginPlay(); unlocked multi-mesh interaction in TraceFurnitureComponent() while configurator UI is open; refined IsWidgetHoveredGeometrically() to sidebar bounds; exposed RoomPlannerInstance as BlueprintReadWrite. |
 | **URoomPlannerWidget** | Source/awsTutorial/FurnitureConfigurator/UI/RoomPlannerWidget.h | Source/awsTutorial/FurnitureConfigurator/UI/RoomPlannerWidget.cpp | Autonomous UI lifecycle (NativeConstruct / NativeDestruct); automated 2D Top-Down camera setup and smooth 3D camera restore; dynamic guidance hint engine (UpdateGuidanceHintText(), TxtGuidanceHint); toolbar tooltips. |
-| **UConfiguratorMainWidget** | Source/awsTutorial/FurnitureConfigurator/UI/ConfiguratorMainWidget.h | Source/awsTutorial/FurnitureConfigurator/UI/ConfiguratorMainWidget.cpp | Parent class for WBP_PreviewWindow; integrated seamless component re-initialization (SetupWidget) when switching between furniture elements (Sink, Mirror, Cabinet, Countertop). |
+| **UConfiguratorMainWidget** | Source/awsTutorial/FurnitureConfigurator/UI/ConfiguratorMainWidget.h | Source/awsTutorial/FurnitureConfigurator/UI/ConfiguratorMainWidget.cpp | Parent class for WBP_PreviewWindow; integrated seamless component re-initialization (SetupWidget); dynamically shows/collapses Btn_ColorCatalog based on DataTable Allow...ColorCatalog configuration. |
+| **AShowroomBooth** | Source/awsTutorial/FurnitureConfigurator/ShowroomBooth.h | Source/awsTutorial/FurnitureConfigurator/ShowroomBooth.cpp | Added IsColorCatalogAllowedForComponent() query checking product DataTable flags and shared component options to authorize RAL/NCS color capabilities. |
 | **UColorCatalogWidget** | Source/awsTutorial/ColorCatalog/ColorCatalogWidget.h | Source/awsTutorial/ColorCatalog/ColorCatalogWidget.cpp | Color catalog controller for RAL/NCS palettes; active tab styling (UpdateTabButtonStyles()); category orb scaling (UpdateCategoryButtonStyles(), ActiveCategoryScale = 1.25x); initial default selection (Red, RAL 3020); UMG Details styling properties. |
 | **UColorCatalogSwatchWidget** | Source/awsTutorial/ColorCatalog/ColorCatalogSwatchWidget.h | Source/awsTutorial/ColorCatalog/ColorCatalogSwatchWidget.cpp | Single color swatch item controller (WBP_ColorSwatchItem); uniform whole-item scaling on selection (ActiveScale = 1.20x, InactiveScale = 1.0x); automatic scale inheritance on spawn (NativeOnListItemObjectSet). |
 | **AFurniturePreviewActor** | Source/awsTutorial/FurnitureConfigurator/Preview/FurniturePreviewActor.h | Source/awsTutorial/FurnitureConfigurator/Preview/FurniturePreviewActor.cpp | Subject fill lighting rig with level-matching calibration (MatchLevelLighting, MeasureWorldIlluminanceAt) ensuring accurate lighting and PBR material representation across levels. |
+| **FurnitureTypes.h** | Source/awsTutorial/FurnitureConfigurator/Data/FurnitureTypes.h | Source/awsTutorial/FurnitureConfigurator/Data/FurnitureTypes.cpp | Added Allow...ColorCatalog booleans to FFurnitureProductRow, FFurnitureCabinetOptions, FFurnitureDoorGroup, FFurnitureModelOption, FFurnitureComponentOptions, and all shared DataTables. |
 
 ---
 
@@ -68,3 +70,21 @@ arek/current-dev, dev
   - ActiveCategoryScale (1.25), InactiveCategoryScale (1.0)
   - ActiveSwatchScale (1.20), InactiveSwatchScale (1.0)
   - DefaultCategory (Red), DefaultCatalogType (RAL)
+
+---
+
+## 5. Data-Driven Color Catalog Accessibility (DataTable Booleans)
+
+### Classes: FurnitureTypes.h, AShowroomBooth, UConfiguratorMainWidget
+- **Product DataTable Booleans (FFurnitureProductRow):** Added explicit boolean toggles under the **Product | Color Catalog** category:
+  - AllowCabinetColorCatalog
+  - AllowDoorsColorCatalog
+  - AllowClosetColorCatalog
+  - AllowCountertopColorCatalog
+  - AllowSinkColorCatalog
+  - AllowFaucetColorCatalog
+  - AllowMirrorColorCatalog
+- **Component & Shared Models Booleans:** Added AllowColorCatalog to FFurnitureCabinetOptions, FFurnitureDoorGroup, FFurnitureModelOption, FFurnitureComponentOptions, FFurnitureCountertopRow, FFurnitureSinkRow, FFurnitureFaucetRow, and FFurnitureMirrorRow.
+- **Automatic UI Gating (UConfiguratorMainWidget):**
+  - In RefreshSelections(): Btn_ColorCatalog is dynamically set to Visible when the inspected mesh has Allow... = true in the DataTable, and Collapsed (hidden) when alse.
+  - In OnColorCatalogClicked(): Access is validated against Booth->IsColorCatalogAllowedForComponent(ActiveComponent).

@@ -848,6 +848,132 @@ bool AShowroomBooth::GetResolvedComponentOptions(EFurnitureComponentType Compone
     return true;
 }
 
+bool AShowroomBooth::IsColorCatalogAllowedForComponent(EFurnitureComponentType ComponentType) const
+{
+    const FFurnitureProductRow* ProductRow = FindProductRow(ActiveState.ProductID);
+    if (!ProductRow)
+    {
+        return false;
+    }
+
+    switch (ComponentType)
+    {
+    case EFurnitureComponentType::Cabinet:
+        return ProductRow->bAllowCabinetColorCatalog || ProductRow->CabinetOptions.bAllowColorCatalog;
+
+    case EFurnitureComponentType::Doors:
+        return ProductRow->bAllowDoorsColorCatalog || ProductRow->DoorsConfig.CabinetDoors.bAllowColorCatalog || ProductRow->DoorsConfig.ClosetDoors.bAllowColorCatalog;
+
+    case EFurnitureComponentType::Closet:
+        return ProductRow->bAllowClosetColorCatalog || ProductRow->ClosetOptions.bAllowColorCatalog;
+
+    case EFurnitureComponentType::Countertop:
+    {
+        if (ProductRow->bAllowCountertopColorCatalog)
+        {
+            return true;
+        }
+        UDataTable* Catalog = SharedCountertopsCatalog.Get();
+        if (!Catalog)
+        {
+            Catalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedCountertops.DT_SharedCountertops")));
+        }
+        if (Catalog && ProductRow->AllowedCountertopIDs.IsValidIndex(ActiveState.CountertopSizeIndex))
+        {
+            FName ID = ProductRow->AllowedCountertopIDs[ActiveState.CountertopSizeIndex];
+            if (const FFurnitureCountertopRow* ModelRow = Catalog->FindRow<FFurnitureCountertopRow>(ID, TEXT("CheckColorCatalog")))
+            {
+                if (ModelRow->bAllowColorCatalog)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    case EFurnitureComponentType::Sink:
+    {
+        if (ProductRow->bAllowSinkColorCatalog)
+        {
+            return true;
+        }
+        UDataTable* Catalog = SharedSinksCatalog.Get();
+        if (!Catalog)
+        {
+            Catalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedSinks.DT_SharedSinks")));
+        }
+        if (Catalog && ProductRow->AllowedSinkIDs.IsValidIndex(ActiveState.SinkSizeIndex))
+        {
+            FName ID = ProductRow->AllowedSinkIDs[ActiveState.SinkSizeIndex];
+            if (const FFurnitureSinkRow* ModelRow = Catalog->FindRow<FFurnitureSinkRow>(ID, TEXT("CheckColorCatalog")))
+            {
+                if (ModelRow->bAllowColorCatalog)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    case EFurnitureComponentType::Faucet:
+    {
+        if (ProductRow->bAllowFaucetColorCatalog)
+        {
+            return true;
+        }
+        UDataTable* Catalog = SharedFaucetsCatalog.Get();
+        if (!Catalog)
+        {
+            Catalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedFaucets.DT_SharedFaucets")));
+        }
+        if (Catalog && ProductRow->AllowedFaucetIDs.IsValidIndex(ActiveState.FaucetSizeIndex))
+        {
+            FName ID = ProductRow->AllowedFaucetIDs[ActiveState.FaucetSizeIndex];
+            if (const FFurnitureFaucetRow* ModelRow = Catalog->FindRow<FFurnitureFaucetRow>(ID, TEXT("CheckColorCatalog")))
+            {
+                if (ModelRow->bAllowColorCatalog)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    case EFurnitureComponentType::Mirror:
+    {
+        if (ProductRow->bAllowMirrorColorCatalog)
+        {
+            return true;
+        }
+        UDataTable* Catalog = SharedMirrorsCatalog.Get();
+        if (!Catalog)
+        {
+            Catalog = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/DT/DT_SharedMirrors.DT_SharedMirrors")));
+        }
+        if (Catalog && ProductRow->AllowedMirrorIDs.IsValidIndex(ActiveState.MirrorSizeIndex))
+        {
+            FName ID = ProductRow->AllowedMirrorIDs[ActiveState.MirrorSizeIndex];
+            if (const FFurnitureMirrorRow* ModelRow = Catalog->FindRow<FFurnitureMirrorRow>(ID, TEXT("CheckColorCatalog")))
+            {
+                if (ModelRow->bAllowColorCatalog)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    default:
+        break;
+    }
+
+    return false;
+}
+
 bool AShowroomBooth::CalculateCountertopFallbackActive() const
 {
     const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);

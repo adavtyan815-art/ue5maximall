@@ -211,6 +211,10 @@ struct FFurnitureCabinetOptions
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cabinet Options")
     TArray<FFurnitureMetadataEntry> CombinationsMetadata;
+
+    /** If true, enables opening the RAL/NCS Color Catalog for this cabinet */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cabinet Options")
+    bool bAllowColorCatalog = false;
 };
 
 USTRUCT(BlueprintType)
@@ -255,6 +259,10 @@ struct FFurnitureModelOption
     /** Optional slot index to override. If -1, dynamically matches by material name. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option | Viewmode Override")
     int32 MirrorMaterialSlotIndex = -1;
+
+    /** If true, enables opening the RAL/NCS Color Catalog for this model */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model Option")
+    bool bAllowColorCatalog = false;
 };
 
 USTRUCT(BlueprintType)
@@ -276,6 +284,10 @@ struct FFurnitureCountertopRow : public FTableRowBase
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Countertop | Configuration")
     FFurniturePlacementOffset RelativeOffset;
+
+    /** If true, enables opening the RAL/NCS Color Catalog for this countertop model */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Countertop")
+    bool bAllowColorCatalog = false;
 };
 
 USTRUCT(BlueprintType)
@@ -294,6 +306,10 @@ struct FFurnitureSinkRow : public FTableRowBase
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sink | Configuration")
     FFurniturePlacementOffset RelativeOffset;
+
+    /** If true, enables opening the RAL/NCS Color Catalog for this sink model */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sink")
+    bool bAllowColorCatalog = false;
 };
 
 USTRUCT(BlueprintType)
@@ -315,6 +331,10 @@ struct FFurnitureFaucetRow : public FTableRowBase
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet | Configuration")
     EFaucetType FaucetType = EFaucetType::Standard;
+
+    /** If true, enables opening the RAL/NCS Color Catalog for this faucet model */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faucet")
+    bool bAllowColorCatalog = false;
 };
 
 USTRUCT(BlueprintType)
@@ -341,6 +361,10 @@ struct FFurnitureMirrorRow : public FTableRowBase
     /** Optional slot index to override. If -1, dynamically matches by material name. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mirror | Viewmode Override")
     int32 MirrorMaterialSlotIndex = -1;
+
+    /** If true, enables opening the RAL/NCS Color Catalog for this mirror model */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mirror")
+    bool bAllowColorCatalog = false;
 };
 
 USTRUCT(BlueprintType)
@@ -353,6 +377,10 @@ struct FFurnitureComponentOptions
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component Options")
     TArray<FFurnitureMetadataEntry> CombinationsMetadata;
+
+    /** If true, enables opening the RAL/NCS Color Catalog for this component */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Component Options")
+    bool bAllowColorCatalog = false;
 };
 
 /**
@@ -496,6 +524,10 @@ struct FFurnitureDoorGroup
     /** Active only if DoorCount == TwoDoors */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors", meta = (EditCondition = "DoorCount == 2"))
     FFurnitureDoubleDoorsConfig DoubleDoors;
+
+    /** If true, enables opening the RAL/NCS Color Catalog for these doors */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Doors")
+    bool bAllowColorCatalog = false;
 };
 
 /**
@@ -654,6 +686,36 @@ struct FFurnitureProductRow : public FTableRowBase
     /** Mirror allowed model IDs from shared catalog. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Mirror", meta = (GetOptions = "MaxiMall.FurnitureEditorHelper.GetMirrorOptions"))
     TArray<FName> AllowedMirrorIDs;
+
+    // ── Color Catalog (RAL / NCS) Capabilities ────────────────────────────
+
+    /** Enable RAL/NCS Color Catalog for Cabinet */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")
+    bool bAllowCabinetColorCatalog = false;
+
+    /** Enable RAL/NCS Color Catalog for Doors */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")
+    bool bAllowDoorsColorCatalog = false;
+
+    /** Enable RAL/NCS Color Catalog for Closet */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")
+    bool bAllowClosetColorCatalog = false;
+
+    /** Enable RAL/NCS Color Catalog for Countertop */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")
+    bool bAllowCountertopColorCatalog = false;
+
+    /** Enable RAL/NCS Color Catalog for Sink */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")
+    bool bAllowSinkColorCatalog = false;
+
+    /** Enable RAL/NCS Color Catalog for Faucet */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")
+    bool bAllowFaucetColorCatalog = false;
+
+    /** Enable RAL/NCS Color Catalog for Mirror */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")
+    bool bAllowMirrorColorCatalog = false;
 };
 
 UCLASS()
