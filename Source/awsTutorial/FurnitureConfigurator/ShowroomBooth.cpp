@@ -1160,9 +1160,9 @@ bool AShowroomBooth::Server_ApplyComponentSelection_Validate(EFurnitureComponent
 
 void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureComponentType ComponentType, int32 SizeIndex, int32 ColorIndex)
 {
-    // Implementation body omitted for brevity in target
     bool bCabinetSizeChanged = false;
     bool bCountertopModelChanged = false;
+    bool bColorIndexExplicitlyChanged = false;
 
     if (ComponentType == EFurnitureComponentType::Cabinet)
     {
@@ -1171,7 +1171,11 @@ void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureCom
             ActiveState.ActiveSizeIndex = SizeIndex;
             bCabinetSizeChanged = true;
         }
-        ActiveState.ActiveColorIndex = ColorIndex;
+        if (ActiveState.ActiveColorIndex != ColorIndex)
+        {
+            ActiveState.ActiveColorIndex = ColorIndex;
+            bColorIndexExplicitlyChanged = true;
+        }
     }
     else if (ComponentType == EFurnitureComponentType::Countertop)
     {
@@ -1180,27 +1184,47 @@ void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureCom
             ActiveState.CountertopSizeIndex = SizeIndex;
             bCountertopModelChanged = true;
         }
-        ActiveState.ActiveCountertopColorIndex = ColorIndex;
+        if (ActiveState.ActiveCountertopColorIndex != ColorIndex)
+        {
+            ActiveState.ActiveCountertopColorIndex = ColorIndex;
+            bColorIndexExplicitlyChanged = true;
+        }
     }
     else if (ComponentType == EFurnitureComponentType::Closet)
     {
         ActiveState.ClosetSizeIndex = SizeIndex;
-        ActiveState.ClosetColorIndex = ColorIndex;
+        if (ActiveState.ClosetColorIndex != ColorIndex)
+        {
+            ActiveState.ClosetColorIndex = ColorIndex;
+            bColorIndexExplicitlyChanged = true;
+        }
     }
     else if (ComponentType == EFurnitureComponentType::Sink)
     {
         ActiveState.SinkSizeIndex = SizeIndex;
-        ActiveState.SinkColorIndex = ColorIndex;
+        if (ActiveState.SinkColorIndex != ColorIndex)
+        {
+            ActiveState.SinkColorIndex = ColorIndex;
+            bColorIndexExplicitlyChanged = true;
+        }
     }
     else if (ComponentType == EFurnitureComponentType::Faucet)
     {
         ActiveState.FaucetSizeIndex = SizeIndex;
-        ActiveState.FaucetColorIndex = ColorIndex;
+        if (ActiveState.FaucetColorIndex != ColorIndex)
+        {
+            ActiveState.FaucetColorIndex = ColorIndex;
+            bColorIndexExplicitlyChanged = true;
+        }
     }
     else if (ComponentType == EFurnitureComponentType::Mirror)
     {
         ActiveState.MirrorSizeIndex = SizeIndex;
-        ActiveState.MirrorColorIndex = ColorIndex;
+        if (ActiveState.MirrorColorIndex != ColorIndex)
+        {
+            ActiveState.MirrorColorIndex = ColorIndex;
+            bColorIndexExplicitlyChanged = true;
+        }
     }
 
     if (bCabinetSizeChanged)
@@ -1212,10 +1236,25 @@ void AShowroomBooth::Server_ApplyComponentSelection_Implementation(EFurnitureCom
         ActiveState.FaucetSizeIndex = 0;
     }
 
+    // If the user explicitly picked a standard catalog color preset in the UI for this component,
+    // clear the custom RAL override for this component so the chosen preset material is displayed.
+    if (bColorIndexExplicitlyChanged)
+    {
+        CustomColors.RemoveAll([ComponentType](const FCustomColorOverride& Override)
+        {
+            if (ComponentType == EFurnitureComponentType::Cabinet || ComponentType == EFurnitureComponentType::Doors)
+            {
+                return Override.ComponentType == EFurnitureComponentType::Cabinet || Override.ComponentType == EFurnitureComponentType::Doors;
+            }
+            return Override.ComponentType == ComponentType;
+        });
+    }
+
     const FFurnitureProductRow* Row = FindProductRow(ActiveState.ProductID);
     if (Row)
     {
         ApplyProductData(*Row);
+        OnRep_CustomColors();
         OnProductChanged.Broadcast(this, ActiveState.ProductID);
     }
 }
@@ -1553,8 +1592,11 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
     GetResolvedComponentOptions(EFurnitureComponentType::Mirror, ResolvedMirror);
     ApplyComponentMeshAndMaterials(MirrorMesh.Get(), ResolvedMirror, ActiveState.MirrorSizeIndex, ActiveState.MirrorColorIndex);
 
-    // РІвЂќР‚РІвЂќР‚ 8. Recalculate Sink + Faucet positions relative to Countertop РІвЂќР‚РІвЂќР‚РІвЂќР‚РІвЂќР‚РІвЂќР‚
+    // 8. Recalculate Sink + Faucet positions relative to Countertop
     RecalculateDependentTransforms(Data);
+
+    // Re-apply all custom RAL/NCS color overrides so they are ALWAYS preserved across any model/size change!
+    OnRep_CustomColors();
 }
 
 void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
