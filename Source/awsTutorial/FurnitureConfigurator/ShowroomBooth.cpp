@@ -532,6 +532,21 @@ void AShowroomBooth::RebuildBoothVisuals()
     OnRep_CustomColors();
 }
 
+void AShowroomBooth::LoadBoothFullState(const FShowroomBoothConfigState& InState, const TArray<FCustomColorOverride>& InCustomColors, const TArray<EDoorSlotState>& InDoorStates)
+{
+    ActiveState = InState;
+    CustomColors = InCustomColors;
+    if (InDoorStates.Num() > 0)
+    {
+        DoorStates = InDoorStates;
+    }
+
+    RebuildBoothVisuals();
+    OnRep_CustomColors();
+    OnRep_DoorStates();
+    OnProductChanged.Broadcast(this, ActiveState.ProductID);
+}
+
 
 void AShowroomBooth::RequestDoorToggle(int32 SlotIndex)
 {

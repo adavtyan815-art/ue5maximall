@@ -195,7 +195,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     void SendOpenURLToBrowser(const FString& URL);
 
     UFUNCTION(Server, Reliable, WithValidation)
-    void Server_LoadBoothState(AShowroomBooth* TargetBooth, FShowroomBoothConfigState State);
+    void Server_LoadBoothState(AShowroomBooth* TargetBooth, FShowroomBoothConfigState State, const TArray<FCustomColorOverride>& InCustomColors, const TArray<EDoorSlotState>& InDoorStates);
 
 protected:
     UFUNCTION(Server, Reliable, WithValidation)

@@ -202,6 +202,36 @@ void USaveSystemWidget::ExecuteSaveGame(const FString& InSaveId, const FString& 
             StateJson->SetNumberField(TEXT("mirrorColorIndex"), Booth->ActiveState.MirrorColorIndex);
 
             BoothJson->SetObjectField(TEXT("state"), StateJson);
+
+            // Serialize CustomColors (RAL / NCS colors)
+            TArray<TSharedPtr<FJsonValue>> CustomColorsJsonArray;
+            for (const FCustomColorOverride& ColorOverride : Booth->CustomColors)
+            {
+                TSharedPtr<FJsonObject> ColorObj = MakeShareable(new FJsonObject());
+                ColorObj->SetNumberField(TEXT("componentType"), static_cast<int32>(ColorOverride.ComponentType));
+                
+                TSharedPtr<FJsonObject> RGBAObj = MakeShareable(new FJsonObject());
+                RGBAObj->SetNumberField(TEXT("r"), ColorOverride.CustomColor.R);
+                RGBAObj->SetNumberField(TEXT("g"), ColorOverride.CustomColor.G);
+                RGBAObj->SetNumberField(TEXT("b"), ColorOverride.CustomColor.B);
+                RGBAObj->SetNumberField(TEXT("a"), ColorOverride.CustomColor.A);
+                ColorObj->SetObjectField(TEXT("color"), RGBAObj);
+
+                FString MatPath = ColorOverride.OverrideMaterial ? ColorOverride.OverrideMaterial->GetPathName() : TEXT("");
+                ColorObj->SetStringField(TEXT("overrideMaterial"), MatPath);
+
+                CustomColorsJsonArray.Add(MakeShareable(new FJsonValueObject(ColorObj)));
+            }
+            BoothJson->SetArrayField(TEXT("customColors"), CustomColorsJsonArray);
+
+            // Serialize DoorStates
+            TArray<TSharedPtr<FJsonValue>> DoorStatesJsonArray;
+            for (int32 SlotIdx = 0; SlotIdx < Booth->DoorStates.Num(); ++SlotIdx)
+            {
+                DoorStatesJsonArray.Add(MakeShareable(new FJsonValueNumber(static_cast<int32>(Booth->DoorStates[SlotIdx]))));
+            }
+            BoothJson->SetArrayField(TEXT("doorStates"), DoorStatesJsonArray);
+
             BoothStatesJsonArray.Add(MakeShareable(new FJsonValueObject(BoothJson)));
         }
     }
@@ -301,8 +331,52 @@ void USaveSystemWidget::HandleLoadSaveItem(FString SaveId)
                                 State.MirrorSizeIndex = StateObj->GetIntegerField(TEXT("mirrorSizeIndex"));
                                 State.MirrorColorIndex = StateObj->GetIntegerField(TEXT("mirrorColorIndex"));
 
-                                UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][LOAD] Dispatching server RPC for booth '%s'"), *BoothName);
-                                AwsPC->Server_LoadBoothState(TargetBooth, State);
+                                // Reconstruct CustomColors
+                                TArray<FCustomColorOverride> LoadedCustomColors;
+                                const TArray<TSharedPtr<FJsonValue>>* CustomColorsArray = nullptr;
+                                if (BoothObj->TryGetArrayField(TEXT("customColors"), CustomColorsArray) && CustomColorsArray)
+                                {
+                                    for (const auto& ColorVal : *CustomColorsArray)
+                                    {
+                                        TSharedPtr<FJsonObject> ColorObj = ColorVal->AsObject();
+                                        if (ColorObj.IsValid())
+                                        {
+                                            EFurnitureComponentType CompType = static_cast<EFurnitureComponentType>(ColorObj->GetIntegerField(TEXT("componentType")));
+                                            FLinearColor LinearColor = FLinearColor::White;
+                                            TSharedPtr<FJsonObject> RGBAObj = ColorObj->GetObjectField(TEXT("color"));
+                                            if (RGBAObj.IsValid())
+                                            {
+                                                LinearColor.R = RGBAObj->GetNumberField(TEXT("r"));
+                                                LinearColor.G = RGBAObj->GetNumberField(TEXT("g"));
+                                                LinearColor.B = RGBAObj->GetNumberField(TEXT("b"));
+                                                LinearColor.A = RGBAObj->GetNumberField(TEXT("a"));
+                                            }
+                                            FString MatPath = ColorObj->GetStringField(TEXT("overrideMaterial"));
+                                            UMaterialInterface* OverrideMat = nullptr;
+                                            if (!MatPath.IsEmpty())
+                                            {
+                                                OverrideMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, *MatPath));
+                                            }
+
+                                            LoadedCustomColors.Add(FCustomColorOverride(CompType, LinearColor, OverrideMat));
+                                        }
+                                    }
+                                }
+
+                                // Reconstruct DoorStates
+                                TArray<EDoorSlotState> LoadedDoorStates;
+                                const TArray<TSharedPtr<FJsonValue>>* DoorStatesArray = nullptr;
+                                if (BoothObj->TryGetArrayField(TEXT("doorStates"), DoorStatesArray) && DoorStatesArray)
+                                {
+                                    for (const auto& DoorVal : *DoorStatesArray)
+                                    {
+                                        LoadedDoorStates.Add(static_cast<EDoorSlotState>(static_cast<int32>(DoorVal->AsNumber())));
+                                    }
+                                }
+
+                                UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][LOAD] Dispatching server RPC for booth '%s' with %d custom colors and %d door states"), 
+                                    *BoothName, LoadedCustomColors.Num(), LoadedDoorStates.Num());
+                                AwsPC->Server_LoadBoothState(TargetBooth, State, LoadedCustomColors, LoadedDoorStates);
                             }
                         }
                     }

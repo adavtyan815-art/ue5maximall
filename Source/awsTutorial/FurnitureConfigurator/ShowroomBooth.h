@@ -237,6 +237,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Booth | Interaction")
     void RebuildBoothVisuals();
 
+    /** Authoritatively loads full booth state including custom RAL/NCS colors and door states. */
+    UFUNCTION(BlueprintCallable, Category = "Booth | State")
+    void LoadBoothFullState(const FShowroomBoothConfigState& InState, const TArray<FCustomColorOverride>& InCustomColors, const TArray<EDoorSlotState>& InDoorStates);
+
     /**
      * Request a size or color selection change on a specific subcomponent.
      */

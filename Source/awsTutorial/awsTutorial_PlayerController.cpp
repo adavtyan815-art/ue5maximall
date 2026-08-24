@@ -1067,19 +1067,18 @@ bool AAwsTutorial_PlayerController::Server_RequestBoothCustomColorChange_Validat
     return true;
 }
 
-void AAwsTutorial_PlayerController::Server_LoadBoothState_Implementation(AShowroomBooth* TargetBooth, FShowroomBoothConfigState State)
+void AAwsTutorial_PlayerController::Server_LoadBoothState_Implementation(AShowroomBooth* TargetBooth, FShowroomBoothConfigState State, const TArray<FCustomColorOverride>& InCustomColors, const TArray<EDoorSlotState>& InDoorStates)
 {
     if (TargetBooth)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][Server] Loading booth state for '%s' (Product: '%s')"), 
-            *TargetBooth->GetName(), *State.ProductID.ToString());
+        UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][Server] Loading booth state for '%s' (Product: '%s', CustomColors: %d, DoorStates: %d)"), 
+            *TargetBooth->GetName(), *State.ProductID.ToString(), InCustomColors.Num(), InDoorStates.Num());
 
-        TargetBooth->ActiveState = State;
-        TargetBooth->RebuildBoothVisuals();
+        TargetBooth->LoadBoothFullState(State, InCustomColors, InDoorStates);
     }
 }
 
-bool AAwsTutorial_PlayerController::Server_LoadBoothState_Validate(AShowroomBooth* TargetBooth, FShowroomBoothConfigState State)
+bool AAwsTutorial_PlayerController::Server_LoadBoothState_Validate(AShowroomBooth* TargetBooth, FShowroomBoothConfigState State, const TArray<FCustomColorOverride>& InCustomColors, const TArray<EDoorSlotState>& InDoorStates)
 {
     return true;
 }
