@@ -95,10 +95,20 @@ void UConfiguratorMainWidget::RefreshSelections()
         ESlateVisibility TargetVisibility = bIsValidMesh ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 
         // Gate Color Catalog button visibility based on DataTable configuration for this component
+        bool bIsColorCatalogAllowed = bIsValidMesh && Booth->IsColorCatalogAllowedForComponent(ActiveComponent);
         if (Btn_ColorCatalog)
         {
-            bool bIsColorCatalogAllowed = bIsValidMesh && Booth->IsColorCatalogAllowedForComponent(ActiveComponent);
             Btn_ColorCatalog->SetVisibility(bIsColorCatalogAllowed ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+        }
+
+        // If Color Catalog is currently open and active, but the newly selected component does not support it, close it cleanly!
+        if (::IsValid(ActiveColorCatalogInstance) && ActiveColorCatalogInstance->IsInViewport())
+        {
+            if (!bIsColorCatalogAllowed)
+            {
+                ActiveColorCatalogInstance->CloseColorCatalog();
+                ActiveColorCatalogInstance = nullptr;
+            }
         }
 
         // Clear option listeners when regenerating layout
@@ -682,6 +692,12 @@ void UConfiguratorMainWidget::OnViewmodeClicked()
 
 void UConfiguratorMainWidget::OnCloseUIClicked()
 {
+    if (::IsValid(ActiveColorCatalogInstance) && ActiveColorCatalogInstance->IsInViewport())
+    {
+        ActiveColorCatalogInstance->CloseColorCatalog();
+        ActiveColorCatalogInstance = nullptr;
+    }
+
     AAwsTutorial_PlayerController* PC = OwningPC.Get();
     AShowroomBooth* Booth = TargetBooth.Get();
     if (PC && Booth)
@@ -716,6 +732,7 @@ void UConfiguratorMainWidget::OnColorCatalogClicked()
     UColorCatalogWidget* CatalogWidget = UColorCatalogWidget::OpenColorCatalogForWidget(this, ColorCatalogWidgetClass);
     if (CatalogWidget)
     {
+        ActiveColorCatalogInstance = CatalogWidget;
         CatalogWidget->OnColorSelected.AddUniqueDynamic(this, &UConfiguratorMainWidget::HandleColorSelected);
     }
 }
@@ -723,17 +740,19 @@ void UConfiguratorMainWidget::OnColorCatalogClicked()
 void UConfiguratorMainWidget::HandleColorSelected(FLinearColor SelectedColor, UMaterialInterface* OverrideMaterial)
 {
     AShowroomBooth* Booth = TargetBooth.Get();
-    if (Booth)
+    if (!Booth || !Booth->IsColorCatalogAllowedForComponent(ActiveComponent))
     {
-        AAwsTutorial_PlayerController* PreviewPC = Cast<AAwsTutorial_PlayerController>(GetOwningPlayer());
-        if (PreviewPC)
-        {
-            PreviewPC->RequestBoothCustomColorChange(Booth, ActiveComponent, SelectedColor, OverrideMaterial);
-        }
-        else
-        {
-            Booth->RequestCustomColorChange(ActiveComponent, SelectedColor, OverrideMaterial);
-        }
+        return;
+    }
+
+    AAwsTutorial_PlayerController* PreviewPC = Cast<AAwsTutorial_PlayerController>(GetOwningPlayer());
+    if (PreviewPC)
+    {
+        PreviewPC->RequestBoothCustomColorChange(Booth, ActiveComponent, SelectedColor, OverrideMaterial);
+    }
+    else
+    {
+        Booth->RequestCustomColorChange(ActiveComponent, SelectedColor, OverrideMaterial);
     }
 }
 

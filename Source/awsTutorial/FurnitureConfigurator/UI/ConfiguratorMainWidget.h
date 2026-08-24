@@ -13,6 +13,7 @@ class UButton;
 class UPanelWidget;
 class AAwsTutorial_PlayerController;
 class AShowroomBooth;
+class UColorCatalogWidget;
 
 UCLASS()
 class AWSTUTORIAL_API UFurnitureOptionListener : public UObject
@@ -58,7 +59,7 @@ class AWSTUTORIAL_API UConfiguratorMainWidget : public UUserWidget
 protected:
     virtual void NativeConstruct() override;
 
-    // в”Ђв”Ђ STRICT WIDGET BINDINGS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── STRICT WIDGET BINDINGS ─────────────────────────────────────────────
     
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Btn_Viewmode;
@@ -87,7 +88,7 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> Txt_Warning;
 
-    // в”Ђв”Ђ DELEGATE CALLBACKS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── DELEGATE CALLBACKS ─────────────────────────────────────────────────
 
     UFUNCTION()
     void OnViewmodeClicked();
@@ -117,7 +118,7 @@ public:
     void HandleOptionHovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
     void HandleOptionUnhovered(EFurnitureComponentType Component, EOptionType Type, int32 OptionIndex);
 
-    // в”Ђв”Ђ SIZE CONTAINER CONFIGURATION в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── SIZE CONTAINER CONFIGURATION ───────────────────────────────────────
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Size")
     float SizeButtonWidth = 100.f;
 
@@ -167,9 +168,9 @@ public:
     FSlateFontInfo SizeTextFont;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Classes")
-    TSubclassOf<class UColorCatalogWidget> ColorCatalogWidgetClass;
+    TSubclassOf<UColorCatalogWidget> ColorCatalogWidgetClass;
 
-    // в”Ђв”Ђ COLOR CONTAINER CONFIGURATION в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    // ── COLOR CONTAINER CONFIGURATION ──────────────────────────────────────
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MaxiMall | UI Sizing - Color")
     float ColorButtonWidth = 100.f;
 
@@ -222,7 +223,9 @@ private:
     UPROPERTY()
     EFurnitureComponentType ActiveComponent;
 
+    UPROPERTY()
+    TObjectPtr<UColorCatalogWidget> ActiveColorCatalogInstance;
+
     // Helper functions
     bool IsComponentMeshValid(AShowroomBooth* Booth, EFurnitureComponentType Component) const;
 };
-

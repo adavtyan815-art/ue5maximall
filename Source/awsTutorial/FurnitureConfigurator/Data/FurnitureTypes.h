@@ -689,13 +689,9 @@ struct FFurnitureProductRow : public FTableRowBase
 
     // ── Color Catalog (RAL / NCS) Capabilities ────────────────────────────
 
-    /** Enable RAL/NCS Color Catalog for Cabinet */
+    /** Enable RAL/NCS Color Catalog for Cabinet (applies to both Cabinet body and Doors) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")
     bool bAllowCabinetColorCatalog = false;
-
-    /** Enable RAL/NCS Color Catalog for Doors */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")
-    bool bAllowDoorsColorCatalog = false;
 
     /** Enable RAL/NCS Color Catalog for Closet */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Color Catalog")

@@ -44,14 +44,17 @@ public:
 		TSubclassOf<UColorCatalogWidget> CatalogWidgetClass
 	);
 
-	/** Set parent widget to collapse on open and restore on Back button click */
-	    /** Set the parent UI to collapse when this catalog is active */
-    UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
-    void SetParentCallingWidget(UUserWidget* InParentWidget);
+	/** Set the parent UI to collapse when this catalog is active */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void SetParentCallingWidget(UUserWidget* InParentWidget);
 
-    /** Event fired when a color swatch is clicked for Live Preview. Bind to this for multiplayer! */
-    UPROPERTY(BlueprintAssignable, Category = "Color Catalog Controller")
-    FOnColorSelectedEvent OnColorSelected;
+	/** Cleanly closes the color catalog, restores parent calling widget, and removes from viewport */
+	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
+	void CloseColorCatalog();
+
+	/** Event fired when a color swatch is clicked for Live Preview. Bind to this for multiplayer! */
+	UPROPERTY(BlueprintAssignable, Category = "Color Catalog Controller")
+	FOnColorSelectedEvent OnColorSelected;
 
 	/** Switch catalog tab (RAL vs NCS) */
 	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")

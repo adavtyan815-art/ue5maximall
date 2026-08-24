@@ -859,10 +859,8 @@ bool AShowroomBooth::IsColorCatalogAllowedForComponent(EFurnitureComponentType C
     switch (ComponentType)
     {
     case EFurnitureComponentType::Cabinet:
-        return ProductRow->bAllowCabinetColorCatalog || ProductRow->CabinetOptions.bAllowColorCatalog;
-
     case EFurnitureComponentType::Doors:
-        return ProductRow->bAllowDoorsColorCatalog || ProductRow->DoorsConfig.CabinetDoors.bAllowColorCatalog || ProductRow->DoorsConfig.ClosetDoors.bAllowColorCatalog;
+        return ProductRow->bAllowCabinetColorCatalog || ProductRow->CabinetOptions.bAllowColorCatalog || ProductRow->DoorsConfig.CabinetDoors.bAllowColorCatalog;
 
     case EFurnitureComponentType::Closet:
         return ProductRow->bAllowClosetColorCatalog || ProductRow->ClosetOptions.bAllowColorCatalog;

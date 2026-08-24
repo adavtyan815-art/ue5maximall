@@ -190,7 +190,7 @@ void UColorCatalogWidget::OnNCSButtonClicked()
 	SetCatalogType(EColorCatalogType::NCS);
 }
 
-void UColorCatalogWidget::OnBackButtonClicked()
+void UColorCatalogWidget::CloseColorCatalog()
 {
 	// Uncollapse parent Calling Widget (WBP_PreviewWindow)
 	if (ParentCallingWidget)
@@ -200,6 +200,11 @@ void UColorCatalogWidget::OnBackButtonClicked()
 
 	OnCatalogClosed.Broadcast();
 	RemoveFromParent();
+}
+
+void UColorCatalogWidget::OnBackButtonClicked()
+{
+	CloseColorCatalog();
 }
 
 void UColorCatalogWidget::BindCategoryButtons()
