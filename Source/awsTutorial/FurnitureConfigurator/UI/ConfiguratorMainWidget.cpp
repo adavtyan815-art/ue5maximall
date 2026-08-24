@@ -68,6 +68,16 @@ void UConfiguratorMainWidget::NativeConstruct()
         Btn_ColorCatalog->OnClicked.RemoveAll(this);
         Btn_ColorCatalog->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnColorCatalogClicked);
     }
+    if (Btn_CinematicTour)
+    {
+        Btn_CinematicTour->OnClicked.RemoveAll(this);
+        Btn_CinematicTour->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnCinematicTourButtonClicked);
+    }
+    if (BtnCinematicTour)
+    {
+        BtnCinematicTour->OnClicked.RemoveAll(this);
+        BtnCinematicTour->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnCinematicTourButtonClicked);
+    }
 }
 
 void UConfiguratorMainWidget::SetupWidget(AAwsTutorial_PlayerController* InPC, AShowroomBooth* InBooth, EFurnitureComponentType InComponent)
@@ -110,6 +120,9 @@ void UConfiguratorMainWidget::RefreshSelections()
                 ActiveColorCatalogInstance = nullptr;
             }
         }
+
+        // Update Cinematic Tour button styling
+        UpdateCinematicTourButtonStyle();
 
         // Clear option listeners when regenerating layout
         OptionListeners.Empty();
@@ -857,6 +870,32 @@ bool UConfiguratorMainWidget::IsComponentMeshValid(AShowroomBooth* Booth, EFurni
         break;
     }
     return false;
+}
+
+void UConfiguratorMainWidget::OnCinematicTourButtonClicked()
+{
+    if (OwningPC)
+    {
+        OwningPC->ToggleCinematicTour(TargetBooth.Get());
+        UpdateCinematicTourButtonStyle();
+    }
+}
+
+void UConfiguratorMainWidget::UpdateCinematicTourButtonStyle()
+{
+    bool bActive = OwningPC && OwningPC->bIsCinematicTourActive;
+
+    FLinearColor ActiveColor(0.95f, 0.6f, 0.1f, 1.0f); // Warm gold/amber accent for tour
+    FLinearColor InactiveColor(0.1f, 0.14f, 0.2f, 1.0f);
+
+    if (Btn_CinematicTour)
+    {
+        Btn_CinematicTour->SetBackgroundColor(bActive ? ActiveColor : InactiveColor);
+    }
+    if (BtnCinematicTour)
+    {
+        BtnCinematicTour->SetBackgroundColor(bActive ? ActiveColor : InactiveColor);
+    }
 }
 
 

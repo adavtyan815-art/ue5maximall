@@ -33,6 +33,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "Constructor/RoomPlannerManager.h"
 #include "FurnitureConfigurator/UI/RoomPlannerWidget.h"
+#include "Camera/CameraActor.h"
+#include "Kismet/KismetMathLibrary.h"
 
 AAwsTutorial_PlayerController::AAwsTutorial_PlayerController()
 {
@@ -458,6 +460,9 @@ void AAwsTutorial_PlayerController::SetupInputComponent()
     {
         InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AAwsTutorial_PlayerController::OnLeftMouseButtonDown);
         InputComponent->BindKey(EKeys::LeftMouseButton, IE_Released, this, &AAwsTutorial_PlayerController::OnLeftMouseButtonReleased);
+
+        InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AAwsTutorial_PlayerController::OnRightMouseButtonDown);
+        InputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &AAwsTutorial_PlayerController::OnRightMouseButtonReleased);
     }
 }
 
@@ -481,6 +486,33 @@ void AAwsTutorial_PlayerController::OnLeftMouseButtonReleased()
     if (HeldDuration <= 0.25f && DragDistance <= 8.f)
     {
         OnLeftMouseButtonClicked();
+    }
+}
+
+void AAwsTutorial_PlayerController::OnRightMouseButtonDown()
+{
+    RMBPressTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
+    if (FSlateApplication::IsInitialized())
+    {
+        RMBPressMousePos = FSlateApplication::Get().GetCursorPos();
+    }
+}
+
+void AAwsTutorial_PlayerController::OnRightMouseButtonReleased()
+{
+    float CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
+    float HeldDuration = CurrentTime - RMBPressTime;
+
+    FVector2D CurrentMousePos = FSlateApplication::IsInitialized() ? FSlateApplication::Get().GetCursorPos() : FVector2D::ZeroVector;
+    float DragDistance = FVector2D::Distance(CurrentMousePos, RMBPressMousePos);
+
+    // Strictly inside View Mode: RMB click toggles the 🎬 Cinematic Auto-Tour on/off
+    if (::IsValid(ActivePreviewActor))
+    {
+        if (HeldDuration <= 0.35f && DragDistance <= 10.f)
+        {
+            ToggleCinematicTour(CurrentTargetBooth.Get());
+        }
     }
 }
 
@@ -716,18 +748,39 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
 
     CloseFurniturePreview();
 
+    // ── RELOCATE SHOWROOM BOOTH FIRST ─────────────────────────────────────────
+    // Just like the Room Planner character relocation, the ShowroomBooth is
+    // relocated to the configured studio coordinates and rotation BEFORE any
+    // subsequent preview actions or spawns take place.
+    CachedOriginalBoothTransform = TargetBooth->GetActorTransform();
+    bHasCachedBoothTransform = true;
+
+    TargetBooth->SetActorLocationAndRotation(
+        ViewModeRelocationLocation,
+        ViewModeRelocationRotation,
+        false,
+        nullptr,
+        ETeleportType::TeleportPhysics
+    );
+
     FFurnitureProductRow ProductSnapshot;
     if (!TargetBooth->GetActiveProductData(ProductSnapshot))
     {
         UE_LOG(LogTemp, Warning,
             TEXT("[PreviewController] Booth '%s' has no valid active product. Cannot open preview."),
             *TargetBooth->GetName());
+
+        // Restore booth transform on failure
+        TargetBooth->SetActorTransform(CachedOriginalBoothTransform, false, nullptr, ETeleportType::TeleportPhysics);
+        bHasCachedBoothTransform = false;
         return;
     }
 
     UWorld* World = GetWorld();
     if (!World)
     {
+        TargetBooth->SetActorTransform(CachedOriginalBoothTransform, false, nullptr, ETeleportType::TeleportPhysics);
+        bHasCachedBoothTransform = false;
         return;
     }
 
@@ -743,7 +796,7 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
 
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
-    // Always spawn at the real-world booth location for WorldInPlace orbit.
+    // Always spawn at the relocated booth location for WorldInPlace orbit.
     FRotator SpawnRotation = FRotator::ZeroRotator;
     if (TargetBooth)
     {
@@ -766,6 +819,8 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
     if (!ActivePreviewActor)
     {
         UE_LOG(LogTemp, Error, TEXT("[PreviewController] Failed to spawn AFurniturePreviewActor."));
+        TargetBooth->SetActorTransform(CachedOriginalBoothTransform, false, nullptr, ETeleportType::TeleportPhysics);
+        bHasCachedBoothTransform = false;
         return;
     }
 
@@ -807,6 +862,9 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
     }
 
     OnPreviewOpened();
+
+    // Auto-enable 🎬 Cinematic Auto-Tour by default when entering View Mode
+    StartCinematicTour(TargetBooth);
 }
 
 void AAwsTutorial_PlayerController::CloseFurniturePreview()
@@ -816,12 +874,21 @@ void AAwsTutorial_PlayerController::CloseFurniturePreview()
         return;
     }
 
+    StopCinematicTour();
+
     HiddenActors.Empty();
 
     AShowroomBooth* PreviousBooth = CurrentTargetBooth;
     if (CurrentTargetBooth)
     {
         CurrentTargetBooth->OnProductChanged.RemoveAll(this);
+    }
+
+    // Restore ShowroomBooth back to its original world transform
+    if (bHasCachedBoothTransform && PreviousBooth)
+    {
+        PreviousBooth->SetActorTransform(CachedOriginalBoothTransform, false, nullptr, ETeleportType::TeleportPhysics);
+        bHasCachedBoothTransform = false;
     }
 
     // (PostProcessVolumes are no longer touched on entry, so there is nothing to
@@ -1401,6 +1468,91 @@ void AAwsTutorial_PlayerController::ToggleRoomPlannerUI(bool bOpen)
             RoomPlannerInstance = nullptr;
         }
     }
+}
+
+void AAwsTutorial_PlayerController::ToggleCinematicTour(AShowroomBooth* TargetBooth)
+{
+    if (!::IsValid(ActivePreviewActor))
+    {
+        StopCinematicTour();
+        return;
+    }
+
+    if (bIsCinematicTourActive)
+    {
+        StopCinematicTour();
+    }
+    else
+    {
+        StartCinematicTour(TargetBooth);
+    }
+}
+
+void AAwsTutorial_PlayerController::StartCinematicTour(AShowroomBooth* TargetBooth)
+{
+    if (!::IsValid(ActivePreviewActor) || !GetWorld())
+    {
+        return;
+    }
+
+    AShowroomBooth* EffectiveBooth = TargetBooth ? TargetBooth : CurrentTargetBooth.Get();
+    CinematicTourTargetBooth = EffectiveBooth;
+    CinematicTourElapsedTime = 0.0f;
+    bIsCinematicTourActive = true;
+
+    // Clear any previous timer before setting a fresh one
+    GetWorld()->GetTimerManager().ClearTimer(CinematicTourTimerHandle);
+
+    // 60 FPS lightweight timer (0.016s) — only active during tour
+    GetWorld()->GetTimerManager().SetTimer(
+        CinematicTourTimerHandle,
+        this,
+        &AAwsTutorial_PlayerController::UpdateCinematicTourStep,
+        0.016f,
+        true
+    );
+
+    if (MainWidgetInstance)
+    {
+        if (UConfiguratorMainWidget* ConfigWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance))
+        {
+            ConfigWidget->UpdateCinematicTourButtonStyle();
+        }
+    }
+}
+
+void AAwsTutorial_PlayerController::StopCinematicTour()
+{
+    bIsCinematicTourActive = false;
+
+    if (GetWorld())
+    {
+        GetWorld()->GetTimerManager().ClearTimer(CinematicTourTimerHandle);
+    }
+
+    if (MainWidgetInstance)
+    {
+        if (UConfiguratorMainWidget* ConfigWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance))
+        {
+            ConfigWidget->UpdateCinematicTourButtonStyle();
+        }
+    }
+}
+
+void AAwsTutorial_PlayerController::UpdateCinematicTourStep()
+{
+    if (!bIsCinematicTourActive || !::IsValid(ActivePreviewActor))
+    {
+        StopCinematicTour();
+        return;
+    }
+
+    const float DeltaTime = 0.016f;
+    CinematicTourElapsedTime += DeltaTime;
+
+    const float YawDelta = CinematicTourOrbitSpeed * DeltaTime;
+    const float PitchDelta = FMath::Sin(CinematicTourElapsedTime * 0.6f) * 0.10f;
+    ActivePreviewActor->RotatePreview(YawDelta, PitchDelta);
 }
 
 bool AAwsTutorial_PlayerController::GetActiveComponentMetadata(EFurnitureComponentType ComponentType, FText& OutProductName, FString& OutSKU, FString& OutURL) const

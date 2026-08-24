@@ -1,4 +1,4 @@
-﻿// Copyright MaxiMall Project. All Rights Reserved.
+// Copyright MaxiMall Project. All Rights Reserved.
 
 #pragma once
 
@@ -70,6 +70,12 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UButton> Btn_ColorCatalog;
 
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> Btn_CinematicTour;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> BtnCinematicTour;
+
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Txt_BtnURL;
 
@@ -100,12 +106,19 @@ protected:
     void OnColorCatalogClicked();
 
     UFUNCTION()
+    void OnCinematicTourButtonClicked();
+
+    UFUNCTION()
     void HandleColorSelected(FLinearColor SelectedColor, UMaterialInterface* OverrideMaterial);
 
     UFUNCTION()
     void OnURLButtonClicked();
 
 public:
+    /** Updates the styling of the Cinematic Tour button. */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
+    void UpdateCinematicTourButtonStyle();
+
     /** Initialize and dynamically populate the widget. */
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void SetupWidget(AAwsTutorial_PlayerController* InPC, AShowroomBooth* InBooth, EFurnitureComponentType InComponent);

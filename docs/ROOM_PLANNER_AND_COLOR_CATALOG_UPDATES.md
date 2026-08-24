@@ -1,4 +1,4 @@
-﻿# MaxiMall Feature Updates & Technical Changelog
+# MaxiMall Feature Updates & Technical Changelog
 
 **Date:** 2026-08-24  
 **Target Branch:** 
@@ -41,3 +41,29 @@ arek/current-dev *(Merged to dev only upon testing & approval)*
   Кастомные цвета каждого стенда сохраняются в JSON с указанием типа компонента, точных значений LinearColor (RGBA) и путей к оверрайдам материалов.
 - **Door State Serialization (doorStates):**
   Массив состояний открытых/закрытых створок сохраняется и восстанавливается через LoadBoothFullState().
+
+---
+
+## 3. Cinematic Auto-Tour Engine (Студийный 360° авто-облет)
+
+### Classes: AAwsTutorial_PlayerController, UConfiguratorMainWidget
+- **View Mode Integration (Studio Turntable):**
+  - При переходе в режим изоляции (View Mode / `AFurniturePreviewActor`) тур **включается автоматически по умолчанию**.
+  - Мебель плавно вращается на 360 градусов перед камерой на 60 FPS со студийным нейтральным освещением (канал 1) и затемненным фоном.
+- **RMB Toggle (Управление ПКМ):**
+  - Одиночный клик **ПКМ (Right Mouse Button)** внутри View Mode переключает тур: **Пауза ↔ Старт**.
+- **Zero Idle Overhead (Оптимизация):**
+  - Легковесный таймер (0.016s) активен строго во время тура. При выходе таймер очищается (`ClearTimer`), потребление ресурсов — 0.00%.
+
+---
+
+## 4. ShowroomBooth Studio Relocation & Exact Restoration
+
+### Classes: AAwsTutorial_PlayerController
+- **Configurable Relocation Coordinates:**
+  - `ViewModeRelocationLocation` (по умолчанию `FVector(-10000.f, 0.f, 0.f)`) и `ViewModeRelocationRotation` (по умолчанию `FRotator(0.f, 90.f, 0.f)`) настраиваются в Details panel `AAwsTutorial_PlayerController`.
+- **Первоочередное перемещение стенда (Relocation FIRST):**
+  - В `OpenFurniturePreview()` перед спавном превью-актора и расчетом любых параметров `TargetBooth` сначала сохраняет свой исходный трансформ (`CachedOriginalBoothTransform`), а затем мгновенно перемещается в студийные координаты `(-10000, 0, 0)` с поворотом `(0, 90, 0)`.
+  - Все последующие действия превью выполняются уже в чистой изолированной студийной позиции.
+- **Точный возврат на место при выходе (`CloseFurniturePreview`):**
+  - При закрытии режима просмотра (`Escape`, кнопка «Назад») исходный стенд мгновенно возвращается в свои оригинальные координаты и поворот в комнате через `SetActorTransform(CachedOriginalBoothTransform)`.

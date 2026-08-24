@@ -13,6 +13,7 @@ class AShowroomBooth;
 class AFurniturePreviewActor;
 class UUserWidget;
 class UPrimitiveComponent;
+class ACameraActor;
 
 class UPixelStreamingInput;
 
@@ -191,11 +192,41 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | RoomPlanner Config", meta = (DisplayName = "Planner Relocation Location"))
     FVector RoomPlannerRelocationLocation = FVector(-10000.f, 0.f, 0.f);
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | ViewMode Config", meta = (DisplayName = "View Mode Relocation Location"))
+    FVector ViewModeRelocationLocation = FVector(-10000.f, 0.f, 0.f);
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | ViewMode Config", meta = (DisplayName = "View Mode Relocation Rotation"))
+    FRotator ViewModeRelocationRotation = FRotator(0.f, 90.f, 0.f);
+
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleRoomPlannerUI(bool bOpen);
+
+    /** Starts a smooth 60 FPS cinematic studio auto-tour around the target booth. */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
+    void StartCinematicTour(AShowroomBooth* TargetBooth = nullptr);
+
+    /** Stops the active cinematic tour and returns camera control seamlessly to the player. */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
+    void StopCinematicTour();
+
+    /** Toggles the cinematic tour on/off. */
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
+    void ToggleCinematicTour(AShowroomBooth* TargetBooth = nullptr);
+
+    /** True if Cinematic Tour is currently active and animating. */
+    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Cinematic Tour")
+    bool bIsCinematicTourActive = false;
+
+    /** Orbit speed in degrees per second. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Cinematic Tour Config")
+    float CinematicTourOrbitSpeed = 20.0f;
+
+    /** Base distance from booth focal center for fallback frontal arc. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Cinematic Tour Config")
+    float CinematicTourBaseRadius = 180.0f;
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | PixelStreaming", meta = (DisplayName = "Send Open URL to Browser"))
     void SendOpenURLToBrowser(const FString& URL);
@@ -224,6 +255,8 @@ private:
     TObjectPtr<AFurniturePreviewActor> ActivePreviewActor;
 
     FRotator SavedControlRotation;
+    FTransform CachedOriginalBoothTransform;
+    bool bHasCachedBoothTransform = false;
 
     UFUNCTION()
     void OnTargetBoothProductChanged(AShowroomBooth* Booth, FName NewProductID);
@@ -243,8 +276,14 @@ private:
     void OnLeftMouseButtonReleased();
     void OnLeftMouseButtonClicked();
 
+    void OnRightMouseButtonDown();
+    void OnRightMouseButtonReleased();
+
     float LMBPressTime = 0.f;
     FVector2D LMBPressMousePos = FVector2D::ZeroVector;
+
+    float RMBPressTime = 0.f;
+    FVector2D RMBPressMousePos = FVector2D::ZeroVector;
 
     /** True while the camera is being rotated with RMB held.
      *  Set by AddYawInput/AddPitchInput; reset on RMB release. */
@@ -255,7 +294,7 @@ private:
 
     /**
      * Cached reference to the UPixelStreamingInput component owned by the PS plugin.
-     * Populated ONCE in BeginPlay() via GetComponentByClass вЂ” NOT CreateDefaultSubobject.
+     * Populated ONCE in BeginPlay() via GetComponentByClass — NOT CreateDefaultSubobject.
      * FIX 2: ActivePixelStreamingInput removed (was causing duplicate delegate stacking).
      */
     UPROPERTY()
@@ -265,6 +304,12 @@ private:
     float ClipboardCheckInterval = 0.2f;
     float ClipboardCheckTimer = 0.0f;
 
+    // ── Cinematic Tour Private State ──────────────────────────────────────
+    FTimerHandle CinematicTourTimerHandle;
+    float CinematicTourElapsedTime = 0.0f;
+    TWeakObjectPtr<AShowroomBooth> CinematicTourTargetBooth;
+
+    void UpdateCinematicTourStep();
 
     UFUNCTION()
     void OnPixelStreamingInput(const FString& Descriptor);
