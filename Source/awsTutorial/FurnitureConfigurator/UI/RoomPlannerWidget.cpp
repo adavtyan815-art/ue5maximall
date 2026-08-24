@@ -31,11 +31,9 @@ void URoomPlannerWidget::NativeConstruct()
 				*PlannerRelocationLocation.ToString(), *CachedOriginalPlayerLocation.ToString());
 
 			CharPawn->TeleportTo(PlannerRelocationLocation, FRotator::ZeroRotator, false, true);
-			CharPawn->SetActorHiddenInGame(true);
 			if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
 			{
 				MoveComp->StopMovementImmediately();
-				MoveComp->SetMovementMode(EMovementMode::MOVE_None);
 			}
 		}
 	}
@@ -125,11 +123,9 @@ void URoomPlannerWidget::NativeDestruct()
 				UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Restoring player to original location: %s (Rot: %s)"),
 					*CachedOriginalPlayerLocation.ToString(), *CachedOriginalPlayerRotation.ToString());
 
-				CharPawn->SetActorHiddenInGame(false);
 				CharPawn->TeleportTo(CachedOriginalPlayerLocation, CachedOriginalPlayerRotation, false, true);
 				if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
 				{
-					MoveComp->SetMovementMode(EMovementMode::MOVE_Walking);
 					MoveComp->StopMovementImmediately();
 				}
 			}
@@ -471,11 +467,9 @@ void URoomPlannerWidget::ClosePlanner()
 				UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Restoring player to original location: %s (Rot: %s)"),
 					*CachedOriginalPlayerLocation.ToString(), *CachedOriginalPlayerRotation.ToString());
 
-				CharPawn->SetActorHiddenInGame(false);
 				CharPawn->TeleportTo(CachedOriginalPlayerLocation, CachedOriginalPlayerRotation, false, true);
 				if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
 				{
-					MoveComp->SetMovementMode(EMovementMode::MOVE_Walking);
 					MoveComp->StopMovementImmediately();
 				}
 			}
