@@ -367,7 +367,15 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 
 AAwsTutorial_PlayerController* URoomPlannerWidget::GetPreviewController() const
 {
-	return Cast<AAwsTutorial_PlayerController>(GetOwningPlayer());
+	if (APlayerController* PC = GetOwningPlayer())
+	{
+		return Cast<AAwsTutorial_PlayerController>(PC);
+	}
+	if (UWorld* World = GetWorld())
+	{
+		return Cast<AAwsTutorial_PlayerController>(UGameplayStatics::GetPlayerController(World, 0));
+	}
+	return nullptr;
 }
 
 void URoomPlannerWidget::HandleRoomPlannerUpdated(const FString& JSONState)
@@ -824,18 +832,5 @@ float URoomPlannerWidget::GetPerimeterLengthM() const
 		return PlannerManager->CalculatePerimeterM();
 	}
 	return 0.0f;
-}
-
-AAwsTutorial_PlayerController* URoomPlannerWidget::GetPreviewController() const
-{
-	if (APlayerController* PC = GetOwningPlayer())
-	{
-		return Cast<AAwsTutorial_PlayerController>(PC);
-	}
-	if (UWorld* World = GetWorld())
-	{
-		return Cast<AAwsTutorial_PlayerController>(UGameplayStatics::GetPlayerController(World, 0));
-	}
-	return nullptr;
 }
 
