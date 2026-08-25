@@ -198,6 +198,14 @@ bool FSimpleGLBWriter::SerializeToGLB(const TArray<FGLBPrimitive>& Primitives, T
         {
             MatObj->SetBoolField(TEXT("doubleSided"), true);
         }
+        if (!Prim.AlphaMode.IsEmpty() && !Prim.AlphaMode.Equals(TEXT("OPAQUE"), ESearchCase::IgnoreCase))
+        {
+            MatObj->SetStringField(TEXT("alphaMode"), Prim.AlphaMode);
+            if (Prim.AlphaMode.Equals(TEXT("MASK"), ESearchCase::IgnoreCase))
+            {
+                MatObj->SetNumberField(TEXT("alphaCutoff"), Prim.AlphaCutoff);
+            }
+        }
         MaterialsArray.Add(MakeShared<FJsonValueObject>(MatObj));
 
         const int32 CurrentMatIdx = MaterialIndexCounter++;

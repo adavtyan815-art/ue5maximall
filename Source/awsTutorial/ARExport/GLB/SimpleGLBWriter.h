@@ -21,6 +21,12 @@ struct FGLBPrimitive
     float Roughness = 0.5f;
     bool bDoubleSided = false;
 
+    /** glTF Alpha Mode: "OPAQUE", "MASK", or "BLEND" */
+    FString AlphaMode = TEXT("OPAQUE");
+
+    /** glTF Alpha Cutoff for MASK alphaMode */
+    float AlphaCutoff = 0.5f;
+
     /** Base Color / Diffuse texture embedded into .glb binary payload */
     FString BaseColorTextureKey;
     TArray<uint8> BaseColorTexturePNG;

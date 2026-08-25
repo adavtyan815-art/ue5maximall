@@ -79,6 +79,8 @@ namespace
         float Metallic = 0.0f;
         float Roughness = 0.5f;
         bool bTwoSided = false;
+        FString AlphaMode = TEXT("OPAQUE");
+        float AlphaCutoff = 0.5f;
         UTexture2D* BaseColorTexture = nullptr;
         UTexture2D* NormalTexture = nullptr;
         FUVTransform UVTransform;
@@ -351,9 +353,10 @@ namespace
 
     /**
      * GPU/Analytical Material BaseColor Baker:
-     * Evaluates the material graph by multiplying the base color texture's sRGB texels
-     * with the active runtime LinearColor parameter in Linear float space, then converting
-     * back to sRGB. Pixels outside valid mesh UV triangles remain clean neutral zero (RGBA 0,0,0,0).
+     * Generically evaluates texture data based on intrinsic texture properties:
+     * - Full-color diffuse/albedo textures (wood, stone, marble, photo): preserves authentic RGB channels via linear tint multiplication.
+     * - Monochrome modulation/relief masks (bump masks, fluting): evaluates material graph (Luminance^2 * Tint).
+     * Pixels outside valid mesh UV triangles remain clean neutral zero (RGBA 0,0,0,0).
      */
     bool BakeTextureWithTintPNG(
         UTexture2D* Tex,
@@ -380,6 +383,22 @@ namespace
                 const int64 NumPixels = SourceImage.RawData.Num() / 4;
                 const bool bUseMask = (OptionalUVCoverageMask != nullptr && OptionalUVCoverageMask->Num() == NumPixels);
 
+                // Generic texture classification: Measure chromatic difference across sampled pixels
+                int64 ChromaticDiffSum = 0;
+                int64 SampleCount = 0;
+                const int64 Step = FMath::Max<int64>(1, NumPixels / 200);
+                for (int64 i = 0; i < NumPixels; i += Step)
+                {
+                    const int64 ByteIdx = i * 4;
+                    const int32 B8 = SourceImage.RawData[ByteIdx];
+                    const int32 G8 = SourceImage.RawData[ByteIdx + 1];
+                    const int32 R8 = SourceImage.RawData[ByteIdx + 2];
+                    ChromaticDiffSum += FMath::Abs(R8 - G8) + FMath::Abs(G8 - B8) + FMath::Abs(R8 - B8);
+                    SampleCount++;
+                }
+
+                const bool bIsFullColorTexture = (SampleCount > 0 && (ChromaticDiffSum / SampleCount) > 12);
+
                 for (int64 i = 0; i < NumPixels; ++i)
                 {
                     const int64 ByteIdx = i * 4;
@@ -398,22 +417,44 @@ namespace
                     const uint8 G8 = SourceImage.RawData[ByteIdx + 1];
                     const uint8 R8 = SourceImage.RawData[ByteIdx + 2];
 
-                    // Material Graph: Desaturation (Luminance) -> Power(2.0) -> Multiply Tint
-                    const FLinearColor RawLin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
-                    const float Lum = 0.299f * RawLin.R + 0.587f * RawLin.G + 0.114f * RawLin.B;
-                    const float LumSq = Lum * Lum;
+                    if (bIsFullColorTexture)
+                    {
+                        // 1. Full-Color Diffuse/Albedo Texture (Wood, Marble, Stone, Fabric):
+                        // Linear color multiplication (RGB * TintColor) preserving authentic natural colors
+                        if (!TintColor.Equals(FLinearColor::White, 1e-3f))
+                        {
+                            const FLinearColor RawLin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
+                            FLinearColor Lin;
+                            Lin.R = RawLin.R * TintColor.R;
+                            Lin.G = RawLin.G * TintColor.G;
+                            Lin.B = RawLin.B * TintColor.B;
 
-                    FLinearColor Lin;
-                    Lin.R = LumSq * TintColor.R;
-                    Lin.G = LumSq * TintColor.G;
-                    Lin.B = LumSq * TintColor.B;
+                            const FColor BakedColor = Lin.ToFColor(true);
+                            SourceImage.RawData[ByteIdx]     = BakedColor.B;
+                            SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
+                            SourceImage.RawData[ByteIdx + 2] = BakedColor.R;
+                        }
+                    }
+                    else
+                    {
+                        // 2. Grayscale Modulation / Relief Mask (e.g. Fluted Facade Bump Mask):
+                        // Evaluates material graph: Desaturation (Luminance) -> Power(2.0) -> Multiply Tint
+                        const FLinearColor RawLin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
+                        const float Lum = 0.299f * RawLin.R + 0.587f * RawLin.G + 0.114f * RawLin.B;
+                        const float LumSq = Lum * Lum;
 
-                    // Convert Linear float back to sRGB byte
-                    const FColor BakedColor = Lin.ToFColor(true);
-                    SourceImage.RawData[ByteIdx]     = BakedColor.B;
-                    SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
-                    SourceImage.RawData[ByteIdx + 2] = BakedColor.R;
-                    SourceImage.RawData[ByteIdx + 3] = 0;
+                        FLinearColor Lin;
+                        Lin.R = LumSq * TintColor.R;
+                        Lin.G = LumSq * TintColor.G;
+                        Lin.B = LumSq * TintColor.B;
+
+                        const FColor BakedColor = Lin.ToFColor(true);
+                        SourceImage.RawData[ByteIdx]     = BakedColor.B;
+                        SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
+                        SourceImage.RawData[ByteIdx + 2] = BakedColor.R;
+                    }
+
+                    SourceImage.RawData[ByteIdx + 3] = 255;
                 }
 
                 TArray64<uint8> CompressedBytes;
@@ -488,7 +529,7 @@ namespace
                 State.UVTransform.TilingPivot = FVector2f(Val.R, Val.G);
             }
             // V-Ray reflection color (the visible surface color of Datasmith metals)
-            else if (LowerName.Contains(TEXT("reflection")) && !LowerName.Contains(TEXT("gloss")))
+            else if (LowerName.Equals(TEXT("reflection")) || LowerName.Equals(TEXT("reflection (4)")) || LowerName.Equals(TEXT("refl_color")))
             {
                 if (!bHasReflection)
                 {
@@ -496,17 +537,19 @@ namespace
                     ReflectionColor = Val;
                 }
             }
-            // Base Color / Diffuse
-            else if (LowerName.Contains(TEXT("basecolor")) || LowerName.Contains(TEXT("base_color")) ||
-                     LowerName.Contains(TEXT("albedo")) || LowerName.Contains(TEXT("diffuse")) ||
-                     LowerName.Contains(TEXT("maincolor")) || LowerName.Contains(TEXT("tint")) ||
-                     LowerName.Equals(TEXT("color")))
+            // Base Color / Diffuse (strict name matching to avoid capturing secondary lighting/scatter vectors)
+            else if (LowerName.Equals(TEXT("basecolor")) || LowerName.Equals(TEXT("base_color")) ||
+                     LowerName.Equals(TEXT("albedo")) || LowerName.Equals(TEXT("maincolor")) ||
+                     LowerName.Equals(TEXT("diffuse")) || LowerName.Equals(TEXT("diffuse (1)")) ||
+                     LowerName.Equals(TEXT("color")) || LowerName.Equals(TEXT("tint")))
             {
-                if (!bBaseColorFound)
-                {
-                    State.BaseColor = Val;
-                    bBaseColorFound = true;
-                }
+                State.BaseColor = Val;
+                bBaseColorFound = true;
+            }
+            else if (!bBaseColorFound && (LowerName.Contains(TEXT("basecolor")) || LowerName.Contains(TEXT("base_color")) || LowerName.Contains(TEXT("albedo"))))
+            {
+                State.BaseColor = Val;
+                bBaseColorFound = true;
             }
         }
 
@@ -523,12 +566,12 @@ namespace
                 continue;
             }
 
-            if (LowerName.Contains(TEXT("metallic")) || LowerName.Contains(TEXT("metalness")) || LowerName.Equals(TEXT("metal")))
+            if (LowerName.Equals(TEXT("metallic")) || LowerName.Equals(TEXT("metalness")) || LowerName.Equals(TEXT("metal")))
             {
                 State.Metallic = FMath::Clamp(SVal, 0.0f, 1.0f);
                 bMetallicExplicit = true;
             }
-            else if (LowerName.Contains(TEXT("roughness")) || LowerName.Contains(TEXT("rough")))
+            else if (LowerName.Equals(TEXT("roughness")) || LowerName.Equals(TEXT("rough")))
             {
                 State.Roughness = FMath::Clamp(SVal, 0.0f, 1.0f);
                 bRoughnessExplicit = true;
@@ -595,7 +638,7 @@ namespace
         const float GlossValue = bHasReflGloss ? ReflGloss : GenericGloss;
         if (!bRoughnessExplicit && bHasGloss)
         {
-            State.Roughness = FMath::Clamp(1.0f - GlossValue, 0.03f, 1.0f);
+            State.Roughness = FMath::Clamp(1.0f - GlossValue, 0.04f, 1.0f);
         }
 
         // Metals: a COLORED reflection over a dark diffuse (gold/brass), or a true mirror
@@ -613,16 +656,63 @@ namespace
             if ((bColoredReflection && bDarkBase) || bMirrorLike)
             {
                 State.BaseColor = ReflectionColor;
-                State.Metallic = 1.0f;
+                State.Metallic = bColoredReflection ? 0.85f : 0.95f; // Rich specular metal reflectance
                 State.BaseColorTexture = nullptr; // Unused master graph diffuse texture is disregarded for true metals
                 if (!bRoughnessExplicit)
                 {
-                    State.Roughness = FMath::Clamp(1.0f - MirrorGloss, 0.03f, 1.0f);
+                    State.Roughness = FMath::Clamp(1.0f - MirrorGloss, 0.04f, 1.0f);
                 }
             }
         }
 
-        State.BaseColor.A = 1.0f;   // opaque; a stray parameter alpha would ghost the mesh
+        // ── 5. BlendMode & Transparency Resolution ───────────────────────────
+        const EBlendMode BlendMode = SlotMat->GetBlendMode();
+        bool bAlphaExplicit = false;
+        float ParsedAlpha = 1.0f;
+
+        // Check for explicit Opacity / Alpha scalar parameters
+        for (const FMaterialParameterInfo& SInfo : SInfos)
+        {
+            const FString LowerName = SInfo.Name.ToString().ToLower();
+            float SVal = 1.0f;
+            if (SlotMat->GetScalarParameterValue(SInfo, SVal))
+            {
+                if (LowerName.Equals(TEXT("opacity")) || LowerName.Equals(TEXT("alpha")) ||
+                    LowerName.Contains(TEXT("transparen")) || (LowerName.Contains(TEXT("refract")) && !LowerName.Contains(TEXT("ior"))))
+                {
+                    ParsedAlpha = FMath::Clamp(SVal, 0.01f, 1.0f);
+                    bAlphaExplicit = true;
+                    break;
+                }
+            }
+        }
+
+        // Ceramic / Opaque check: V-Ray imported shaders sometimes have BLEND_Translucent with high diffuse
+        // or diffuse textures, but they are solid dielectrics (like porcelain sinks).
+        const bool bHasSolidDiffuse = (State.BaseColorTexture != nullptr) || (bBaseColorFound && State.BaseColor.GetLuminance() > 0.25f);
+        const bool bIsGenuineTranslucent = (BlendMode == BLEND_Translucent || BlendMode == BLEND_Additive || BlendMode == BLEND_AlphaComposite)
+                                         && (bAlphaExplicit || !bHasSolidDiffuse);
+
+        if (bIsGenuineTranslucent)
+        {
+            State.AlphaMode = TEXT("BLEND");
+            State.BaseColor.A = bAlphaExplicit ? ParsedAlpha : 0.25f;
+            if (!bRoughnessExplicit)
+            {
+                State.Roughness = 0.05f; // Translucent glass is smooth and reflective
+            }
+        }
+        else if (BlendMode == BLEND_Masked)
+        {
+            State.AlphaMode = TEXT("MASK");
+            State.AlphaCutoff = SlotMat->GetOpacityMaskClipValue();
+            State.BaseColor.A = 1.0f;
+        }
+        else
+        {
+            State.AlphaMode = TEXT("OPAQUE");
+            State.BaseColor.A = 1.0f;
+        }
 
         return State;
     }
@@ -731,6 +821,8 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             Prim.BaseColor = PBR.BaseColor;
             Prim.Metallic = PBR.Metallic;
             Prim.Roughness = PBR.Roughness;
+            Prim.AlphaMode = PBR.AlphaMode;
+            Prim.AlphaCutoff = PBR.AlphaCutoff;
             // The UE->glTF axis conversion below flips triangle winding, so single-sided
             // materials would render inside-out (culled faces) in glTF viewers. Keep all
             // primitives double-sided until winding is reversed during export.
