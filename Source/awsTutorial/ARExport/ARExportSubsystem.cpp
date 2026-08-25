@@ -61,7 +61,15 @@ namespace
         UMaterial* BaseMat = Mat->GetMaterial();
         if (BaseMat)
         {
-            TArray<UMaterialExpression*> ExpressionsToProcess = BaseMat->GetExpressions();
+            TArray<UMaterialExpression*> ExpressionsToProcess;
+            for (const TObjectPtr<UMaterialExpression>& ExprPtr : BaseMat->GetExpressions())
+            {
+                if (ExprPtr)
+                {
+                    ExpressionsToProcess.Add(ExprPtr.Get());
+                }
+            }
+
             TSet<UMaterialFunctionInterface*> ProcessedFunctions;
 
             for (int32 i = 0; i < ExpressionsToProcess.Num(); ++i)
@@ -93,7 +101,13 @@ namespace
                         ProcessedFunctions.Add(FuncCall->MaterialFunction);
                         if (UMaterialFunction* MF = Cast<UMaterialFunction>(FuncCall->MaterialFunction))
                         {
-                            ExpressionsToProcess.Append(MF->GetExpressions());
+                            for (const TObjectPtr<UMaterialExpression>& FuncExprPtr : MF->GetExpressions())
+                            {
+                                if (FuncExprPtr)
+                                {
+                                    ExpressionsToProcess.Add(FuncExprPtr.Get());
+                                }
+                            }
                         }
                     }
                 }
