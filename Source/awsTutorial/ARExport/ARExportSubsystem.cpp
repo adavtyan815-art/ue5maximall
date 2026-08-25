@@ -30,17 +30,6 @@
 
 namespace
 {
-    /** Applies sRGB / Gamma 2.2 correction to color factors to prevent washed-out solid colors in glTF/WebAR viewers */
-    FLinearColor GammaCorrectColor(const FLinearColor& InColor)
-    {
-        return FLinearColor(
-            FMath::Pow(FMath::Clamp(InColor.R, 0.0f, 1.0f), 2.2f),
-            FMath::Pow(FMath::Clamp(InColor.G, 0.0f, 1.0f), 2.2f),
-            FMath::Pow(FMath::Clamp(InColor.B, 0.0f, 1.0f), 2.2f),
-            InColor.A
-        );
-    }
-
     /** Holds UV Transformation parameters (Tiling, Offset, Rotation) extracted from Material Instances */
     struct FUVTransform
     {
@@ -517,7 +506,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             // ── 3. Build GLB Primitive ───────────────────────────────────────
             FGLBPrimitive Prim;
             Prim.MeshName = FString::Printf(TEXT("%s_Slot%d"), *CompName, MatSlotIndex);
-            Prim.BaseColor = GammaCorrectColor(PBR.BaseColor);
+            Prim.BaseColor = PBR.BaseColor;
             Prim.Metallic = PBR.Metallic;
             Prim.Roughness = PBR.Roughness;
 
