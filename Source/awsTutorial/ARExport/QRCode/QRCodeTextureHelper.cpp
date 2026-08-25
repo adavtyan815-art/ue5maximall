@@ -29,7 +29,6 @@ UTexture2D* FQRCodeTextureHelper::GenerateQRCodeTexture(const FString& TextToEnc
         return nullptr;
     }
 
-    // Clamp resolution to a power of 2 or reasonable multiple
     const int32 TexWidth = TargetResolution;
     const int32 TexHeight = TargetResolution;
     const float ModulePixelSize = static_cast<float>(TexWidth) / static_cast<float>(TotalModules);
@@ -37,7 +36,7 @@ UTexture2D* FQRCodeTextureHelper::GenerateQRCodeTexture(const FString& TextToEnc
     TArray<FColor> Pixels;
     Pixels.SetNumUninitialized(TexWidth * TexHeight);
 
-    const FColor BlackColor(20, 20, 25, 255);
+    const FColor BlackColor(0, 0, 0, 255);
     const FColor WhiteColor(255, 255, 255, 255);
 
     for (int32 Y = 0; Y < TexHeight; ++Y)

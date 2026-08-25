@@ -48,5 +48,5 @@ public:
 
 private:
     void ExtractPrimitivesFromBooth(AShowroomBooth* Booth, TArray<FGLBPrimitive>& OutPrimitives);
-    void ExtractComponentGeometry(UStaticMeshComponent* Comp, const FString& MeshName, const FLinearColor& BaseColor, float Metallic, float Roughness, TArray<FGLBPrimitive>& OutPrimitives);
+    void ExtractComponentGeometry(AShowroomBooth* Booth, UStaticMeshComponent* Comp, EFurnitureComponentType CompType, const FString& MeshName, const FLinearColor& FallbackColor, float FallbackMetallic, float FallbackRoughness, TArray<FGLBPrimitive>& OutPrimitives);
 };

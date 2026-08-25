@@ -7,6 +7,8 @@
 #include "Engine/StaticMesh.h"
 #include "StaticMeshResources.h"
 #include "Rendering/PositionVertexBuffer.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
@@ -54,7 +56,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
         return;
     }
 
-    // ── 1. Extract Geometry on Game Thread (Thread-Safe Memory Copy) ─────────
+    // ── 1. Extract Geometry & Assembled Transforms on Game Thread ────────────
     TArray<FGLBPrimitive> Primitives;
     ExtractPrimitivesFromBooth(TargetBooth, Primitives);
 
@@ -104,7 +106,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             UTexture2D* QRTexture = nullptr;
             if (bWriteSuccess)
             {
-                QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(URL, 512);
+                QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(URL, 1024, 6);
             }
 
             OnFinished.ExecuteIfBound(bWriteSuccess, FullFilePath, URL, QRTexture);
@@ -116,46 +118,80 @@ void UARExportSubsystem::ExtractPrimitivesFromBooth(AShowroomBooth* Booth, TArra
 {
     if (!Booth) return;
 
-    auto GetCustomColor = [Booth](EFurnitureComponentType CompType, const FLinearColor& FallbackColor) -> FLinearColor
-    {
-        for (const FCustomColorOverride& Override : Booth->CustomColors)
-        {
-            if (Override.ComponentType == CompType)
-            {
-                return Override.CustomColor;
-            }
-        }
-        return FallbackColor;
+    // 1. Cabinet Body (Warm wood / lacquer tone fallback)
+    ExtractComponentGeometry(Booth, Booth->MainCabinet.Get(), EFurnitureComponentType::Cabinet, TEXT("Cabinet"),
+        FLinearColor(0.55f, 0.42f, 0.32f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+
+    // 2. Closet Body
+    ExtractComponentGeometry(Booth, Booth->ClosetMesh.Get(), EFurnitureComponentType::Closet, TEXT("Closet"),
+        FLinearColor(0.55f, 0.42f, 0.32f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+
+    // 3. Cabinet Doors
+    ExtractComponentGeometry(Booth, Booth->DoorMeshSlot0.Get(), EFurnitureComponentType::Doors, TEXT("CabinetDoor_0"),
+        FLinearColor(0.58f, 0.45f, 0.35f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+    ExtractComponentGeometry(Booth, Booth->DoorMeshSlot1.Get(), EFurnitureComponentType::Doors, TEXT("CabinetDoor_1"),
+        FLinearColor(0.58f, 0.45f, 0.35f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+
+    // 4. Closet Doors
+    ExtractComponentGeometry(Booth, Booth->ClosetDoorMeshSlot0.Get(), EFurnitureComponentType::Doors, TEXT("ClosetDoor_0"),
+        FLinearColor(0.58f, 0.45f, 0.35f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+    ExtractComponentGeometry(Booth, Booth->ClosetDoorMeshSlot1.Get(), EFurnitureComponentType::Doors, TEXT("ClosetDoor_1"),
+        FLinearColor(0.58f, 0.45f, 0.35f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+
+    // 5. Countertop (Stone / Quartz finish)
+    ExtractComponentGeometry(Booth, Booth->CountertopMesh.Get(), EFurnitureComponentType::Countertop, TEXT("Countertop"),
+        FLinearColor(0.88f, 0.88f, 0.88f, 1.0f), 0.05f, 0.25f, OutPrimitives);
+
+    // 6. Sink (Glossy white ceramic)
+    ExtractComponentGeometry(Booth, Booth->SinkMesh.Get(), EFurnitureComponentType::Sink, TEXT("Sink"),
+        FLinearColor(0.96f, 0.96f, 0.96f, 1.0f), 0.0f, 0.1f, OutPrimitives);
+
+    // 7. Faucet (Polished Italian Brass / Gold)
+    ExtractComponentGeometry(Booth, Booth->FaucetMesh.Get(), EFurnitureComponentType::Faucet, TEXT("Faucet"),
+        FLinearColor(0.85f, 0.68f, 0.28f, 1.0f), 0.92f, 0.2f, OutPrimitives);
+
+    // 8. Mirror (Reflective mirror surface)
+    ExtractComponentGeometry(Booth, Booth->MirrorMesh.Get(), EFurnitureComponentType::Mirror, TEXT("Mirror"),
+        FLinearColor(0.92f, 0.95f, 0.98f, 1.0f), 0.98f, 0.02f, OutPrimitives);
+
+    // 9. Scan for any additional custom attached static mesh components (Shelves, Legs, Accents)
+    TArray<UStaticMeshComponent*> AllMeshComponents;
+    Booth->GetComponents<UStaticMeshComponent>(AllMeshComponents);
+
+    TSet<UStaticMeshComponent*> KnownComponents = {
+        Booth->MainCabinet.Get(),
+        Booth->ClosetMesh.Get(),
+        Booth->DoorMeshSlot0.Get(),
+        Booth->DoorMeshSlot1.Get(),
+        Booth->ClosetDoorMeshSlot0.Get(),
+        Booth->ClosetDoorMeshSlot1.Get(),
+        Booth->CountertopMesh.Get(),
+        Booth->SinkMesh.Get(),
+        Booth->FaucetMesh.Get(),
+        Booth->MirrorMesh.Get()
     };
 
-    // Cabinet
-    ExtractComponentGeometry(Booth->MainCabinet.Get(), TEXT("Cabinet"), GetCustomColor(EFurnitureComponentType::Cabinet, FLinearColor(0.85f, 0.85f, 0.85f)), 0.05f, 0.6f, OutPrimitives);
-
-    // Closet
-    ExtractComponentGeometry(Booth->ClosetMesh.Get(), TEXT("Closet"), GetCustomColor(EFurnitureComponentType::Closet, FLinearColor(0.85f, 0.85f, 0.85f)), 0.05f, 0.6f, OutPrimitives);
-
-    // Doors
-    ExtractComponentGeometry(Booth->DoorMeshSlot0.Get(), TEXT("Door_0"), GetCustomColor(EFurnitureComponentType::Doors, FLinearColor(0.9f, 0.9f, 0.9f)), 0.05f, 0.5f, OutPrimitives);
-    ExtractComponentGeometry(Booth->DoorMeshSlot1.Get(), TEXT("Door_1"), GetCustomColor(EFurnitureComponentType::Doors, FLinearColor(0.9f, 0.9f, 0.9f)), 0.05f, 0.5f, OutPrimitives);
-    ExtractComponentGeometry(Booth->ClosetDoorMeshSlot0.Get(), TEXT("ClosetDoor_0"), GetCustomColor(EFurnitureComponentType::Doors, FLinearColor(0.9f, 0.9f, 0.9f)), 0.05f, 0.5f, OutPrimitives);
-    ExtractComponentGeometry(Booth->ClosetDoorMeshSlot1.Get(), TEXT("ClosetDoor_1"), GetCustomColor(EFurnitureComponentType::Doors, FLinearColor(0.9f, 0.9f, 0.9f)), 0.05f, 0.5f, OutPrimitives);
-
-    // Countertop
-    ExtractComponentGeometry(Booth->CountertopMesh.Get(), TEXT("Countertop"), GetCustomColor(EFurnitureComponentType::Countertop, FLinearColor(0.95f, 0.95f, 0.95f)), 0.1f, 0.3f, OutPrimitives);
-
-    // Sink
-    ExtractComponentGeometry(Booth->SinkMesh.Get(), TEXT("Sink"), GetCustomColor(EFurnitureComponentType::Sink, FLinearColor(1.0f, 1.0f, 1.0f)), 0.05f, 0.2f, OutPrimitives);
-
-    // Faucet (Italian brass or polished chrome)
-    ExtractComponentGeometry(Booth->FaucetMesh.Get(), TEXT("Faucet"), GetCustomColor(EFurnitureComponentType::Faucet, FLinearColor(0.85f, 0.7f, 0.3f)), 0.85f, 0.25f, OutPrimitives);
-
-    // Mirror
-    ExtractComponentGeometry(Booth->MirrorMesh.Get(), TEXT("Mirror"), GetCustomColor(EFurnitureComponentType::Mirror, FLinearColor(0.9f, 0.95f, 1.0f)), 0.95f, 0.05f, OutPrimitives);
+    for (UStaticMeshComponent* ExtraComp : AllMeshComponents)
+    {
+        if (ExtraComp && !KnownComponents.Contains(ExtraComp) && ExtraComp->IsVisible() && ExtraComp->GetStaticMesh())
+        {
+            ExtractComponentGeometry(Booth, ExtraComp, EFurnitureComponentType::Cabinet, ExtraComp->GetName(),
+                FLinearColor(0.55f, 0.42f, 0.32f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+        }
+    }
 }
 
-void UARExportSubsystem::ExtractComponentGeometry(UStaticMeshComponent* Comp, const FString& MeshName, const FLinearColor& BaseColor, float Metallic, float Roughness, TArray<FGLBPrimitive>& OutPrimitives)
+void UARExportSubsystem::ExtractComponentGeometry(
+    AShowroomBooth* Booth,
+    UStaticMeshComponent* Comp,
+    EFurnitureComponentType CompType,
+    const FString& MeshName,
+    const FLinearColor& FallbackColor,
+    float FallbackMetallic,
+    float FallbackRoughness,
+    TArray<FGLBPrimitive>& OutPrimitives)
 {
-    if (!Comp || !Comp->IsVisible() || !Comp->GetStaticMesh())
+    if (!Booth || !Comp || !Comp->IsVisible() || !Comp->GetStaticMesh())
     {
         return;
     }
@@ -166,7 +202,12 @@ void UARExportSubsystem::ExtractComponentGeometry(UStaticMeshComponent* Comp, co
         return;
     }
 
-    const FTransform CompTransform = Comp->GetRelativeTransform();
+    // ── 1. Calculate Exact Assembled Pose Relative to Booth Root ─────────────
+    // Using GetComponentTransform().GetRelativeTransform(Booth->GetActorTransform())
+    // guarantees that parent-child attachments (Sink->Countertop->Cabinet->Root)
+    // are fully resolved into a single unified booth-space coordinate frame.
+    const FTransform ComponentToBoothTransform = Comp->GetComponentTransform().GetRelativeTransform(Booth->GetActorTransform());
+
     const FStaticMeshLODResources& LOD = Mesh->GetRenderData()->LODResources[0];
     const FPositionVertexBuffer& PosBuffer = LOD.VertexBuffers.PositionVertexBuffer;
     const FStaticMeshVertexBuffer& VertBuffer = LOD.VertexBuffers.StaticMeshVertexBuffer;
@@ -178,30 +219,84 @@ void UARExportSubsystem::ExtractComponentGeometry(UStaticMeshComponent* Comp, co
         return;
     }
 
+    // ── 2. Resolve Material Color & PBR Parameters ───────────────────────────
+    FLinearColor ResolvedColor = FallbackColor;
+    float ResolvedMetallic = FallbackMetallic;
+    float ResolvedRoughness = FallbackRoughness;
+
+    // Check custom RAL/NCS Color Override on the booth first
+    bool bHasCustomColor = false;
+    for (const FCustomColorOverride& Override : Booth->CustomColors)
+    {
+        if (Override.ComponentType == CompType)
+        {
+            ResolvedColor = Override.CustomColor;
+            bHasCustomColor = true;
+            break;
+        }
+    }
+
+    // If no custom RAL/NCS override, query the active Material / Material Instance parameters
+    if (!bHasCustomColor)
+    {
+        UMaterialInterface* Mat = Comp->GetMaterial(0);
+        if (Mat)
+        {
+            FLinearColor ParamColor;
+            if (Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("Color")), ParamColor) ||
+                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("BaseColor")), ParamColor) ||
+                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("Base Color")), ParamColor) ||
+                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("TintColor")), ParamColor) ||
+                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("BaseColor_Tint")), ParamColor) ||
+                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("DiffuseColor")), ParamColor) ||
+                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("CabinetColor")), ParamColor) ||
+                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("WoodColor")), ParamColor))
+            {
+                ResolvedColor = ParamColor;
+            }
+
+            float ParamRoughness = 0.5f;
+            if (Mat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Roughness")), ParamRoughness) ||
+                Mat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Roughness_Value")), ParamRoughness))
+            {
+                ResolvedRoughness = ParamRoughness;
+            }
+
+            float ParamMetallic = 0.0f;
+            if (Mat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Metallic")), ParamMetallic) ||
+                Mat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Metallic_Value")), ParamMetallic))
+            {
+                ResolvedMetallic = ParamMetallic;
+            }
+        }
+    }
+
+    // ── 3. Extract & Transform Vertices into glTF Space ──────────────────────
     FGLBPrimitive Prim;
     Prim.MeshName = MeshName;
-    Prim.BaseColor = BaseColor;
-    Prim.Metallic = Metallic;
-    Prim.Roughness = Roughness;
+    Prim.BaseColor = ResolvedColor;
+    Prim.Metallic = ResolvedMetallic;
+    Prim.Roughness = ResolvedRoughness;
     Prim.Vertices.Reserve(NumVerts);
 
     for (int32 i = 0; i < NumVerts; ++i)
     {
         const FVector3f RawPos = PosBuffer.VertexPosition(i);
-        const FVector WorldPos = CompTransform.TransformPosition(FVector(RawPos));
+        const FVector LocalPos = ComponentToBoothTransform.TransformPosition(FVector(RawPos));
 
-        // Coordinate transformation: Unreal Engine (X=Forward, Y=Right, Z=Up in cm)
-        // -> glTF 2.0 (X=Right, Y=Up, Z=Back in meters)
+        // Coordinate transformation:
+        // Unreal Engine Booth Space (X=Forward into room, Y=Right, Z=Up in cm)
+        // -> glTF 2.0 / WebXR Standard (X=Right, Y=Up, Z=Forward towards viewer in meters)
         FGLBVertex V;
-        V.Position.X = static_cast<float>(WorldPos.Y * 0.01);
-        V.Position.Y = static_cast<float>(WorldPos.Z * 0.01);
-        V.Position.Z = static_cast<float>(-WorldPos.X * 0.01);
+        V.Position.X = static_cast<float>(LocalPos.Y * 0.01);
+        V.Position.Y = static_cast<float>(LocalPos.Z * 0.01);
+        V.Position.Z = static_cast<float>(LocalPos.X * 0.01);
 
         const FVector3f RawNormal = VertBuffer.VertexTangentZ(i);
-        const FVector WorldNormal = CompTransform.TransformVector(FVector(RawNormal)).GetSafeNormal();
-        V.Normal.X = static_cast<float>(WorldNormal.Y);
-        V.Normal.Y = static_cast<float>(WorldNormal.Z);
-        V.Normal.Z = static_cast<float>(-WorldNormal.X);
+        const FVector LocalNormal = ComponentToBoothTransform.TransformVector(FVector(RawNormal)).GetSafeNormal();
+        V.Normal.X = static_cast<float>(LocalNormal.Y);
+        V.Normal.Y = static_cast<float>(LocalNormal.Z);
+        V.Normal.Z = static_cast<float>(LocalNormal.X);
 
         if (VertBuffer.GetNumTexCoords() > 0)
         {
@@ -215,17 +310,14 @@ void UARExportSubsystem::ExtractComponentGeometry(UStaticMeshComponent* Comp, co
         Prim.Vertices.Add(V);
     }
 
-    // Extract Indices
+    // ── 4. Extract Indices (Standard Order Preserved) ────────────────────────
     TArray<uint32> RawIndices;
     IndexBuffer.GetCopy(RawIndices);
 
-    // glTF requires winding order adjustment for coordinate conversion (flip index 1 and 2 per triangle)
     Prim.Indices.Reserve(RawIndices.Num());
-    for (int32 i = 0; i + 2 < RawIndices.Num(); i += 3)
+    for (int32 i = 0; i < RawIndices.Num(); ++i)
     {
         Prim.Indices.Add(RawIndices[i]);
-        Prim.Indices.Add(RawIndices[i + 2]);
-        Prim.Indices.Add(RawIndices[i + 1]);
     }
 
     OutPrimitives.Add(MoveTemp(Prim));
