@@ -78,6 +78,7 @@ namespace
         FLinearColor BaseColor = FLinearColor::White;
         float Metallic = 0.0f;
         float Roughness = 0.5f;
+        bool bTwoSided = false;
         UTexture2D* BaseColorTexture = nullptr;
         UTexture2D* NormalTexture = nullptr;
         FUVTransform UVTransform;
@@ -251,6 +252,7 @@ namespace
             return State;
         }
 
+        State.bTwoSided = SlotMat->IsTwoSided();
         bool bBaseColorFound = false;
 
         // ── 1. Parse Vector Parameters on UMaterialInterface ─────────────────
@@ -470,6 +472,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             Prim.BaseColor = PBR.BaseColor;
             Prim.Metallic = PBR.Metallic;
             Prim.Roughness = PBR.Roughness;
+            Prim.bDoubleSided = PBR.bTwoSided;
 
             // Embed BaseColor Texture (if present)
             if (PBR.BaseColorTexture)

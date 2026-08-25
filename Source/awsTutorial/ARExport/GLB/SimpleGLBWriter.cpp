@@ -149,7 +149,10 @@ bool FSimpleGLBWriter::SerializeToGLB(const TArray<FGLBPrimitive>& Primitives, T
         }
 
         MatObj->SetObjectField(TEXT("pbrMetallicRoughness"), PbrObj);
-        MatObj->SetBoolField(TEXT("doubleSided"), true);
+        if (Prim.bDoubleSided)
+        {
+            MatObj->SetBoolField(TEXT("doubleSided"), true);
+        }
         MaterialsArray.Add(MakeShared<FJsonValueObject>(MatObj));
 
         const int32 CurrentMatIdx = MaterialIndexCounter++;

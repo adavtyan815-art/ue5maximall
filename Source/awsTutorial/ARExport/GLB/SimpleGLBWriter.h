@@ -19,6 +19,7 @@ struct FGLBPrimitive
     FLinearColor BaseColor = FLinearColor::White;
     float Metallic = 0.0f;
     float Roughness = 0.5f;
+    bool bDoubleSided = false;
 
     /** Base Color / Diffuse texture embedded into .glb binary payload */
     FString BaseColorTextureKey;
