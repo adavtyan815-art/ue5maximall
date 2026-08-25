@@ -28,6 +28,10 @@ struct FGLBPrimitive
     /** Normal / Bump map texture embedded into .glb binary payload */
     FString NormalTextureKey;
     TArray<uint8> NormalTexturePNG;
+
+    /** Metallic / Roughness packed texture embedded into .glb binary payload */
+    FString MetallicRoughnessTextureKey;
+    TArray<uint8> MetallicRoughnessTexturePNG;
 };
 
 class AWSTUTORIAL_API FSimpleGLBWriter

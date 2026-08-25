@@ -130,7 +130,9 @@ namespace
             }
         }
 
+#if WITH_EDITORONLY_DATA
         // 2. Expressions in Base Material and all nested Material Functions
+        // (expression graphs are editor-only data, stripped from cooked builds)
         UMaterial* BaseMat = Mat->GetMaterial();
         if (BaseMat)
         {
@@ -186,10 +188,34 @@ namespace
                 }
             }
         }
+#else
+        // Cooked builds: no expression graphs. Classify the textures actually in use -
+        // color maps are sRGB, normal maps are identified by their compression settings.
+        TArray<UTexture*> UsedTextures;
+        Mat->GetUsedTextures(UsedTextures, EMaterialQualityLevel::Num, true, ERHIFeatureLevel::SM5, true);
+        for (UTexture* UsedTex : UsedTextures)
+        {
+            if (UTexture2D* UsedTex2D = Cast<UTexture2D>(UsedTex))
+            {
+                if (UsedTex2D->CompressionSettings == TC_Normalmap)
+                {
+                    OutNormalTextures.AddUnique(UsedTex2D);
+                }
+                else if (UsedTex2D->SRGB)
+                {
+                    OutBaseColorTextures.AddUnique(UsedTex2D);
+                }
+            }
+        }
+#endif
     }
 
-    /** Extracts an uncompressed PNG byte buffer from a UTexture2D for embedding into .glb */
-    bool ExtractTexturePNG(UTexture2D* Tex, TArray<uint8>& OutPNG)
+    /**
+     * Extracts an uncompressed PNG byte buffer from a UTexture2D for embedding into .glb.
+     * bFlipGreenChannel converts UE's DirectX-style normal maps (green down) to the
+     * OpenGL-style convention (green up) that glTF mandates.
+     */
+    bool ExtractTexturePNG(UTexture2D* Tex, TArray<uint8>& OutPNG, bool bFlipGreenChannel = false)
     {
         if (!Tex)
         {
@@ -200,6 +226,13 @@ namespace
         FImage SourceImage;
         if (FImageUtils::GetTexture2DSourceImage(Tex, SourceImage))
         {
+            if (bFlipGreenChannel && SourceImage.Format == ERawImageFormat::BGRA8)
+            {
+                for (int64 Idx = 1; Idx < SourceImage.RawData.Num(); Idx += 4)
+                {
+                    SourceImage.RawData[Idx] = 255 - SourceImage.RawData[Idx];
+                }
+            }
             TArray64<uint8> CompressedBytes;
             if (FImageUtils::CompressImage(CompressedBytes, TEXT("png"), SourceImage))
             {
@@ -240,6 +273,94 @@ namespace
     }
 
     /**
+     * GPU/Analytical Material BaseColor Baker:
+     * Evaluates the material graph by multiplying the base color texture's sRGB texels
+     * with the active runtime LinearColor parameter in Linear float space, then converting
+     * back to sRGB. This exactly replicates Unreal Engine's IMaterialBakingModule at runtime.
+     */
+    bool BakeTextureWithTintPNG(UTexture2D* Tex, const FLinearColor& TintColor, TArray<uint8>& OutPNG)
+    {
+        if (!Tex)
+        {
+            return false;
+        }
+
+        // If tint is pure white (no alteration needed), standard extract is faster
+        if (TintColor.Equals(FLinearColor::White, 1e-3f))
+        {
+            return ExtractTexturePNG(Tex, OutPNG, false);
+        }
+
+        FImage SourceImage;
+        if (FImageUtils::GetTexture2DSourceImage(Tex, SourceImage))
+        {
+            if (SourceImage.Format == ERawImageFormat::BGRA8)
+            {
+                const int64 NumPixels = SourceImage.RawData.Num() / 4;
+                for (int64 i = 0; i < NumPixels; ++i)
+                {
+                    const int64 ByteIdx = i * 4;
+                    const uint8 B8 = SourceImage.RawData[ByteIdx];
+                    const uint8 G8 = SourceImage.RawData[ByteIdx + 1];
+                    const uint8 R8 = SourceImage.RawData[ByteIdx + 2];
+
+                    // Convert sRGB to Linear float
+                    FLinearColor Lin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
+                    Lin.R *= TintColor.R;
+                    Lin.G *= TintColor.G;
+                    Lin.B *= TintColor.B;
+
+                    // Convert Linear float back to sRGB byte
+                    FColor BakedColor = Lin.ToFColor(true);
+                    SourceImage.RawData[ByteIdx]     = BakedColor.B;
+                    SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
+                    SourceImage.RawData[ByteIdx + 2] = BakedColor.R;
+                }
+
+                TArray64<uint8> CompressedBytes;
+                if (FImageUtils::CompressImage(CompressedBytes, TEXT("png"), SourceImage))
+                {
+                    OutPNG.SetNumUninitialized(CompressedBytes.Num());
+                    FMemory::Memcpy(OutPNG.GetData(), CompressedBytes.GetData(), CompressedBytes.Num());
+                    return OutPNG.Num() > 0;
+                }
+            }
+            else if (SourceImage.Format == ERawImageFormat::RGBA8)
+            {
+                const int64 NumPixels = SourceImage.RawData.Num() / 4;
+                for (int64 i = 0; i < NumPixels; ++i)
+                {
+                    const int64 ByteIdx = i * 4;
+                    const uint8 R8 = SourceImage.RawData[ByteIdx];
+                    const uint8 G8 = SourceImage.RawData[ByteIdx + 1];
+                    const uint8 B8 = SourceImage.RawData[ByteIdx + 2];
+
+                    FLinearColor Lin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
+                    Lin.R *= TintColor.R;
+                    Lin.G *= TintColor.G;
+                    Lin.B *= TintColor.B;
+
+                    FColor BakedColor = Lin.ToFColor(true);
+                    SourceImage.RawData[ByteIdx]     = BakedColor.R;
+                    SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
+                    SourceImage.RawData[ByteIdx + 2] = BakedColor.B;
+                }
+
+                TArray64<uint8> CompressedBytes;
+                if (FImageUtils::CompressImage(CompressedBytes, TEXT("png"), SourceImage))
+                {
+                    OutPNG.SetNumUninitialized(CompressedBytes.Num());
+                    FMemory::Memcpy(OutPNG.GetData(), CompressedBytes.GetData(), CompressedBytes.Num());
+                    return OutPNG.Num() > 0;
+                }
+            }
+        }
+
+        // Fallback: extract raw texture if source image format cannot be modified
+        return ExtractTexturePNG(Tex, OutPNG, false);
+    }
+
+    /**
      * Material Parameter Resolver:
      * Reads BaseColor, Metallic, Roughness, Normal, and UV Transforms directly
      * from any active UMaterialInterface / UMaterialInstance / Datasmith / CAD shader.
@@ -254,6 +375,14 @@ namespace
 
         State.bTwoSided = SlotMat->IsTwoSided();
         bool bBaseColorFound = false;
+
+        // V-Ray/Datasmith channels: metals carry their visible color in Reflection with a
+        // near-black diffuse, and roughness is expressed as Reflection_Glossiness.
+        bool bHasReflection = false;
+        FLinearColor ReflectionColor = FLinearColor::Black;
+        bool bMetallicExplicit = false, bRoughnessExplicit = false;
+        bool bHasReflGloss = false, bHasGenericGloss = false;
+        float ReflGloss = 0.0f, GenericGloss = 0.0f;
 
         // ── 1. Parse Vector Parameters on UMaterialInterface ─────────────────
         TArray<FMaterialParameterInfo> VInfos;
@@ -288,6 +417,15 @@ namespace
             {
                 State.UVTransform.TilingPivot = FVector2f(Val.R, Val.G);
             }
+            // V-Ray reflection color (the visible surface color of Datasmith metals)
+            else if (LowerName.Contains(TEXT("reflection")) && !LowerName.Contains(TEXT("gloss")))
+            {
+                if (!bHasReflection)
+                {
+                    bHasReflection = true;
+                    ReflectionColor = Val;
+                }
+            }
             // Base Color / Diffuse
             else if (LowerName.Contains(TEXT("basecolor")) || LowerName.Contains(TEXT("base_color")) ||
                      LowerName.Contains(TEXT("albedo")) || LowerName.Contains(TEXT("diffuse")) ||
@@ -318,10 +456,26 @@ namespace
             if (LowerName.Contains(TEXT("metallic")) || LowerName.Contains(TEXT("metalness")) || LowerName.Equals(TEXT("metal")))
             {
                 State.Metallic = FMath::Clamp(SVal, 0.0f, 1.0f);
+                bMetallicExplicit = true;
             }
             else if (LowerName.Contains(TEXT("roughness")) || LowerName.Contains(TEXT("rough")))
             {
                 State.Roughness = FMath::Clamp(SVal, 0.0f, 1.0f);
+                bRoughnessExplicit = true;
+            }
+            // V-Ray glossiness (prefer the reflection-specific one; refraction gloss is not surface roughness)
+            else if (LowerName.Contains(TEXT("gloss")))
+            {
+                if (LowerName.Contains(TEXT("reflection")) && !bHasReflGloss)
+                {
+                    bHasReflGloss = true;
+                    ReflGloss = SVal;
+                }
+                else if (!LowerName.Contains(TEXT("refract")) && !bHasGenericGloss)
+                {
+                    bHasGenericGloss = true;
+                    GenericGloss = SVal;
+                }
             }
             // Scalar UV parameters
             else if (LowerName.Contains(TEXT("w_rotation")) || LowerName.Contains(TEXT("rotation")))
@@ -364,6 +518,41 @@ namespace
         {
             State.NormalTexture = NormalTextures[0];
         }
+
+        // ── 4. V-Ray -> glTF PBR Conversion ──────────────────────────────────
+        // Roughness: 1 - glossiness when no explicit roughness parameter exists.
+        const bool bHasGloss = bHasReflGloss || bHasGenericGloss;
+        const float GlossValue = bHasReflGloss ? ReflGloss : GenericGloss;
+        if (!bRoughnessExplicit && bHasGloss)
+        {
+            State.Roughness = FMath::Clamp(1.0f - GlossValue, 0.03f, 1.0f);
+        }
+
+        // Metals: a COLORED reflection over a dark diffuse (gold/brass), or a true mirror
+        // (strong neutral reflection, dark diffuse, high glossiness). V-Ray dielectrics also
+        // carry bright NEUTRAL reflection as their specular term - that must stay dielectric.
+        // Texture-driven slots keep their texture; this only applies to untextured metals.
+        if (!State.BaseColorTexture && !bMetallicExplicit && bHasReflection)
+        {
+            const float ReflMax = FMath::Max3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
+            const float ReflMin = FMath::Min3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
+            const bool bColoredReflection = ReflMax > 0.35f && (ReflMax - ReflMin) > 0.08f;
+            const bool bDarkBase = !bBaseColorFound || State.BaseColor.GetLuminance() < 0.08f;
+            const float MirrorGloss = bHasGloss ? GlossValue : 0.9f;
+            const bool bMirrorLike = ReflMax >= 0.5f && MirrorGloss >= 0.8f && bDarkBase;
+
+            if ((bColoredReflection && bDarkBase) || bMirrorLike)
+            {
+                State.BaseColor = ReflectionColor;
+                State.Metallic = 1.0f;
+                if (!bRoughnessExplicit)
+                {
+                    State.Roughness = FMath::Clamp(1.0f - MirrorGloss, 0.03f, 1.0f);
+                }
+            }
+        }
+
+        State.BaseColor.A = 1.0f;   // opaque; a stray parameter alpha would ghost the mesh
 
         return State;
     }
@@ -472,26 +661,37 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             Prim.BaseColor = PBR.BaseColor;
             Prim.Metallic = PBR.Metallic;
             Prim.Roughness = PBR.Roughness;
-            Prim.bDoubleSided = PBR.bTwoSided;
+            // The UE->glTF axis conversion below flips triangle winding, so single-sided
+            // materials would render inside-out (culled faces) in glTF viewers. Keep all
+            // primitives double-sided until winding is reversed during export.
+            Prim.bDoubleSided = true;
 
-            // Embed BaseColor Texture (if present)
+            UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] %s: mat=%s rgb=(%.3f, %.3f, %.3f) metal=%.2f rough=%.2f tex=%s normal=%s"),
+                *Prim.MeshName, SlotMat ? *SlotMat->GetName() : TEXT("<none>"),
+                Prim.BaseColor.R, Prim.BaseColor.G, Prim.BaseColor.B, Prim.Metallic, Prim.Roughness,
+                PBR.BaseColorTexture ? *PBR.BaseColorTexture->GetName() : TEXT("<none>"),
+                PBR.NormalTexture ? *PBR.NormalTexture->GetName() : TEXT("<none>"));
+
+            // Embed Baked BaseColor Texture (if present)
             if (PBR.BaseColorTexture)
             {
-                const FString TexPath = PBR.BaseColorTexture->GetPathName();
-                Prim.BaseColorTextureKey = TexPath;
+                const FString TexKey = FString::Printf(TEXT("%s_Baked_%s"), *PBR.BaseColorTexture->GetPathName(), *PBR.BaseColor.ToString());
+                Prim.BaseColorTextureKey = TexKey;
 
-                if (TArray<uint8>* CachedPNG = TextureCache.Find(TexPath))
+                if (TArray<uint8>* CachedPNG = TextureCache.Find(TexKey))
                 {
                     Prim.BaseColorTexturePNG = *CachedPNG;
+                    Prim.BaseColor = FLinearColor::White;
                 }
                 else
                 {
                     TArray<uint8> PNGBytes;
-                    if (ExtractTexturePNG(PBR.BaseColorTexture, PNGBytes) && PNGBytes.Num() > 0)
+                    if (BakeTextureWithTintPNG(PBR.BaseColorTexture, PBR.BaseColor, PNGBytes) && PNGBytes.Num() > 0)
                     {
-                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded Diffuse texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
-                        TextureCache.Add(TexPath, PNGBytes);
+                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Baked BaseColor texture %s (%d bytes) for %s"), *TexKey, PNGBytes.Num(), *Prim.MeshName);
+                        TextureCache.Add(TexKey, PNGBytes);
                         Prim.BaseColorTexturePNG = MoveTemp(PNGBytes);
+                        Prim.BaseColor = FLinearColor::White;
                     }
                 }
             }
@@ -509,7 +709,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 else
                 {
                     TArray<uint8> PNGBytes;
-                    if (ExtractTexturePNG(PBR.NormalTexture, PNGBytes) && PNGBytes.Num() > 0)
+                    if (ExtractTexturePNG(PBR.NormalTexture, PNGBytes, /*bFlipGreenChannel=*/true) && PNGBytes.Num() > 0)
                     {
                         UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded Normal texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
                         TextureCache.Add(TexPath, PNGBytes);
@@ -592,13 +792,12 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
     const FString FileName = FString::Printf(TEXT("export_%s_%s.glb"), *ProductID, *Timestamp);
     const FString FullFilePath = FPaths::Combine(ExportsDir, FileName);
 
-    // Compute WebAR URLs
+    // Compute the WebAR viewer URL that loads this exact export
     const FString LocalIP = GetLocalHostIPAddress();
-    const FString ShortWebARURL = FString::Printf(TEXT("http://%s:%d/"), *LocalIP, LocalServerPort);
     const FString DirectModelURL = FString::Printf(TEXT("http://%s:%d/index.html?model=%s"), *LocalIP, LocalServerPort, *FileName);
 
     // ── 4. Run Heavy GLB Serialization on Background Worker Thread ───────────
-    Async(EAsyncExecution::ThreadPool, [Primitives = MoveTemp(Primitives), FullFilePath, ShortWebARURL, DirectModelURL, OnFinished]()
+    Async(EAsyncExecution::ThreadPool, [Primitives = MoveTemp(Primitives), FullFilePath, DirectModelURL, OnFinished]()
     {
         TArray<uint8> GLBData;
         const bool bSerializeSuccess = FSimpleGLBWriter::SerializeToGLB(Primitives, GLBData);
@@ -611,12 +810,13 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
         }
 
         // ── 5. Dispatch Back to Game Thread for QR Texture & UI Callback ─────
-        AsyncTask(ENamedThreads::GameThread, [bWriteSuccess, FullFilePath, ShortWebARURL, DirectModelURL, OnFinished]()
+        AsyncTask(ENamedThreads::GameThread, [bWriteSuccess, FullFilePath, DirectModelURL, OnFinished]()
         {
             UTexture2D* QRTexture = nullptr;
             if (bWriteSuccess)
             {
-                QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(ShortWebARURL, 512, 8);
+                // Encode the direct model URL so a scan opens this exact export
+                QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(DirectModelURL, 512, 8);
             }
 
             OnFinished.ExecuteIfBound(bWriteSuccess, FullFilePath, DirectModelURL, QRTexture);

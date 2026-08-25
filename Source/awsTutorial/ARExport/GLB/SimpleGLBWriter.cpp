@@ -118,6 +118,43 @@ bool FSimpleGLBWriter::SerializeToGLB(const TArray<FGLBPrimitive>& Primitives, T
             }
         }
 
+        int32 MetallicRoughnessTextureIdx = INDEX_NONE;
+        if (!Prim.MetallicRoughnessTextureKey.IsEmpty())
+        {
+            if (const int32* ExistingIdx = TextureIndexByKey.Find(Prim.MetallicRoughnessTextureKey))
+            {
+                MetallicRoughnessTextureIdx = *ExistingIdx;
+            }
+            else if (Prim.MetallicRoughnessTexturePNG.Num() > 0)
+            {
+                AlignBufferTo4Bytes();
+                const int32 MRImageByteOffset = BinaryBuffer.Num();
+                BinaryBuffer.Append(Prim.MetallicRoughnessTexturePNG);
+
+                const int32 MRImageBufferViewIdx = BufferViewsArray.Num();
+                TSharedPtr<FJsonObject> MRImageBV = MakeShared<FJsonObject>();
+                MRImageBV->SetNumberField(TEXT("buffer"), 0);
+                MRImageBV->SetNumberField(TEXT("byteOffset"), MRImageByteOffset);
+                MRImageBV->SetNumberField(TEXT("byteLength"), Prim.MetallicRoughnessTexturePNG.Num());
+                BufferViewsArray.Add(MakeShared<FJsonValueObject>(MRImageBV));
+
+                const int32 MRImageIdx = ImagesArray.Num();
+                TSharedPtr<FJsonObject> MRImageObj = MakeShared<FJsonObject>();
+                MRImageObj->SetStringField(TEXT("name"), Prim.MetallicRoughnessTextureKey);
+                MRImageObj->SetStringField(TEXT("mimeType"), TEXT("image/png"));
+                MRImageObj->SetNumberField(TEXT("bufferView"), MRImageBufferViewIdx);
+                ImagesArray.Add(MakeShared<FJsonValueObject>(MRImageObj));
+
+                MetallicRoughnessTextureIdx = TexturesArray.Num();
+                TSharedPtr<FJsonObject> MRTexObj = MakeShared<FJsonObject>();
+                MRTexObj->SetNumberField(TEXT("sampler"), 0);
+                MRTexObj->SetNumberField(TEXT("source"), MRImageIdx);
+                TexturesArray.Add(MakeShared<FJsonValueObject>(MRTexObj));
+
+                TextureIndexByKey.Add(Prim.MetallicRoughnessTextureKey, MetallicRoughnessTextureIdx);
+            }
+        }
+
         // ── 1. Create Material ───────────────────────────────────────────────
         TSharedPtr<FJsonObject> MatObj = MakeShared<FJsonObject>();
         MatObj->SetStringField(TEXT("name"), FString::Printf(TEXT("Mat_%s"), *Prim.MeshName));
@@ -138,6 +175,14 @@ bool FSimpleGLBWriter::SerializeToGLB(const TArray<FGLBPrimitive>& Primitives, T
             BaseColorTexObj->SetNumberField(TEXT("index"), BaseColorTextureIdx);
             BaseColorTexObj->SetNumberField(TEXT("texCoord"), 0);
             PbrObj->SetObjectField(TEXT("baseColorTexture"), BaseColorTexObj);
+        }
+
+        if (MetallicRoughnessTextureIdx != INDEX_NONE)
+        {
+            TSharedPtr<FJsonObject> MRTexObj = MakeShared<FJsonObject>();
+            MRTexObj->SetNumberField(TEXT("index"), MetallicRoughnessTextureIdx);
+            MRTexObj->SetNumberField(TEXT("texCoord"), 0);
+            PbrObj->SetObjectField(TEXT("metallicRoughnessTexture"), MRTexObj);
         }
 
         if (NormalTextureIdx != INDEX_NONE)
