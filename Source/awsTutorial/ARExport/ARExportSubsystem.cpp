@@ -30,21 +30,6 @@
 
 namespace
 {
-    /**
-     * Converts a Linear float color from UE5 into sRGB [0.0 - 1.0] float values
-     * using UE5's official ToFColor(true) / sRGB curve for 100% visual color parity in WebGL viewers.
-     */
-    FLinearColor ConvertLinearColorToSRGB(const FLinearColor& LinearColor)
-    {
-        const FColor sRGB = LinearColor.ToFColor(true);
-        return FLinearColor(
-            sRGB.R / 255.0f,
-            sRGB.G / 255.0f,
-            sRGB.B / 255.0f,
-            LinearColor.A
-        );
-    }
-
     /** Holds UV Transformation parameters (Tiling, Offset, Rotation) extracted from Material Instances */
     struct FUVTransform
     {
@@ -541,7 +526,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             // ── 3. Build GLB Primitive ───────────────────────────────────────
             FGLBPrimitive Prim;
             Prim.MeshName = FString::Printf(TEXT("%s_Slot%d"), *CompName, MatSlotIndex);
-            Prim.BaseColor = ConvertLinearColorToSRGB(PBR.BaseColor);
+            Prim.BaseColor = PBR.BaseColor;
             Prim.Metallic = PBR.Metallic;
             Prim.Roughness = PBR.Roughness;
 
