@@ -480,7 +480,6 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 if (TArray<uint8>* CachedPNG = TextureCache.Find(TexPath))
                 {
                     Prim.BaseColorTexturePNG = *CachedPNG;
-                    Prim.BaseColor = FLinearColor::White;
                 }
                 else
                 {
@@ -490,7 +489,6 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                         UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded Diffuse texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
                         TextureCache.Add(TexPath, PNGBytes);
                         Prim.BaseColorTexturePNG = MoveTemp(PNGBytes);
-                        Prim.BaseColor = FLinearColor::White;
                     }
                 }
             }
