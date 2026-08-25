@@ -258,133 +258,153 @@ namespace
         float ReflectionLevel = 0.0f;
         float ReflectionGlossiness = 0.0f;
 
-        // ── 1. Parse Vector Parameters ───────────────────────────────────────
-        if (UMaterialInstance* Inst = Cast<UMaterialInstance>(SlotMat))
+        // ── 1. Parse Vector Parameters on UMaterialInterface (Works for UMaterial, MIC, MID) ───
+        TArray<FMaterialParameterInfo> VInfos;
+        TArray<FGuid> Guids;
+        SlotMat->GetAllVectorParameterInfo(VInfos, Guids);
+
+        for (const FMaterialParameterInfo& VInfo : VInfos)
         {
-            TArray<FMaterialParameterInfo> VInfos;
-            TArray<FGuid> Guids;
-            Inst->GetAllVectorParameterInfo(VInfos, Guids);
-
-            for (const FMaterialParameterInfo& VInfo : VInfos)
+            const FString LowerName = VInfo.Name.ToString().ToLower();
+            FLinearColor Val;
+            if (!SlotMat->GetVectorParameterValue(VInfo, Val))
             {
-                const FString LowerName = VInfo.Name.ToString().ToLower();
-                FLinearColor Val;
-                if (!Inst->GetVectorParameterValue(VInfo, Val))
-                {
-                    continue;
-                }
-
-                // UV Scale / Offset / Pivots
-                if (LowerName.Contains(TEXT("uv_tiling")) || LowerName.Contains(TEXT("tiling (")))
-                {
-                    State.UVTransform.Tiling = FVector2f(Val.R, Val.G);
-                    State.UVTransform.bHasTransform = true;
-                }
-                else if (LowerName.Contains(TEXT("uv_offset")) || LowerName.Contains(TEXT("offset (")))
-                {
-                    State.UVTransform.Offset = FVector2f(Val.R, Val.G);
-                    State.UVTransform.bHasTransform = true;
-                }
-                else if (LowerName.Contains(TEXT("rotation_pivot")))
-                {
-                    State.UVTransform.RotationPivot = FVector2f(Val.R, Val.G);
-                }
-                else if (LowerName.Contains(TEXT("tiling_pivot")))
-                {
-                    State.UVTransform.TilingPivot = FVector2f(Val.R, Val.G);
-                }
-                // Base Color / Diffuse
-                else if (LowerName.Contains(TEXT("basecolor")) || LowerName.Contains(TEXT("base_color")) ||
-                         LowerName.Contains(TEXT("albedo")) || LowerName.Contains(TEXT("diffuse")) ||
-                         LowerName.Contains(TEXT("maincolor")) || LowerName.Contains(TEXT("tint")) ||
-                         LowerName.Equals(TEXT("color")))
-                {
-                    if (!bBaseColorFound)
-                    {
-                        State.BaseColor = Val;
-                        bBaseColorFound = true;
-                    }
-                }
-                else if (LowerName.Contains(TEXT("reflection")) && !LowerName.Contains(TEXT("gloss")))
-                {
-                    ReflectionColor = Val;
-                }
+                continue;
             }
 
-            // ── 2. Parse Scalar Parameters ───────────────────────────────────
-            TArray<FMaterialParameterInfo> SInfos;
-            Inst->GetAllScalarParameterInfo(SInfos, Guids);
-
-            for (const FMaterialParameterInfo& SInfo : SInfos)
+            // UV Scale / Offset / Pivots
+            if (LowerName.Contains(TEXT("uv_tiling")) || LowerName.Contains(TEXT("tiling (")))
             {
-                const FString LowerName = SInfo.Name.ToString().ToLower();
-                float SVal = 0.0f;
-                if (!Inst->GetScalarParameterValue(SInfo, SVal))
+                State.UVTransform.Tiling = FVector2f(Val.R, Val.G);
+                State.UVTransform.bHasTransform = true;
+            }
+            else if (LowerName.Contains(TEXT("uv_offset")) || LowerName.Contains(TEXT("offset (")))
+            {
+                State.UVTransform.Offset = FVector2f(Val.R, Val.G);
+                State.UVTransform.bHasTransform = true;
+            }
+            else if (LowerName.Contains(TEXT("rotation_pivot")))
+            {
+                State.UVTransform.RotationPivot = FVector2f(Val.R, Val.G);
+            }
+            else if (LowerName.Contains(TEXT("tiling_pivot")))
+            {
+                State.UVTransform.TilingPivot = FVector2f(Val.R, Val.G);
+            }
+            // Base Color / Diffuse
+            else if (LowerName.Contains(TEXT("basecolor")) || LowerName.Contains(TEXT("base_color")) ||
+                     LowerName.Contains(TEXT("albedo")) || LowerName.Contains(TEXT("diffuse")) ||
+                     LowerName.Contains(TEXT("maincolor")) || LowerName.Contains(TEXT("tint")) ||
+                     LowerName.Equals(TEXT("color")))
+            {
+                if (!bBaseColorFound)
                 {
-                    continue;
-                }
-
-                if (LowerName.Contains(TEXT("metallic")) || LowerName.Contains(TEXT("metalness")) || LowerName.Equals(TEXT("metal")))
-                {
-                    State.Metallic = FMath::Clamp(SVal, 0.0f, 1.0f);
-                    bMetallicFound = true;
-                }
-                else if (LowerName.Contains(TEXT("roughness")) || LowerName.Contains(TEXT("rough")))
-                {
-                    State.Roughness = FMath::Clamp(SVal, 0.0f, 1.0f);
-                    bRoughnessFound = true;
-                }
-                else if (LowerName.Contains(TEXT("reflection_glossiness")) || LowerName.Contains(TEXT("glossiness")) || LowerName.Equals(TEXT("gloss")))
-                {
-                    ReflectionGlossiness = SVal;
-                    if (!bRoughnessFound)
-                    {
-                        // In PBR, Roughness = 1.0 - Glossiness
-                        State.Roughness = FMath::Clamp(1.0f - SVal, 0.0f, 1.0f);
-                    }
-                }
-                else if (LowerName.Contains(TEXT("reflection_level")) || LowerName.Contains(TEXT("reflection (")))
-                {
-                    ReflectionLevel = SVal;
-                }
-                // Scalar UV parameters
-                else if (LowerName.Contains(TEXT("w_rotation")) || LowerName.Contains(TEXT("rotation")))
-                {
-                    State.UVTransform.W_Rotation = SVal;
-                    State.UVTransform.bHasTransform = true;
-                }
-                else if (LowerName.Contains(TEXT("tiling_u")) || LowerName.Contains(TEXT("tiling_x")))
-                {
-                    State.UVTransform.Tiling.X = SVal;
-                    State.UVTransform.bHasTransform = true;
-                }
-                else if (LowerName.Contains(TEXT("tiling_v")) || LowerName.Contains(TEXT("tiling_y")))
-                {
-                    State.UVTransform.Tiling.Y = SVal;
-                    State.UVTransform.bHasTransform = true;
-                }
-                else if (LowerName.Contains(TEXT("offset_u")) || LowerName.Contains(TEXT("offset_x")))
-                {
-                    State.UVTransform.Offset.X = SVal;
-                    State.UVTransform.bHasTransform = true;
-                }
-                else if (LowerName.Contains(TEXT("offset_v")) || LowerName.Contains(TEXT("offset_y")))
-                {
-                    State.UVTransform.Offset.Y = SVal;
-                    State.UVTransform.bHasTransform = true;
+                    State.BaseColor = Val;
+                    bBaseColorFound = true;
                 }
             }
-
-            // ── 3. V-Ray / Datasmith Specular Workflow Conversion ────────────
-            // In V-Ray metals (e.g. gold, chrome, brass), diffuse is black and color is in Reflection.
-            if (!bMetallicFound && ReflectionLevel > 0.5f)
+            else if (LowerName.Contains(TEXT("reflection")) && !LowerName.Contains(TEXT("gloss")))
             {
-                const float MaxRefl = FMath::Max3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
-                if (MaxRefl > 0.3f && State.BaseColor.GetLuminance() < 0.2f)
+                ReflectionColor = Val;
+            }
+        }
+
+        // ── 2. Parse Scalar Parameters on UMaterialInterface ─────────────────
+        TArray<FMaterialParameterInfo> SInfos;
+        SlotMat->GetAllScalarParameterInfo(SInfos, Guids);
+
+        for (const FMaterialParameterInfo& SInfo : SInfos)
+        {
+            const FString LowerName = SInfo.Name.ToString().ToLower();
+            float SVal = 0.0f;
+            if (!SlotMat->GetScalarParameterValue(SInfo, SVal))
+            {
+                continue;
+            }
+
+            if (LowerName.Contains(TEXT("metallic")) || LowerName.Contains(TEXT("metalness")) || LowerName.Equals(TEXT("metal")))
+            {
+                State.Metallic = FMath::Clamp(SVal, 0.0f, 1.0f);
+                bMetallicFound = true;
+            }
+            else if (LowerName.Contains(TEXT("roughness")) || LowerName.Contains(TEXT("rough")))
+            {
+                State.Roughness = FMath::Clamp(SVal, 0.0f, 1.0f);
+                bRoughnessFound = true;
+            }
+            else if (LowerName.Contains(TEXT("reflection_glossiness")) || LowerName.Contains(TEXT("glossiness")) || LowerName.Equals(TEXT("gloss")))
+            {
+                ReflectionGlossiness = SVal;
+                if (!bRoughnessFound)
                 {
-                    State.Metallic = FMath::Clamp(ReflectionLevel, 0.0f, 1.0f);
-                    State.BaseColor = ReflectionColor;
+                    // In PBR, Roughness = 1.0 - Glossiness
+                    State.Roughness = FMath::Clamp(1.0f - SVal, 0.0f, 1.0f);
                 }
+            }
+            else if (LowerName.Contains(TEXT("reflection_level")) || LowerName.Contains(TEXT("reflection (")))
+            {
+                ReflectionLevel = SVal;
+            }
+            // Scalar UV parameters
+            else if (LowerName.Contains(TEXT("w_rotation")) || LowerName.Contains(TEXT("rotation")))
+            {
+                State.UVTransform.W_Rotation = SVal;
+                State.UVTransform.bHasTransform = true;
+            }
+            else if (LowerName.Contains(TEXT("tiling_u")) || LowerName.Contains(TEXT("tiling_x")))
+            {
+                State.UVTransform.Tiling.X = SVal;
+                State.UVTransform.bHasTransform = true;
+            }
+            else if (LowerName.Contains(TEXT("tiling_v")) || LowerName.Contains(TEXT("tiling_y")))
+            {
+                State.UVTransform.Tiling.Y = SVal;
+                State.UVTransform.bHasTransform = true;
+            }
+            else if (LowerName.Contains(TEXT("offset_u")) || LowerName.Contains(TEXT("offset_x")))
+            {
+                State.UVTransform.Offset.X = SVal;
+                State.UVTransform.bHasTransform = true;
+            }
+            else if (LowerName.Contains(TEXT("offset_v")) || LowerName.Contains(TEXT("offset_y")))
+            {
+                State.UVTransform.Offset.Y = SVal;
+                State.UVTransform.bHasTransform = true;
+            }
+        }
+
+        // ── 3. V-Ray / Datasmith Specular Workflow Conversion ────────────
+        // In V-Ray metals (e.g. gold, chrome, brass), diffuse is black and color is in Reflection.
+        if (!bMetallicFound && ReflectionLevel > 0.5f)
+        {
+            const float MaxRefl = FMath::Max3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
+            if (MaxRefl > 0.3f && State.BaseColor.GetLuminance() < 0.2f)
+            {
+                State.Metallic = FMath::Clamp(ReflectionLevel, 0.0f, 1.0f);
+                State.BaseColor = ReflectionColor;
+            }
+        }
+
+        // ── 4. Fallback for non-parameterized UMaterials ─────────────────────
+        if (!bMetallicFound || !bRoughnessFound)
+        {
+            const FString MatName = SlotMat->GetName().ToLower();
+            if (MatName.Contains(TEXT("mirror")) || MatName.Contains(TEXT("glass")))
+            {
+                if (!bMetallicFound) State.Metallic = 0.98f;
+                if (!bRoughnessFound) State.Roughness = 0.02f;
+                if (!bBaseColorFound) State.BaseColor = FLinearColor(0.95f, 0.97f, 1.0f, 1.0f);
+            }
+            else if (MatName.Contains(TEXT("chrome")) || MatName.Contains(TEXT("brass")) || MatName.Contains(TEXT("gold")) || MatName.Contains(TEXT("metal")))
+            {
+                if (!bMetallicFound) State.Metallic = 0.90f;
+                if (!bRoughnessFound) State.Roughness = 0.20f;
+            }
+            else if (MatName.Contains(TEXT("frame")) || MatName.Contains(TEXT("dark")) || MatName.Contains(TEXT("black")) || MatName.Contains(TEXT("nero")))
+            {
+                if (!bMetallicFound) State.Metallic = 0.85f;
+                if (!bRoughnessFound) State.Roughness = 0.25f;
+                if (!bBaseColorFound) State.BaseColor = FLinearColor(0.015f, 0.015f, 0.018f, 1.0f);
             }
         }
 
