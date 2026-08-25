@@ -19,6 +19,9 @@ bool FSimpleGLBWriter::SerializeToGLB(const TArray<FGLBPrimitive>& Primitives, T
     TArray<TSharedPtr<FJsonValue>> MeshesArray;
     TArray<TSharedPtr<FJsonValue>> NodesArray;
     TArray<TSharedPtr<FJsonValue>> SceneNodesArray;
+    TArray<TSharedPtr<FJsonValue>> ImagesArray;
+    TArray<TSharedPtr<FJsonValue>> TexturesArray;
+    TMap<FString, int32> TextureIndexByKey;
 
     auto AlignBufferTo4Bytes = [&BinaryBuffer]()
     {
@@ -39,6 +42,44 @@ bool FSimpleGLBWriter::SerializeToGLB(const TArray<FGLBPrimitive>& Primitives, T
             continue;
         }
 
+        // ── 0. Embed Base Color Texture (deduplicated by key) ────────────────
+        int32 BaseColorTextureIdx = INDEX_NONE;
+        if (!Prim.BaseColorTextureKey.IsEmpty())
+        {
+            if (const int32* ExistingIdx = TextureIndexByKey.Find(Prim.BaseColorTextureKey))
+            {
+                BaseColorTextureIdx = *ExistingIdx;
+            }
+            else if (Prim.BaseColorTexturePNG.Num() > 0)
+            {
+                AlignBufferTo4Bytes();
+                const int32 ImageByteOffset = BinaryBuffer.Num();
+                BinaryBuffer.Append(Prim.BaseColorTexturePNG);
+
+                const int32 ImageBufferViewIdx = BufferViewsArray.Num();
+                TSharedPtr<FJsonObject> ImageBV = MakeShared<FJsonObject>();
+                ImageBV->SetNumberField(TEXT("buffer"), 0);
+                ImageBV->SetNumberField(TEXT("byteOffset"), ImageByteOffset);
+                ImageBV->SetNumberField(TEXT("byteLength"), Prim.BaseColorTexturePNG.Num());
+                BufferViewsArray.Add(MakeShared<FJsonValueObject>(ImageBV));
+
+                const int32 ImageIdx = ImagesArray.Num();
+                TSharedPtr<FJsonObject> ImageObj = MakeShared<FJsonObject>();
+                ImageObj->SetStringField(TEXT("name"), Prim.BaseColorTextureKey);
+                ImageObj->SetStringField(TEXT("mimeType"), TEXT("image/png"));
+                ImageObj->SetNumberField(TEXT("bufferView"), ImageBufferViewIdx);
+                ImagesArray.Add(MakeShared<FJsonValueObject>(ImageObj));
+
+                BaseColorTextureIdx = TexturesArray.Num();
+                TSharedPtr<FJsonObject> TexObj = MakeShared<FJsonObject>();
+                TexObj->SetNumberField(TEXT("sampler"), 0);
+                TexObj->SetNumberField(TEXT("source"), ImageIdx);
+                TexturesArray.Add(MakeShared<FJsonValueObject>(TexObj));
+
+                TextureIndexByKey.Add(Prim.BaseColorTextureKey, BaseColorTextureIdx);
+            }
+        }
+
         // ── 1. Create Material ───────────────────────────────────────────────
         TSharedPtr<FJsonObject> MatObj = MakeShared<FJsonObject>();
         MatObj->SetStringField(TEXT("name"), FString::Printf(TEXT("Mat_%s"), *Prim.MeshName));
@@ -52,6 +93,14 @@ bool FSimpleGLBWriter::SerializeToGLB(const TArray<FGLBPrimitive>& Primitives, T
         PbrObj->SetArrayField(TEXT("baseColorFactor"), BaseColorArr);
         PbrObj->SetNumberField(TEXT("metallicFactor"), Prim.Metallic);
         PbrObj->SetNumberField(TEXT("roughnessFactor"), Prim.Roughness);
+
+        if (BaseColorTextureIdx != INDEX_NONE)
+        {
+            TSharedPtr<FJsonObject> BaseColorTexObj = MakeShared<FJsonObject>();
+            BaseColorTexObj->SetNumberField(TEXT("index"), BaseColorTextureIdx);
+            BaseColorTexObj->SetNumberField(TEXT("texCoord"), 0);
+            PbrObj->SetObjectField(TEXT("baseColorTexture"), BaseColorTexObj);
+        }
 
         MatObj->SetObjectField(TEXT("pbrMetallicRoughness"), PbrObj);
         MatObj->SetBoolField(TEXT("doubleSided"), true);
@@ -254,6 +303,21 @@ bool FSimpleGLBWriter::SerializeToGLB(const TArray<FGLBPrimitive>& Primitives, T
     RootObj->SetArrayField(TEXT("materials"), MaterialsArray);
     RootObj->SetArrayField(TEXT("accessors"), AccessorsArray);
     RootObj->SetArrayField(TEXT("bufferViews"), BufferViewsArray);
+
+    // Texture resources (glTF forbids empty top-level arrays, so add them only when used)
+    if (TexturesArray.Num() > 0)
+    {
+        TArray<TSharedPtr<FJsonValue>> SamplersArray;
+        TSharedPtr<FJsonObject> Sampler0 = MakeShared<FJsonObject>();
+        Sampler0->SetNumberField(TEXT("magFilter"), 9729);  // LINEAR
+        Sampler0->SetNumberField(TEXT("minFilter"), 9987);  // LINEAR_MIPMAP_LINEAR
+        Sampler0->SetNumberField(TEXT("wrapS"), 10497);     // REPEAT
+        Sampler0->SetNumberField(TEXT("wrapT"), 10497);     // REPEAT
+        SamplersArray.Add(MakeShared<FJsonValueObject>(Sampler0));
+        RootObj->SetArrayField(TEXT("samplers"), SamplersArray);
+        RootObj->SetArrayField(TEXT("images"), ImagesArray);
+        RootObj->SetArrayField(TEXT("textures"), TexturesArray);
+    }
 
     // Buffers array
     TArray<TSharedPtr<FJsonValue>> BuffersArray;

@@ -5,7 +5,6 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "FurnitureConfigurator/Data/FurnitureTypes.h"
-#include "ARExport/GLB/SimpleGLBWriter.h"
 #include "ARExportSubsystem.generated.h"
 
 class AShowroomBooth;
@@ -28,7 +27,8 @@ public:
     virtual void Deinitialize() override;
 
     /**
-     * Starts an asynchronous background export of the configured showroom booth to a local .glb file
+     * Starts an export of the configured showroom booth to a local .glb file
+     * using the official engine GLTFExporter (with full texture & material baking)
      * and generates a WebAR URL & QR Code texture.
      */
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | AR Export")
@@ -45,8 +45,4 @@ public:
     /** Base cloud or local viewer URL prefix (e.g. "http://{IP}:{PORT}/index.html?model="). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | AR Export Config")
     FString WebARViewerPrefix = TEXT("http://{IP}:{PORT}/index.html?model=");
-
-private:
-    void ExtractPrimitivesFromBooth(AShowroomBooth* Booth, TArray<FGLBPrimitive>& OutPrimitives);
-    void ExtractComponentGeometry(AShowroomBooth* Booth, UStaticMeshComponent* Comp, EFurnitureComponentType CompType, const FString& MeshName, const FLinearColor& FallbackColor, float FallbackMetallic, float FallbackRoughness, TArray<FGLBPrimitive>& OutPrimitives);
 };

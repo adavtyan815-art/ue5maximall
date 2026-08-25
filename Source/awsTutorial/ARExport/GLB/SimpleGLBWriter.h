@@ -19,6 +19,16 @@ struct FGLBPrimitive
     FLinearColor BaseColor = FLinearColor::White;
     float Metallic = 0.0f;
     float Roughness = 0.5f;
+
+    /**
+     * Optional real base color texture, embedded into the .glb and sampled via TEXCOORD_0.
+     * BaseColorTextureKey deduplicates: primitives sharing a key share one glTF image/texture;
+     * the FIRST primitive carrying that key must provide the PNG bytes, later ones may leave
+     * BaseColorTexturePNG empty. When a texture is present, BaseColor acts as the glTF
+     * baseColorFactor multiplier (use white for the unmodified texture appearance).
+     */
+    FString BaseColorTextureKey;
+    TArray<uint8> BaseColorTexturePNG;
 };
 
 class AWSTUTORIAL_API FSimpleGLBWriter

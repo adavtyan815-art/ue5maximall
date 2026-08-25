@@ -13,8 +13,10 @@ UTexture2D* FQRCodeTextureHelper::GenerateQRCodeTexture(const FString& TextToEnc
     }
 
     FTCHARToUTF8 Utf8(*TextToEncode);
-    // Use HIGH Error Correction (30% error recovery) for maximum camera detection reliability under screen glare
-    qrcodegen::QrCode QR = qrcodegen::QrCode::encodeText(Utf8.Get(), qrcodegen::QrCode::Ecc::HIGH);
+    // MEDIUM error correction keeps the QR version (module count) low so each module stays
+    // large enough on screen for phone cameras. Screen-displayed codes suffer no physical
+    // damage, so HIGH ECC only adds density; the encoder auto-boosts ECC when it fits for free.
+    qrcodegen::QrCode QR = qrcodegen::QrCode::encodeText(Utf8.Get(), qrcodegen::QrCode::Ecc::MEDIUM);
 
     if (!QR.isValid())
     {
@@ -23,6 +25,8 @@ UTexture2D* FQRCodeTextureHelper::GenerateQRCodeTexture(const FString& TextToEnc
     }
 
     const int32 QRSize = QR.getSize();
+    UE_LOG(LogTemp, Log, TEXT("[QRCodeTextureHelper] Encoded %d chars -> QR version %d (%dx%d modules)"),
+        TextToEncode.Len(), QR.getVersion(), QRSize, QRSize);
     const int32 Margin = FMath::Max(BorderModules, 8); // Minimum 8 modules quiet zone
     const int32 TotalModules = QRSize + (Margin * 2);
 

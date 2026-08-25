@@ -363,7 +363,10 @@ void QrCode::drawVersion() {
 static uint8 reedSolomonMultiply(uint8 x, uint8 y) {
 	int z = 0;
 	for (int i = 7; i >= 0; i--) {
-		z = (z << 1) ^ ((z >> 8) * 0x11D);
+		// The reduction bit is bit 7 of z *before* the shift (it becomes bit 8 after).
+		// Testing (z >> 8) here would always be 0, disabling GF(256) reduction entirely
+		// and corrupting every Reed-Solomon codeword.
+		z = (z << 1) ^ ((z >> 7) * 0x11D);
 		z ^= ((y >> i) & 1) * x;
 	}
 	return static_cast<uint8>(z);
@@ -413,14 +416,21 @@ TArray<uint8> QrCode::addEccAndInterleave(const TArray<uint8>& data) const {
 			for (int j = 0; j < ecc.Num(); j++)
 				ecc[j] ^= reedSolomonMultiply(rsDiv[j], factor);
 		}
+		// Pad short blocks to the long-block length so every block has its data and ECC
+		// sections at the same column positions during interleaving. Without this, versions
+		// whose blocks differ in length (rawCodewords % numBlocks != 0) interleave data and
+		// ECC bytes misaligned and drop the long blocks' final ECC byte.
+		if (i < numShortBlocks)
+			dat.Add(0);
 		dat.Append(ecc);
 		blocks.Add(MoveTemp(dat));
 	}
-	
+
 	TArray<uint8> result;
 	for (int i = 0; i < blocks[0].Num(); i++) {
 		for (int j = 0; j < blocks.Num(); j++) {
-			if (i < blocks[j].Num())
+			// Skip the padding byte in short blocks
+			if (i != shortBlockLen - blockEccLen || j >= numShortBlocks)
 				result.Add(blocks[j][i]);
 		}
 	}

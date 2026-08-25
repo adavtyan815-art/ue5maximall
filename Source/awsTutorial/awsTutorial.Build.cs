@@ -16,7 +16,8 @@ public class awsTutorial : ModuleRules
             "SlateCore",
             "PixelStreaming",
             "PixelStreamingInput",
-            "ImageWrapper"
+            "ImageWrapper",
+            "GLTFExporter"
        });
         PublicIncludePaths.AddRange(new string[]
 {
