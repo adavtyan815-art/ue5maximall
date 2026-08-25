@@ -28,35 +28,17 @@ void UARExportSubsystem::Deinitialize()
 FString UARExportSubsystem::GetLocalHostIPAddress() const
 {
     bool bCanBindAll = false;
-    TArray<TSharedPtr<FInternetAddr>> LocalAddresses;
     ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 
     if (SocketSubsystem)
     {
-        SocketSubsystem->GetLocalHostAddresses(LocalAddresses, bCanBindAll);
-
-        for (const TSharedPtr<FInternetAddr>& Addr : LocalAddresses)
+        TSharedRef<FInternetAddr> LocalAddr = SocketSubsystem->GetLocalHostAddr(*GLog, bCanBindAll);
+        if (LocalAddr->IsValid())
         {
-            if (Addr.IsValid())
+            FString IPStr = LocalAddr->ToString(false);
+            if (!IPStr.IsEmpty() && !IPStr.StartsWith(TEXT("127.")))
             {
-                FString IPStr = Addr->ToString(false);
-                // Prefer LAN private addresses (192.168.x.x, 10.x.x.x, 172.16.x.x)
-                if (IPStr.StartsWith(TEXT("192.168.")) || IPStr.StartsWith(TEXT("10.")) || IPStr.StartsWith(TEXT("172.")))
-                {
-                    return IPStr;
-                }
-            }
-        }
-
-        for (const TSharedPtr<FInternetAddr>& Addr : LocalAddresses)
-        {
-            if (Addr.IsValid())
-            {
-                FString IPStr = Addr->ToString(false);
-                if (!IPStr.StartsWith(TEXT("127.")) && !IPStr.IsEmpty())
-                {
-                    return IPStr;
-                }
+                return IPStr;
             }
         }
     }
@@ -136,7 +118,7 @@ void UARExportSubsystem::ExtractPrimitivesFromBooth(AShowroomBooth* Booth, TArra
 
     auto GetCustomColor = [Booth](EFurnitureComponentType CompType, const FLinearColor& FallbackColor) -> FLinearColor
     {
-        for (const FCustomColorOverride& Override : Booth->ActiveState.CustomColors)
+        for (const FCustomColorOverride& Override : Booth->CustomColors)
         {
             if (Override.ComponentType == CompType)
             {
