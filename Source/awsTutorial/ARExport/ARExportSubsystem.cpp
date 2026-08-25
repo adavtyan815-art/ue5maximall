@@ -381,7 +381,6 @@ namespace
             if (SourceImage.Format == ERawImageFormat::BGRA8 && SourceImage.RawData.Num() >= 4)
             {
                 const int64 NumPixels = SourceImage.RawData.Num() / 4;
-                const bool bUseMask = (OptionalUVCoverageMask != nullptr && OptionalUVCoverageMask->Num() == NumPixels);
 
                 // Generic texture classification: Measure chromatic difference across sampled pixels
                 int64 ChromaticDiffSum = 0;
@@ -398,6 +397,7 @@ namespace
                 }
 
                 const bool bIsFullColorTexture = (SampleCount > 0 && (ChromaticDiffSum / SampleCount) > 12);
+                const bool bUseMask = !bIsFullColorTexture && (OptionalUVCoverageMask != nullptr && OptionalUVCoverageMask->Num() == NumPixels);
 
                 for (int64 i = 0; i < NumPixels; ++i)
                 {
@@ -636,9 +636,17 @@ namespace
         // Roughness: 1 - glossiness when no explicit roughness parameter exists.
         const bool bHasGloss = bHasReflGloss || bHasGenericGloss;
         const float GlossValue = bHasReflGloss ? ReflGloss : GenericGloss;
-        if (!bRoughnessExplicit && bHasGloss)
+        if (!bRoughnessExplicit)
         {
-            State.Roughness = FMath::Clamp(1.0f - GlossValue, 0.04f, 1.0f);
+            if (State.BaseColorTexture != nullptr)
+            {
+                // Textured diffuse dielectrics (wood, stone): UE bakes MR roughness ~0.60 to prevent specular washout
+                State.Roughness = 0.60f;
+            }
+            else if (bHasGloss)
+            {
+                State.Roughness = FMath::Clamp(1.0f - GlossValue, 0.04f, 1.0f);
+            }
         }
 
         // Metals: a COLORED reflection over a dark diffuse (gold/brass), or a true mirror
@@ -803,17 +811,36 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
 
             // Resolve Material assigned to this specific slot
             UMaterialInterface* SlotMat = Comp->GetMaterial(MatSlotIndex);
+            FString MatOrigin = TEXT("ComponentOverride");
             if (!SlotMat && Mesh->GetStaticMaterials().IsValidIndex(MatSlotIndex))
             {
                 SlotMat = Mesh->GetStaticMaterials()[MatSlotIndex].MaterialInterface;
+                MatOrigin = TEXT("StaticMaterials");
             }
             if (!SlotMat)
             {
                 SlotMat = Mesh->GetMaterial(MatSlotIndex);
+                MatOrigin = TEXT("GetMaterial");
+            }
+
+            // Diagnostic: Log exact material instance hierarchy and dynamic parameters
+            FString ParentName = TEXT("<none>");
+            if (UMaterialInstance* MI = Cast<UMaterialInstance>(SlotMat))
+            {
+                ParentName = MI->Parent ? MI->Parent->GetName() : TEXT("<none>");
             }
 
             // ── 2. Universal Material-Agnostic PBR Extraction ────────────────
             FPBRParsedState PBR = ResolveMaterialPBRState(SlotMat);
+
+            UE_LOG(LogTemp, Warning, TEXT("[ARExport-Diag] Comp=%s Mesh=%s Slot=%d MatOrigin=%s Mat=%s (Class=%s Parent=%s) -> PBR: RGB=(%.3f, %.3f, %.3f) Metal=%.2f Rough=%.2f Alpha=%s(%.2f) Tex=%s"),
+                *CompName, *Mesh->GetName(), MatSlotIndex, *MatOrigin,
+                SlotMat ? *SlotMat->GetName() : TEXT("<null>"),
+                SlotMat ? *SlotMat->GetClass()->GetName() : TEXT("<null>"),
+                *ParentName,
+                PBR.BaseColor.R, PBR.BaseColor.G, PBR.BaseColor.B, PBR.Metallic, PBR.Roughness,
+                *PBR.AlphaMode, PBR.BaseColor.A,
+                PBR.BaseColorTexture ? *PBR.BaseColorTexture->GetName() : TEXT("<none>"));
 
             // ── 3. Build GLB Primitive ───────────────────────────────────────
             FGLBPrimitive Prim;
@@ -837,11 +864,29 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             // Embed Baked BaseColor Texture (if present)
             if (PBR.BaseColorTexture)
             {
-                // Build generic mesh-aware UV coverage mask for this section
+                // Check if mesh section uses tiled UVs (coordinates outside [0.0, 1.0])
+                bool bHasTiledUVs = false;
+                for (uint32 Idx = 0; Idx < IndexCount; ++Idx)
+                {
+                    const uint32 VertexIndex = AllIndices[FirstIndex + Idx];
+                    const FVector2f UV = VertBuffer.GetVertexUV(VertexIndex, 0);
+                    if (UV.X < -0.05f || UV.X > 1.05f || UV.Y < -0.05f || UV.Y > 1.05f)
+                    {
+                        bHasTiledUVs = true;
+                        break;
+                    }
+                }
+
                 TArray<uint8> UVCoverageMask;
-                const int32 TexW = PBR.BaseColorTexture->GetSizeX();
-                const int32 TexH = PBR.BaseColorTexture->GetSizeY();
-                BuildMeshUVCoverageMask(VertBuffer, AllIndices, FirstIndex, IndexCount, PBR.UVTransform, TexW, TexH, UVCoverageMask);
+                const TArray<uint8>* MaskPtr = nullptr;
+
+                if (!bHasTiledUVs)
+                {
+                    const int32 TexW = PBR.BaseColorTexture->GetSizeX();
+                    const int32 TexH = PBR.BaseColorTexture->GetSizeY();
+                    BuildMeshUVCoverageMask(VertBuffer, AllIndices, FirstIndex, IndexCount, PBR.UVTransform, TexW, TexH, UVCoverageMask);
+                    MaskPtr = &UVCoverageMask;
+                }
 
                 const FString TexKey = FString::Printf(TEXT("%s_Baked_%s_Sec%d"), *PBR.BaseColorTexture->GetPathName(), *PBR.BaseColor.ToString(), SectionIdx);
                 Prim.BaseColorTextureKey = TexKey;
@@ -854,7 +899,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 else
                 {
                     TArray<uint8> PNGBytes;
-                    if (BakeTextureWithTintPNG(PBR.BaseColorTexture, PBR.BaseColor, PNGBytes, &UVCoverageMask) && PNGBytes.Num() > 0)
+                    if (BakeTextureWithTintPNG(PBR.BaseColorTexture, PBR.BaseColor, PNGBytes, MaskPtr) && PNGBytes.Num() > 0)
                     {
                         UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Baked BaseColor texture %s (%d bytes) for %s"), *TexKey, PNGBytes.Num(), *Prim.MeshName);
                         TextureCache.Add(TexKey, PNGBytes);
