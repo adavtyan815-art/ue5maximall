@@ -85,7 +85,9 @@ void UARExportModalWidget::HandleExportFinished(bool bSuccess, const FString& Ex
     {
         if (Img_QRCode)
         {
-            Img_QRCode->SetBrushFromTexture(QRCodeTexture, true);
+            Img_QRCode->SetColorAndOpacity(FLinearColor::White);
+            Img_QRCode->SetBrushFromTexture(QRCodeTexture, false);
+            Img_QRCode->SetDesiredSizeOverride(FVector2D(320.0f, 320.0f));
             Img_QRCode->SetVisibility(ESlateVisibility::Visible);
         }
 

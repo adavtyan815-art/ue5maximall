@@ -10,6 +10,10 @@
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionConstant3Vector.h"
+#include "Materials/MaterialExpressionConstant4Vector.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
@@ -105,8 +109,8 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             UTexture2D* QRTexture = nullptr;
             if (bWriteSuccess)
             {
-                // Generates high-contrast QR code pointing to the root URL (auto-loads latest model)
-                QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(ShortWebARURL, 1024, 8);
+                // Generates crisp high-contrast Version 2 QR code with exact integer module pixels
+                QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(ShortWebARURL, 512, 8);
             }
 
             OnFinished.ExecuteIfBound(bWriteSuccess, FullFilePath, DirectModelURL, QRTexture);
@@ -118,41 +122,41 @@ void UARExportSubsystem::ExtractPrimitivesFromBooth(AShowroomBooth* Booth, TArra
 {
     if (!Booth) return;
 
-    // 1. Cabinet Body (Dark fluted wood finish)
+    // 1. Cabinet Body (Dark fluted walnut in linear space: sRGB ~45/32/22)
     ExtractComponentGeometry(Booth, Booth->MainCabinet.Get(), EFurnitureComponentType::Cabinet, TEXT("Cabinet"),
-        FLinearColor(0.18f, 0.13f, 0.09f, 1.0f), 0.02f, 0.55f, OutPrimitives);
+        FLinearColor(0.035f, 0.022f, 0.015f, 1.0f), 0.02f, 0.65f, OutPrimitives);
 
-    // 2. Closet Body (White cabinet body with red accent strip)
+    // 2. Closet Body (White cabinet body)
     ExtractComponentGeometry(Booth, Booth->ClosetMesh.Get(), EFurnitureComponentType::Closet, TEXT("Closet"),
-        FLinearColor(0.95f, 0.95f, 0.95f, 1.0f), 0.02f, 0.4f, OutPrimitives);
+        FLinearColor(0.95f, 0.95f, 0.95f, 1.0f), 0.02f, 0.35f, OutPrimitives);
 
-    // 3. Cabinet Doors (Dark fluted wood finish)
+    // 3. Cabinet Doors (Dark fluted walnut in linear space)
     ExtractComponentGeometry(Booth, Booth->DoorMeshSlot0.Get(), EFurnitureComponentType::Doors, TEXT("CabinetDoor_0"),
-        FLinearColor(0.18f, 0.13f, 0.09f, 1.0f), 0.02f, 0.55f, OutPrimitives);
+        FLinearColor(0.035f, 0.022f, 0.015f, 1.0f), 0.02f, 0.65f, OutPrimitives);
     ExtractComponentGeometry(Booth, Booth->DoorMeshSlot1.Get(), EFurnitureComponentType::Doors, TEXT("CabinetDoor_1"),
-        FLinearColor(0.18f, 0.13f, 0.09f, 1.0f), 0.02f, 0.55f, OutPrimitives);
+        FLinearColor(0.035f, 0.022f, 0.015f, 1.0f), 0.02f, 0.65f, OutPrimitives);
 
-    // 4. Closet Doors (White cabinet door with red accent strip)
+    // 4. Closet Doors (White cabinet door with red accent strip on slot 1)
     ExtractComponentGeometry(Booth, Booth->ClosetDoorMeshSlot0.Get(), EFurnitureComponentType::Doors, TEXT("ClosetDoor_0"),
-        FLinearColor(0.95f, 0.95f, 0.95f, 1.0f), 0.02f, 0.4f, OutPrimitives);
+        FLinearColor(0.95f, 0.95f, 0.95f, 1.0f), 0.02f, 0.35f, OutPrimitives);
     ExtractComponentGeometry(Booth, Booth->ClosetDoorMeshSlot1.Get(), EFurnitureComponentType::Doors, TEXT("ClosetDoor_1"),
-        FLinearColor(0.95f, 0.95f, 0.95f, 1.0f), 0.02f, 0.4f, OutPrimitives);
+        FLinearColor(0.95f, 0.95f, 0.95f, 1.0f), 0.02f, 0.35f, OutPrimitives);
 
-    // 5. Countertop (White Quartz / Stone finish)
+    // 5. Countertop (White Quartz finish)
     ExtractComponentGeometry(Booth, Booth->CountertopMesh.Get(), EFurnitureComponentType::Countertop, TEXT("Countertop"),
-        FLinearColor(0.90f, 0.90f, 0.90f, 1.0f), 0.05f, 0.25f, OutPrimitives);
+        FLinearColor(0.85f, 0.85f, 0.85f, 1.0f), 0.05f, 0.25f, OutPrimitives);
 
     // 6. Sink (Glossy white ceramic)
     ExtractComponentGeometry(Booth, Booth->SinkMesh.Get(), EFurnitureComponentType::Sink, TEXT("Sink"),
-        FLinearColor(0.97f, 0.97f, 0.97f, 1.0f), 0.0f, 0.08f, OutPrimitives);
+        FLinearColor(0.96f, 0.96f, 0.96f, 1.0f), 0.0f, 0.08f, OutPrimitives);
 
     // 7. Faucet (Polished Italian Brass / Gold)
     ExtractComponentGeometry(Booth, Booth->FaucetMesh.Get(), EFurnitureComponentType::Faucet, TEXT("Faucet"),
-        FLinearColor(0.85f, 0.68f, 0.28f, 1.0f), 0.92f, 0.18f, OutPrimitives);
+        FLinearColor(0.85f, 0.65f, 0.22f, 1.0f), 0.92f, 0.18f, OutPrimitives);
 
-    // 8. Mirror (Reflective mirror surface + dark black frame)
+    // 8. Mirror (Reflective mirror glass + dark frame)
     ExtractComponentGeometry(Booth, Booth->MirrorMesh.Get(), EFurnitureComponentType::Mirror, TEXT("Mirror"),
-        FLinearColor(0.92f, 0.95f, 0.98f, 1.0f), 0.98f, 0.02f, OutPrimitives);
+        FLinearColor(0.95f, 0.97f, 1.0f, 1.0f), 0.98f, 0.02f, OutPrimitives);
 
     // 9. Extra Attached Static Mesh Components
     TArray<UStaticMeshComponent*> AllMeshComponents;
@@ -176,7 +180,7 @@ void UARExportSubsystem::ExtractPrimitivesFromBooth(AShowroomBooth* Booth, TArra
         if (ExtraComp && !KnownComponents.Contains(ExtraComp) && ExtraComp->IsVisible() && ExtraComp->GetStaticMesh())
         {
             ExtractComponentGeometry(Booth, ExtraComp, EFurnitureComponentType::Cabinet, ExtraComp->GetName(),
-                FLinearColor(0.55f, 0.42f, 0.32f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+                FLinearColor(0.035f, 0.022f, 0.015f, 1.0f), 0.02f, 0.65f, OutPrimitives);
         }
     }
 }
@@ -232,7 +236,7 @@ void UARExportSubsystem::ExtractComponentGeometry(
             continue;
         }
 
-        // Resolve Material assigned to this specific slot (checking Component overrides, then StaticMesh materials)
+        // Resolve Material assigned to this specific slot
         UMaterialInterface* SlotMat = Comp->GetMaterial(MatSlotIndex);
         if (!SlotMat && Mesh->GetStaticMaterials().IsValidIndex(MatSlotIndex))
         {
@@ -253,7 +257,6 @@ void UARExportSubsystem::ExtractComponentGeometry(
         {
             if (Override.ComponentType == CompType)
             {
-                // Slot 0 receives custom color; accent slots preserve distinct accents unless specified
                 if (MatSlotIndex == 0)
                 {
                     ResolvedColor = Override.CustomColor;
@@ -263,7 +266,7 @@ void UARExportSubsystem::ExtractComponentGeometry(
             }
         }
 
-        // Read active parameters from material instance
+        // Read active parameters from material instance or base material graph
         if (!bHasCustomColor && SlotMat)
         {
             UMaterialInstance* InstMat = Cast<UMaterialInstance>(SlotMat);
@@ -279,12 +282,16 @@ void UARExportSubsystem::ExtractComponentGeometry(
                     FLinearColor PColor;
                     if (InstMat->GetVectorParameterValue(Info, PColor))
                     {
-                        if (PName.Contains(TEXT("base")) || PName.Contains(TEXT("color")) || PName.Contains(TEXT("tint")) ||
-                            PName.Contains(TEXT("albedo")) || PName.Contains(TEXT("diffuse")) || PName.Contains(TEXT("wood")) ||
-                            PName.Contains(TEXT("accent")) || PName.Contains(TEXT("strip")) || PName.Contains(TEXT("frame")))
+                        // Avoid default neutral white tint (1,1,1) overriding true model colors
+                        if (!PColor.Equals(FLinearColor::White, 0.001f))
                         {
-                            ResolvedColor = PColor;
-                            break;
+                            if (PName.Contains(TEXT("base")) || PName.Contains(TEXT("color")) || PName.Contains(TEXT("tint")) ||
+                                PName.Contains(TEXT("albedo")) || PName.Contains(TEXT("diffuse")) || PName.Contains(TEXT("wood")) ||
+                                PName.Contains(TEXT("accent")) || PName.Contains(TEXT("strip")) || PName.Contains(TEXT("handle")))
+                            {
+                                ResolvedColor = PColor;
+                                break;
+                            }
                         }
                     }
                 }
@@ -302,55 +309,63 @@ void UARExportSubsystem::ExtractComponentGeometry(
                     ResolvedMetallic = PVal;
                 }
             }
-
-            // Material Name & Path heuristics for multi-material parts (Accents, Frames, Glass)
-            const FString MatName = (SlotMat->GetPathName() + TEXT(" ") + SlotMat->GetName()).ToLower();
-            if (MatName.Contains(TEXT("red")) || MatName.Contains(TEXT("accent")) || MatName.Contains(TEXT("strip")) || MatName.Contains(TEXT("rosso")))
+            else if (UMaterial* BaseMat = SlotMat->GetMaterial())
             {
-                ResolvedColor = FLinearColor(0.85f, 0.08f, 0.08f, 1.0f); // Bright Red Accent Strip
-                ResolvedMetallic = 0.05f;
+                // Inspect constant vectors in the base material graph
+                for (UMaterialExpression* Expr : BaseMat->GetExpressions())
+                {
+                    if (UMaterialExpressionConstant3Vector* C3 = Cast<UMaterialExpressionConstant3Vector>(Expr))
+                    {
+                        if (!C3->Constant.Equals(FLinearColor::White, 0.001f) && !C3->Constant.Equals(FLinearColor::Black, 0.001f))
+                        {
+                            ResolvedColor = C3->Constant;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Asset name / path heuristics for CAD/FBX materials
+            const FString MatName = (SlotMat->GetPathName() + TEXT(" ") + SlotMat->GetName()).ToLower();
+            if (MatName.Contains(TEXT("red")) || MatName.Contains(TEXT("accent")) || MatName.Contains(TEXT("strip")) || MatName.Contains(TEXT("rosso")) || MatName.Contains(TEXT("2147473129")))
+            {
+                ResolvedColor = FLinearColor(0.85f, 0.05f, 0.05f, 1.0f); // Bright Red Accent Strip
+                ResolvedMetallic = 0.02f;
                 ResolvedRoughness = 0.35f;
             }
             else if (MatName.Contains(TEXT("dark")) || MatName.Contains(TEXT("black")) || MatName.Contains(TEXT("frame")) || MatName.Contains(TEXT("nero")) || MatName.Contains(TEXT("graphite")))
             {
-                ResolvedColor = FLinearColor(0.10f, 0.10f, 0.12f, 1.0f); // Dark Black Metal Frame
+                ResolvedColor = FLinearColor(0.015f, 0.015f, 0.018f, 1.0f); // Dark Black Metal Frame
                 ResolvedMetallic = 0.85f;
                 ResolvedRoughness = 0.25f;
             }
             else if (MatName.Contains(TEXT("gold")) || MatName.Contains(TEXT("brass")) || MatName.Contains(TEXT("oro")) || MatName.Contains(TEXT("ottone")))
             {
-                ResolvedColor = FLinearColor(0.85f, 0.68f, 0.28f, 1.0f); // Polished Italian Brass
+                ResolvedColor = FLinearColor(0.85f, 0.65f, 0.22f, 1.0f); // Polished Italian Brass
                 ResolvedMetallic = 0.92f;
                 ResolvedRoughness = 0.18f;
             }
             else if (MatName.Contains(TEXT("mirror")) || MatName.Contains(TEXT("specchio")) || MatName.Contains(TEXT("glass")) || MatName.Contains(TEXT("vetro")))
             {
-                ResolvedColor = FLinearColor(0.92f, 0.95f, 0.98f, 1.0f); // Mirror Glass
+                ResolvedColor = FLinearColor(0.95f, 0.97f, 1.0f, 1.0f); // Mirror Glass
                 ResolvedMetallic = 0.98f;
                 ResolvedRoughness = 0.02f;
             }
-            else if (MatName.Contains(TEXT("fluted")) || MatName.Contains(TEXT("wood")) || MatName.Contains(TEXT("noce")) || MatName.Contains(TEXT("scuro")) || MatName.Contains(TEXT("walnut")))
-            {
-                ResolvedColor = FLinearColor(0.18f, 0.13f, 0.09f, 1.0f); // Dark Fluted Wood
-                ResolvedMetallic = 0.02f;
-                ResolvedRoughness = 0.55f;
-            }
         }
 
-        // Special handling for component-specific multi-material slots:
+        // Component-specific multi-material slot guarantees:
         if (CompType == EFurnitureComponentType::Mirror)
         {
             if (MatSlotIndex == 0)
             {
-                // Slot 0 = Mirror Glass
-                ResolvedColor = FLinearColor(0.92f, 0.95f, 0.98f, 1.0f);
+                ResolvedColor = FLinearColor(0.95f, 0.97f, 1.0f, 1.0f);
                 ResolvedMetallic = 0.98f;
                 ResolvedRoughness = 0.02f;
             }
             else if (MatSlotIndex >= 1)
             {
-                // Slot 1+ = Mirror Frame (Dark Black Metal)
-                ResolvedColor = FLinearColor(0.10f, 0.10f, 0.12f, 1.0f);
+                // Slot 1+ is the dark black mirror frame
+                ResolvedColor = FLinearColor(0.015f, 0.015f, 0.018f, 1.0f);
                 ResolvedMetallic = 0.85f;
                 ResolvedRoughness = 0.25f;
             }
@@ -359,9 +374,9 @@ void UARExportSubsystem::ExtractComponentGeometry(
         {
             if (MatSlotIndex == 1)
             {
-                // Slot 1 = Accent Strip on Tall Closet (Bright Red Accent)
-                ResolvedColor = FLinearColor(0.85f, 0.08f, 0.08f, 1.0f);
-                ResolvedMetallic = 0.05f;
+                // Slot 1 on Tall Closet Door/Body is the Red Accent Handle Strip
+                ResolvedColor = FLinearColor(0.85f, 0.05f, 0.05f, 1.0f);
+                ResolvedMetallic = 0.02f;
                 ResolvedRoughness = 0.35f;
             }
         }

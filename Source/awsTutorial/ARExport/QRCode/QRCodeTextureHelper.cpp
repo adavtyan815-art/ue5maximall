@@ -13,7 +13,8 @@ UTexture2D* FQRCodeTextureHelper::GenerateQRCodeTexture(const FString& TextToEnc
     }
 
     FTCHARToUTF8 Utf8(*TextToEncode);
-    qrcodegen::QrCode QR = qrcodegen::QrCode::encodeText(Utf8.Get(), qrcodegen::QrCode::Ecc::MEDIUM);
+    // Use HIGH Error Correction (30% error recovery) for maximum camera detection reliability under screen glare
+    qrcodegen::QrCode QR = qrcodegen::QrCode::encodeText(Utf8.Get(), qrcodegen::QrCode::Ecc::HIGH);
 
     if (!QR.isValid())
     {
@@ -22,13 +23,14 @@ UTexture2D* FQRCodeTextureHelper::GenerateQRCodeTexture(const FString& TextToEnc
     }
 
     const int32 QRSize = QR.getSize();
-    // Use generous quiet zone (at least 8 modules) for guaranteed camera detection
-    const int32 Margin = FMath::Max(BorderModules, 8);
+    const int32 Margin = FMath::Max(BorderModules, 8); // Minimum 8 modules quiet zone
     const int32 TotalModules = QRSize + (Margin * 2);
 
-    const int32 TexWidth = (TargetResolution > 0) ? TargetResolution : 1024;
-    const int32 TexHeight = (TargetResolution > 0) ? TargetResolution : 1024;
-    const float ModulePixelSize = static_cast<float>(TexWidth) / static_cast<float>(TotalModules);
+    // Calculate exact integer pixel size per module (no sub-pixel blur)
+    const int32 DesiredTexSize = (TargetResolution > 0) ? TargetResolution : 512;
+    const int32 PixelsPerModule = FMath::Max(1, DesiredTexSize / TotalModules);
+    const int32 TexWidth = TotalModules * PixelsPerModule;
+    const int32 TexHeight = TotalModules * PixelsPerModule;
 
     TArray<FColor> Pixels;
     Pixels.SetNumUninitialized(TexWidth * TexHeight);
@@ -38,11 +40,11 @@ UTexture2D* FQRCodeTextureHelper::GenerateQRCodeTexture(const FString& TextToEnc
 
     for (int32 Y = 0; Y < TexHeight; ++Y)
     {
-        const int32 ModuleY = FMath::FloorToInt(static_cast<float>(Y) / ModulePixelSize) - Margin;
+        const int32 ModuleY = (Y / PixelsPerModule) - Margin;
 
         for (int32 X = 0; X < TexWidth; ++X)
         {
-            const int32 ModuleX = FMath::FloorToInt(static_cast<float>(X) / ModulePixelSize) - Margin;
+            const int32 ModuleX = (X / PixelsPerModule) - Margin;
 
             bool bIsBlack = false;
             if (ModuleX >= 0 && ModuleX < QRSize && ModuleY >= 0 && ModuleY < QRSize)
