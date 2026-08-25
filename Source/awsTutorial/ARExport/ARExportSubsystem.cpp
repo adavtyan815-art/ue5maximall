@@ -12,6 +12,11 @@
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialFunction.h"
+#include "Materials/MaterialExpressionTextureSample.h"
+#include "Materials/MaterialExpressionTextureBase.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
@@ -25,6 +30,77 @@
 
 namespace
 {
+    /** Recursively searches a material and its nested Material Functions for all referenced UTexture2D assets */
+    void FindTexturesInMaterial(UMaterialInterface* Mat, TArray<UTexture2D*>& OutTextures)
+    {
+        if (!Mat)
+        {
+            return;
+        }
+
+        // 1. Texture Parameters on Material Instance
+        if (UMaterialInstance* Inst = Cast<UMaterialInstance>(Mat))
+        {
+            TArray<FMaterialParameterInfo> TexInfos;
+            TArray<FGuid> Guids;
+            Inst->GetAllTextureParameterInfo(TexInfos, Guids);
+            for (const FMaterialParameterInfo& Info : TexInfos)
+            {
+                UTexture* Tex = nullptr;
+                if (Inst->GetTextureParameterValue(Info, Tex) && Tex)
+                {
+                    if (UTexture2D* Tex2D = Cast<UTexture2D>(Tex))
+                    {
+                        OutTextures.AddUnique(Tex2D);
+                    }
+                }
+            }
+        }
+
+        // 2. Expressions in Base Material and all nested Material Functions
+        UMaterial* BaseMat = Mat->GetMaterial();
+        if (BaseMat)
+        {
+            TArray<UMaterialExpression*> ExpressionsToProcess = BaseMat->GetExpressions();
+            TSet<UMaterialFunctionInterface*> ProcessedFunctions;
+
+            for (int32 i = 0; i < ExpressionsToProcess.Num(); ++i)
+            {
+                UMaterialExpression* Expr = ExpressionsToProcess[i];
+                if (!Expr)
+                {
+                    continue;
+                }
+
+                if (UMaterialExpressionTextureSample* TS = Cast<UMaterialExpressionTextureSample>(Expr))
+                {
+                    if (UTexture2D* Tex2D = Cast<UTexture2D>(TS->Texture))
+                    {
+                        OutTextures.AddUnique(Tex2D);
+                    }
+                }
+                else if (UMaterialExpressionTextureBase* TB = Cast<UMaterialExpressionTextureBase>(Expr))
+                {
+                    if (UTexture2D* Tex2D = Cast<UTexture2D>(TB->Texture))
+                    {
+                        OutTextures.AddUnique(Tex2D);
+                    }
+                }
+                else if (UMaterialExpressionMaterialFunctionCall* FuncCall = Cast<UMaterialExpressionMaterialFunctionCall>(Expr))
+                {
+                    if (FuncCall->MaterialFunction && !ProcessedFunctions.Contains(FuncCall->MaterialFunction))
+                    {
+                        ProcessedFunctions.Add(FuncCall->MaterialFunction);
+                        if (UMaterialFunction* MF = Cast<UMaterialFunction>(FuncCall->MaterialFunction))
+                        {
+                            ExpressionsToProcess.Append(MF->GetExpressions());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /** Extracts an uncompressed PNG byte buffer from a UTexture2D for embedding into .glb */
     bool ExtractTexturePNG(UTexture2D* Tex, TArray<uint8>& OutPNG)
     {
@@ -33,59 +109,44 @@ namespace
             return false;
         }
 
-        FTexturePlatformData* PlatformData = Tex->GetPlatformData();
-        if (!PlatformData || PlatformData->Mips.Num() == 0)
+        // 1. Try ImageUtils Source Image (fastest, lossless, full resolution)
+        FImage SourceImage;
+        if (FImageUtils::GetTexture2DSourceImage(Tex, SourceImage))
         {
-            return false;
-        }
-
-        FTexture2DMipMap& Mip0 = PlatformData->Mips[0];
-        const int32 Width = Mip0.SizeX;
-        const int32 Height = Mip0.SizeY;
-        if (Width <= 0 || Height <= 0)
-        {
-            return false;
-        }
-
-        const void* RawData = Mip0.BulkData.LockReadOnly();
-        if (!RawData)
-        {
-            return false;
-        }
-
-        TArray<FColor> Pixels;
-        Pixels.SetNumUninitialized(Width * Height);
-
-        if (PlatformData->PixelFormat == PF_B8G8R8A8)
-        {
-            FMemory::Memcpy(Pixels.GetData(), RawData, Width * Height * sizeof(FColor));
-            Mip0.BulkData.Unlock();
-        }
-        else
-        {
-            Mip0.BulkData.Unlock();
-#if WITH_EDITOR
-            FImage SourceImage;
-            if (FImageUtils::GetTexture2DSourceImage(Tex, SourceImage))
+            TArray64<uint8> CompressedBytes;
+            if (FImageUtils::CompressImage(CompressedBytes, TEXT("png"), SourceImage))
             {
-                IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-                TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-                if (Wrapper.IsValid() && Wrapper->SetRaw(SourceImage.RawData.GetData(), SourceImage.RawData.Num(), SourceImage.SizeX, SourceImage.SizeY, ERGBFormat::BGRA, 8))
+                OutPNG.SetNumUninitialized(CompressedBytes.Num());
+                FMemory::Memcpy(OutPNG.GetData(), CompressedBytes.GetData(), CompressedBytes.Num());
+                return OutPNG.Num() > 0;
+            }
+        }
+
+        // 2. Fallback: Read Mip 0 Platform Data
+        FTexturePlatformData* PlatformData = Tex->GetPlatformData();
+        if (PlatformData && PlatformData->Mips.Num() > 0)
+        {
+            FTexture2DMipMap& Mip0 = PlatformData->Mips[0];
+            const int32 Width = Mip0.SizeX;
+            const int32 Height = Mip0.SizeY;
+            if (Width > 0 && Height > 0)
+            {
+                const void* RawData = Mip0.BulkData.LockReadOnly();
+                if (RawData)
                 {
-                    OutPNG = Wrapper->GetCompressed(100);
+                    if (PlatformData->PixelFormat == PF_B8G8R8A8)
+                    {
+                        IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+                        TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+                        if (ImageWrapper.IsValid() && ImageWrapper->SetRaw(RawData, Width * Height * 4, Width, Height, ERGBFormat::BGRA, 8))
+                        {
+                            OutPNG = ImageWrapper->GetCompressed(100);
+                        }
+                    }
+                    Mip0.BulkData.Unlock();
                     return OutPNG.Num() > 0;
                 }
             }
-#endif
-            return false;
-        }
-
-        IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-        TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-        if (ImageWrapper.IsValid() && ImageWrapper->SetRaw(Pixels.GetData(), Pixels.Num() * sizeof(FColor), Width, Height, ERGBFormat::BGRA, 8))
-        {
-            OutPNG = ImageWrapper->GetCompressed(100);
-            return OutPNG.Num() > 0;
         }
 
         return false;
@@ -222,7 +283,6 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             switch (CompType)
             {
             case EFurnitureComponentType::Faucet:
-                // Polished Italian Brass / Gold
                 ResolvedColor = FLinearColor(0.85f, 0.65f, 0.22f, 1.0f);
                 ResolvedMetallic = 0.92f;
                 ResolvedRoughness = 0.18f;
@@ -231,14 +291,12 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             case EFurnitureComponentType::Mirror:
                 if (MatSlotIndex == 0)
                 {
-                    // Mirror Glass Surface
                     ResolvedColor = FLinearColor(0.95f, 0.97f, 1.0f, 1.0f);
                     ResolvedMetallic = 0.98f;
                     ResolvedRoughness = 0.02f;
                 }
                 else
                 {
-                    // Dark Grey / Black Metal Frame
                     ResolvedColor = FLinearColor(0.015f, 0.015f, 0.018f, 1.0f);
                     ResolvedMetallic = 0.85f;
                     ResolvedRoughness = 0.25f;
@@ -246,14 +304,12 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 break;
 
             case EFurnitureComponentType::Sink:
-                // Glossy Ceramic White
                 ResolvedColor = FLinearColor(0.96f, 0.96f, 0.96f, 1.0f);
                 ResolvedMetallic = 0.0f;
                 ResolvedRoughness = 0.08f;
                 break;
 
             case EFurnitureComponentType::Countertop:
-                // White Quartz Stone
                 ResolvedColor = FLinearColor(0.85f, 0.85f, 0.85f, 1.0f);
                 ResolvedMetallic = 0.05f;
                 ResolvedRoughness = 0.25f;
@@ -262,14 +318,12 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             case EFurnitureComponentType::Closet:
                 if (MatSlotIndex == 1)
                 {
-                    // Bright Vivid Red Accent Handle Strip
                     ResolvedColor = FLinearColor(0.85f, 0.05f, 0.05f, 1.0f);
                     ResolvedMetallic = 0.02f;
                     ResolvedRoughness = 0.3f;
                 }
                 else
                 {
-                    // Pure White Cabinet Body & Shelves
                     ResolvedColor = FLinearColor(0.95f, 0.95f, 0.95f, 1.0f);
                     ResolvedMetallic = 0.02f;
                     ResolvedRoughness = 0.35f;
@@ -281,14 +335,12 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 {
                     if (MatSlotIndex == 1)
                     {
-                        // Bright Vivid Red Accent Handle Strip on Closet Door
                         ResolvedColor = FLinearColor(0.85f, 0.05f, 0.05f, 1.0f);
                         ResolvedMetallic = 0.02f;
                         ResolvedRoughness = 0.3f;
                     }
                     else
                     {
-                        // Pure White Closet Door Body
                         ResolvedColor = FLinearColor(0.95f, 0.95f, 0.95f, 1.0f);
                         ResolvedMetallic = 0.02f;
                         ResolvedRoughness = 0.35f;
@@ -296,7 +348,6 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 }
                 else
                 {
-                    // Dark Fluted Walnut Wood on Main Cabinet Door
                     ResolvedColor = FLinearColor(0.035f, 0.022f, 0.015f, 1.0f);
                     ResolvedMetallic = 0.02f;
                     ResolvedRoughness = 0.65f;
@@ -305,14 +356,13 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
 
             case EFurnitureComponentType::Cabinet:
             default:
-                // Dark Fluted Walnut Wood on Main Cabinet
                 ResolvedColor = FLinearColor(0.035f, 0.022f, 0.015f, 1.0f);
                 ResolvedMetallic = 0.02f;
                 ResolvedRoughness = 0.65f;
                 break;
             }
 
-            // ── 3. Apply Active RAL/NCS Custom Color Overrides (if set) ──────
+            // ── 3. Apply Active RAL/NCS Custom Color Overrides ───────────────
             for (const FCustomColorOverride& Override : TargetBooth->CustomColors)
             {
                 if (Override.ComponentType == CompType)
@@ -325,48 +375,18 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 }
             }
 
-            // ── 4. Query Active Dynamic Material Instance Overrides ──────────
+            // ── 4. Recursively Extract Diffuse Texture from Material Graph ───
             if (SlotMat)
             {
-                if (UMaterialInstanceDynamic* DynMat = Cast<UMaterialInstanceDynamic>(SlotMat))
+                TArray<UTexture2D*> FoundTextures;
+                FindTexturesInMaterial(SlotMat, FoundTextures);
+                if (FoundTextures.Num() > 0)
                 {
-                    FLinearColor DynColor;
-                    if (DynMat->GetVectorParameterValue(FName("BaseColor"), DynColor) ||
-                        DynMat->GetVectorParameterValue(FName("Color"), DynColor))
-                    {
-                        if (MatSlotIndex == 0)
-                        {
-                            ResolvedColor = DynColor;
-                        }
-                    }
-                }
-
-                // Query Texture parameter on Material Instance if present
-                if (UMaterialInstance* InstMat = Cast<UMaterialInstance>(SlotMat))
-                {
-                    TArray<FMaterialParameterInfo> TexInfos;
-                    TArray<FGuid> Guids;
-                    InstMat->GetAllTextureParameterInfo(TexInfos, Guids);
-                    for (const FMaterialParameterInfo& TInfo : TexInfos)
-                    {
-                        UTexture* Tex = nullptr;
-                        if (InstMat->GetTextureParameterValue(TInfo, Tex) && Tex)
-                        {
-                            if (UTexture2D* Tex2D = Cast<UTexture2D>(Tex))
-                            {
-                                FString LowerName = TInfo.Name.ToString().ToLower();
-                                if (LowerName.Contains(TEXT("diffuse")) || LowerName.Contains(TEXT("albedo")) || LowerName.Contains(TEXT("base")))
-                                {
-                                    FoundTexture = Tex2D;
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    FoundTexture = FoundTextures[0];
                 }
             }
 
-            // ── 5. Build GLB Primitive ───────────────────────────────────────
+            // ── 5. Build GLB Primitive with Embedded Texture ─────────────────
             FGLBPrimitive Prim;
             Prim.MeshName = FString::Printf(TEXT("%s_Slot%d"), *CompName, MatSlotIndex);
             Prim.BaseColor = ResolvedColor;
@@ -381,12 +401,14 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 if (TArray<uint8>* CachedPNG = TextureCache.Find(TexPath))
                 {
                     Prim.BaseColorTexturePNG = *CachedPNG;
+                    Prim.BaseColor = FLinearColor::White;
                 }
                 else
                 {
                     TArray<uint8> PNGBytes;
                     if (ExtractTexturePNG(FoundTexture, PNGBytes) && PNGBytes.Num() > 0)
                     {
+                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
                         TextureCache.Add(TexPath, PNGBytes);
                         Prim.BaseColorTexturePNG = MoveTemp(PNGBytes);
                         Prim.BaseColor = FLinearColor::White;
