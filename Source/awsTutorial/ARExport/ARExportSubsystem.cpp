@@ -294,13 +294,6 @@ namespace
         FImage SourceImage;
         if (FImageUtils::GetTexture2DSourceImage(Tex, SourceImage))
         {
-            if (SourceImage.Format != ERawImageFormat::BGRA8)
-            {
-                FImage ConvertedImage;
-                SourceImage.CopyTo(ConvertedImage, ERawImageFormat::BGRA8, EGammaSpace::sRGB);
-                SourceImage = MoveTemp(ConvertedImage);
-            }
-
             if (SourceImage.Format == ERawImageFormat::BGRA8 && SourceImage.RawData.Num() >= 4)
             {
                 const int64 NumPixels = SourceImage.RawData.Num() / 4;
