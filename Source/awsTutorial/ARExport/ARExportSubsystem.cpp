@@ -317,13 +317,11 @@ namespace
             CombinedData[DstOffset + 3] = A;
         }
 
-        FImage CombinedImage(Width, Height, ERawImageFormat::BGRA8, EGammaSpace::Linear);
-        CombinedImage.RawData = MoveTemp(CombinedData);
-        TArray64<uint8> CompressedBytes;
-        if (FImageUtils::CompressImage(CompressedBytes, TEXT("png"), CombinedImage))
+        IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+        TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+        if (ImageWrapper.IsValid() && ImageWrapper->SetRaw(CombinedData.GetData(), CombinedData.Num(), Width, Height, ERGBFormat::BGRA, 8))
         {
-            OutPNG.SetNumUninitialized(CompressedBytes.Num());
-            FMemory::Memcpy(OutPNG.GetData(), CompressedBytes.GetData(), CompressedBytes.Num());
+            OutPNG = ImageWrapper->GetCompressed(100);
             return OutPNG.Num() > 0;
         }
         return false;
