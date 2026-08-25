@@ -77,39 +77,42 @@ bool FSimpleGLBWriter::SerializeToGLB(const TArray<FGLBPrimitive>& Primitives, T
                 TexturesArray.Add(MakeShared<FJsonValueObject>(TexObj));
 
                 TextureIndexByKey.Add(Prim.BaseColorTextureKey, BaseColorTextureIdx);
+            }
+        }
+
         // ── 0b. Embed Normal Texture (deduplicated by key) ───────────────────
         int32 NormalTextureIdx = INDEX_NONE;
         if (!Prim.NormalTextureKey.IsEmpty())
         {
-            if (const int32* ExistingIdx = TextureIndexByKey.Find(Prim.NormalTextureKey))
+            if (const int32* ExistingNormalIdx = TextureIndexByKey.Find(Prim.NormalTextureKey))
             {
-                NormalTextureIdx = *ExistingIdx;
+                NormalTextureIdx = *ExistingNormalIdx;
             }
             else if (Prim.NormalTexturePNG.Num() > 0)
             {
                 AlignBufferTo4Bytes();
-                const int32 ImageByteOffset = BinaryBuffer.Num();
+                const int32 NormalImageByteOffset = BinaryBuffer.Num();
                 BinaryBuffer.Append(Prim.NormalTexturePNG);
 
-                const int32 ImageBufferViewIdx = BufferViewsArray.Num();
-                TSharedPtr<FJsonObject> ImageBV = MakeShared<FJsonObject>();
-                ImageBV->SetNumberField(TEXT("buffer"), 0);
-                ImageBV->SetNumberField(TEXT("byteOffset"), ImageByteOffset);
-                ImageBV->SetNumberField(TEXT("byteLength"), Prim.NormalTexturePNG.Num());
-                BufferViewsArray.Add(MakeShared<FJsonValueObject>(ImageBV));
+                const int32 NormalImageBufferViewIdx = BufferViewsArray.Num();
+                TSharedPtr<FJsonObject> NormalImageBV = MakeShared<FJsonObject>();
+                NormalImageBV->SetNumberField(TEXT("buffer"), 0);
+                NormalImageBV->SetNumberField(TEXT("byteOffset"), NormalImageByteOffset);
+                NormalImageBV->SetNumberField(TEXT("byteLength"), Prim.NormalTexturePNG.Num());
+                BufferViewsArray.Add(MakeShared<FJsonValueObject>(NormalImageBV));
 
-                const int32 ImageIdx = ImagesArray.Num();
-                TSharedPtr<FJsonObject> ImageObj = MakeShared<FJsonObject>();
-                ImageObj->SetStringField(TEXT("name"), Prim.NormalTextureKey);
-                ImageObj->SetStringField(TEXT("mimeType"), TEXT("image/png"));
-                ImageObj->SetNumberField(TEXT("bufferView"), ImageBufferViewIdx);
-                ImagesArray.Add(MakeShared<FJsonValueObject>(ImageObj));
+                const int32 NormalImageIdx = ImagesArray.Num();
+                TSharedPtr<FJsonObject> NormalImageObj = MakeShared<FJsonObject>();
+                NormalImageObj->SetStringField(TEXT("name"), Prim.NormalTextureKey);
+                NormalImageObj->SetStringField(TEXT("mimeType"), TEXT("image/png"));
+                NormalImageObj->SetNumberField(TEXT("bufferView"), NormalImageBufferViewIdx);
+                ImagesArray.Add(MakeShared<FJsonValueObject>(NormalImageObj));
 
                 NormalTextureIdx = TexturesArray.Num();
-                TSharedPtr<FJsonObject> TexObj = MakeShared<FJsonObject>();
-                TexObj->SetNumberField(TEXT("sampler"), 0);
-                TexObj->SetNumberField(TEXT("source"), ImageIdx);
-                TexturesArray.Add(MakeShared<FJsonValueObject>(TexObj));
+                TSharedPtr<FJsonObject> NormalTexObj = MakeShared<FJsonObject>();
+                NormalTexObj->SetNumberField(TEXT("sampler"), 0);
+                NormalTexObj->SetNumberField(TEXT("source"), NormalImageIdx);
+                TexturesArray.Add(MakeShared<FJsonValueObject>(NormalTexObj));
 
                 TextureIndexByKey.Add(Prim.NormalTextureKey, NormalTextureIdx);
             }

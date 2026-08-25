@@ -380,7 +380,7 @@ namespace
             if (!bMetallicFound && ReflectionLevel > 0.5f)
             {
                 const float MaxRefl = FMath::Max3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
-                if (MaxRefl > 0.3f && State.BaseColor.ComputeLuminance() < 0.2f)
+                if (MaxRefl > 0.3f && State.BaseColor.GetLuminance() < 0.2f)
                 {
                     State.Metallic = FMath::Clamp(ReflectionLevel, 0.0f, 1.0f);
                     State.BaseColor = ReflectionColor;
