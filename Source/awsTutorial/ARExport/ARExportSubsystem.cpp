@@ -30,6 +30,48 @@
 
 namespace
 {
+    /** Holds UV Transformation parameters (Tiling, Offset, Rotation) extracted from Material Instances */
+    struct FUVTransform
+    {
+        FVector2f Tiling = FVector2f(1.0f, 1.0f);
+        FVector2f Offset = FVector2f(0.0f, 0.0f);
+        float W_Rotation = 0.0f;
+        FVector2f RotationPivot = FVector2f(0.0f, 0.0f);
+        FVector2f TilingPivot = FVector2f(0.0f, 0.0f);
+        bool bHasTransform = false;
+
+        FVector2f TransformUV(const FVector2f& InUV) const
+        {
+            if (!bHasTransform)
+            {
+                return InUV;
+            }
+
+            FVector2f Out = InUV;
+
+            // 1. Tiling around TilingPivot
+            Out = (Out - TilingPivot) * Tiling + TilingPivot;
+
+            // 2. Offset
+            Out += Offset;
+
+            // 3. Rotation around RotationPivot
+            if (!FMath::IsNearlyZero(W_Rotation))
+            {
+                // In 3ds Max / Datasmith, W_Rotation is in turns (-0.25 = -90 degrees = -PI/2)
+                const float AngleRad = W_Rotation * 2.0f * PI;
+                const float CosA = FMath::Cos(AngleRad);
+                const float SinA = FMath::Sin(AngleRad);
+
+                const FVector2f P = Out - RotationPivot;
+                Out.X = P.X * CosA - P.Y * SinA + RotationPivot.X;
+                Out.Y = P.X * SinA + P.Y * CosA + RotationPivot.Y;
+            }
+
+            return Out;
+        }
+    };
+
     /** Recursively searches a material and its nested Material Functions for all referenced UTexture2D assets */
     void FindTexturesInMaterial(UMaterialInterface* Mat, TArray<UTexture2D*>& OutTextures)
     {
@@ -389,7 +431,82 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 }
             }
 
-            // ── 4. Recursively Extract Diffuse Texture from Material Graph ───
+            // ── 4. Extract UV Transformation Parameters (Tiling/Offset/Rotation)
+            FUVTransform UVTransform;
+            if (SlotMat)
+            {
+                if (UMaterialInstance* Inst = Cast<UMaterialInstance>(SlotMat))
+                {
+                    TArray<FMaterialParameterInfo> VInfos;
+                    TArray<FGuid> Guids;
+                    Inst->GetAllVectorParameterInfo(VInfos, Guids);
+
+                    for (const FMaterialParameterInfo& VInfo : VInfos)
+                    {
+                        const FString LowerName = VInfo.Name.ToString().ToLower();
+                        FLinearColor VVal;
+                        if (Inst->GetVectorParameterValue(VInfo, VVal))
+                        {
+                            if (LowerName.Contains(TEXT("uv_tiling")) || LowerName.Contains(TEXT("tiling (")))
+                            {
+                                UVTransform.Tiling = FVector2f(VVal.R, VVal.G);
+                                UVTransform.bHasTransform = true;
+                            }
+                            else if (LowerName.Contains(TEXT("uv_offset")) || LowerName.Contains(TEXT("offset (")))
+                            {
+                                UVTransform.Offset = FVector2f(VVal.R, VVal.G);
+                                UVTransform.bHasTransform = true;
+                            }
+                            else if (LowerName.Contains(TEXT("rotation_pivot")))
+                            {
+                                UVTransform.RotationPivot = FVector2f(VVal.R, VVal.G);
+                            }
+                            else if (LowerName.Contains(TEXT("tiling_pivot")))
+                            {
+                                UVTransform.TilingPivot = FVector2f(VVal.R, VVal.G);
+                            }
+                        }
+                    }
+
+                    TArray<FMaterialParameterInfo> SInfos;
+                    Inst->GetAllScalarParameterInfo(SInfos, Guids);
+                    for (const FMaterialParameterInfo& SInfo : SInfos)
+                    {
+                        const FString LowerName = SInfo.Name.ToString().ToLower();
+                        float SVal = 0.0f;
+                        if (Inst->GetScalarParameterValue(SInfo, SVal))
+                        {
+                            if (LowerName.Contains(TEXT("w_rotation")) || LowerName.Contains(TEXT("rotation")))
+                            {
+                                UVTransform.W_Rotation = SVal;
+                                UVTransform.bHasTransform = true;
+                            }
+                            else if (LowerName.Contains(TEXT("tiling_u")) || LowerName.Contains(TEXT("tiling_x")))
+                            {
+                                UVTransform.Tiling.X = SVal;
+                                UVTransform.bHasTransform = true;
+                            }
+                            else if (LowerName.Contains(TEXT("tiling_v")) || LowerName.Contains(TEXT("tiling_y")))
+                            {
+                                UVTransform.Tiling.Y = SVal;
+                                UVTransform.bHasTransform = true;
+                            }
+                            else if (LowerName.Contains(TEXT("offset_u")) || LowerName.Contains(TEXT("offset_x")))
+                            {
+                                UVTransform.Offset.X = SVal;
+                                UVTransform.bHasTransform = true;
+                            }
+                            else if (LowerName.Contains(TEXT("offset_v")) || LowerName.Contains(TEXT("offset_y")))
+                            {
+                                UVTransform.Offset.Y = SVal;
+                                UVTransform.bHasTransform = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── 5. Recursively Extract Diffuse Texture from Material Graph ───
             if (SlotMat)
             {
                 TArray<UTexture2D*> FoundTextures;
@@ -400,7 +517,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 }
             }
 
-            // ── 5. Build GLB Primitive with Embedded Texture ─────────────────
+            // ── 6. Build GLB Primitive with Embedded Texture ─────────────────
             FGLBPrimitive Prim;
             Prim.MeshName = FString::Printf(TEXT("%s_Slot%d"), *CompName, MatSlotIndex);
             Prim.BaseColor = ResolvedColor;
@@ -463,7 +580,8 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
 
                     if (VertBuffer.GetNumTexCoords() > 0)
                     {
-                        V.UV = VertBuffer.GetVertexUV(OldVertIdx, 0);
+                        const FVector2f RawUV = VertBuffer.GetVertexUV(OldVertIdx, 0);
+                        V.UV = UVTransform.TransformUV(RawUV);
                     }
                     else
                     {
@@ -508,7 +626,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
     const FString ShortWebARURL = FString::Printf(TEXT("http://%s:%d/"), *LocalIP, LocalServerPort);
     const FString DirectModelURL = FString::Printf(TEXT("http://%s:%d/index.html?model=%s"), *LocalIP, LocalServerPort, *FileName);
 
-    // ── 6. Run Heavy GLB Serialization on Background Worker Thread ───────────
+    // ── 7. Run Heavy GLB Serialization on Background Worker Thread ───────────
     Async(EAsyncExecution::ThreadPool, [Primitives = MoveTemp(Primitives), FullFilePath, ShortWebARURL, DirectModelURL, OnFinished]()
     {
         TArray<uint8> GLBData;
@@ -521,7 +639,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Successfully wrote GLB (%d bytes) to %s"), GLBData.Num(), *FullFilePath);
         }
 
-        // ── 7. Dispatch Back to Game Thread for QR Texture & UI Callback ─────
+        // ── 8. Dispatch Back to Game Thread for QR Texture & UI Callback ─────
         AsyncTask(ENamedThreads::GameThread, [bWriteSuccess, FullFilePath, ShortWebARURL, DirectModelURL, OnFinished]()
         {
             UTexture2D* QRTexture = nullptr;
