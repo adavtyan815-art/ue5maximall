@@ -273,20 +273,101 @@ namespace
     }
 
     /**
+     * Builds a generic 2D coverage mask of texture pixels covered by non-degenerate UV triangles
+     * of the mesh section (matching UE IMaterialBakingModule / FGLTFMaterialUtilities).
+     */
+    void BuildMeshUVCoverageMask(
+        const FStaticMeshVertexBuffer& VertBuffer,
+        const TArray<uint32>& AllIndices,
+        uint32 FirstIndex,
+        uint32 IndexCount,
+        const FUVTransform& UVTransform,
+        int32 TextureWidth,
+        int32 TextureHeight,
+        TArray<uint8>& OutCoverageMask)
+    {
+        OutCoverageMask.SetNumZeroed(TextureWidth * TextureHeight);
+        if (TextureWidth <= 0 || TextureHeight <= 0 || VertBuffer.GetNumTexCoords() == 0 || IndexCount < 3)
+        {
+            return;
+        }
+
+        const uint32 EndIndex = FMath::Min(FirstIndex + IndexCount, (uint32)AllIndices.Num());
+        const float Wf = static_cast<float>(TextureWidth);
+        const float Hf = static_cast<float>(TextureHeight);
+
+        auto EdgeFunc = [](float X0, float Y0, float X1, float Y1, float X2, float Y2) -> float
+        {
+            return (X2 - X0) * (Y1 - Y0) - (Y2 - Y0) * (X1 - X0);
+        };
+
+        for (uint32 i = FirstIndex; i + 2 < EndIndex; i += 3)
+        {
+            const uint32 I0 = AllIndices[i];
+            const uint32 I1 = AllIndices[i + 1];
+            const uint32 I2 = AllIndices[i + 2];
+
+            const FVector2f UV0 = UVTransform.TransformUV(VertBuffer.GetVertexUV(I0, 0));
+            const FVector2f UV1 = UVTransform.TransformUV(VertBuffer.GetVertexUV(I1, 0));
+            const FVector2f UV2 = UVTransform.TransformUV(VertBuffer.GetVertexUV(I2, 0));
+
+            const float U0 = UV0.X * Wf, V0 = UV0.Y * Hf;
+            const float U1 = UV1.X * Wf, V1 = UV1.Y * Hf;
+            const float U2 = UV2.X * Wf, V2 = UV2.Y * Hf;
+
+            // Degenerate triangle check (cross-product in pixel space):
+            const float DoubleArea = FMath::Abs((U1 - U0) * (V2 - V0) - (U2 - U0) * (V1 - V0));
+            if (DoubleArea < 0.1f) // Skip collapsed 1D / zero-area UV projections
+            {
+                continue;
+            }
+
+            const int32 MinX = FMath::Clamp(FMath::FloorToInt32(FMath::Min3(U0, U1, U2)), 0, TextureWidth - 1);
+            const int32 MaxX = FMath::Clamp(FMath::CeilToInt32(FMath::Max3(U0, U1, U2)), 0, TextureWidth - 1);
+            const int32 MinY = FMath::Clamp(FMath::FloorToInt32(FMath::Min3(V0, V1, V2)), 0, TextureHeight - 1);
+            const int32 MaxY = FMath::Clamp(FMath::CeilToInt32(FMath::Max3(V0, V1, V2)), 0, TextureHeight - 1);
+
+            for (int32 Y = MinY; Y <= MaxY; ++Y)
+            {
+                const float Py = static_cast<float>(Y) + 0.5f;
+                const int32 RowOffset = Y * TextureWidth;
+
+                for (int32 X = MinX; X <= MaxX; ++X)
+                {
+                    const float Px = static_cast<float>(X) + 0.5f;
+
+                    const float W0 = EdgeFunc(U1, V1, U2, V2, Px, Py);
+                    const float W1 = EdgeFunc(U2, V2, U0, V0, Px, Py);
+                    const float W2 = EdgeFunc(U0, V0, U1, V1, Px, Py);
+
+                    if ((W0 >= 0.0f && W1 >= 0.0f && W2 >= 0.0f) || (W0 <= 0.0f && W1 <= 0.0f && W2 <= 0.0f))
+                    {
+                        OutCoverageMask[RowOffset + X] = 255;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * GPU/Analytical Material BaseColor Baker:
      * Evaluates the material graph by multiplying the base color texture's sRGB texels
      * with the active runtime LinearColor parameter in Linear float space, then converting
-     * back to sRGB. This exactly replicates Unreal Engine's IMaterialBakingModule at runtime.
+     * back to sRGB. Pixels outside valid mesh UV triangles remain clean neutral zero (RGBA 0,0,0,0).
      */
-    bool BakeTextureWithTintPNG(UTexture2D* Tex, const FLinearColor& TintColor, TArray<uint8>& OutPNG)
+    bool BakeTextureWithTintPNG(
+        UTexture2D* Tex,
+        const FLinearColor& TintColor,
+        TArray<uint8>& OutPNG,
+        const TArray<uint8>* OptionalUVCoverageMask = nullptr)
     {
         if (!Tex)
         {
             return false;
         }
 
-        // If tint is pure white (no alteration needed), standard extract is faster
-        if (TintColor.Equals(FLinearColor::White, 1e-3f))
+        // If tint is pure white AND no UV masking requested, standard extract is faster
+        if (TintColor.Equals(FLinearColor::White, 1e-3f) && (!OptionalUVCoverageMask || OptionalUVCoverageMask->Num() == 0))
         {
             return ExtractTexturePNG(Tex, OutPNG, false);
         }
@@ -297,9 +378,22 @@ namespace
             if (SourceImage.Format == ERawImageFormat::BGRA8 && SourceImage.RawData.Num() >= 4)
             {
                 const int64 NumPixels = SourceImage.RawData.Num() / 4;
+                const bool bUseMask = (OptionalUVCoverageMask != nullptr && OptionalUVCoverageMask->Num() == NumPixels);
+
                 for (int64 i = 0; i < NumPixels; ++i)
                 {
                     const int64 ByteIdx = i * 4;
+
+                    if (bUseMask && (*OptionalUVCoverageMask)[i] == 0)
+                    {
+                        // Outside valid mesh UV triangles -> neutral transparent background (matching UE IMaterialBakingModule)
+                        SourceImage.RawData[ByteIdx]     = 0;
+                        SourceImage.RawData[ByteIdx + 1] = 0;
+                        SourceImage.RawData[ByteIdx + 2] = 0;
+                        SourceImage.RawData[ByteIdx + 3] = 0;
+                        continue;
+                    }
+
                     const uint8 B8 = SourceImage.RawData[ByteIdx];
                     const uint8 G8 = SourceImage.RawData[ByteIdx + 1];
                     const uint8 R8 = SourceImage.RawData[ByteIdx + 2];
@@ -319,6 +413,7 @@ namespace
                     SourceImage.RawData[ByteIdx]     = BakedColor.B;
                     SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
                     SourceImage.RawData[ByteIdx + 2] = BakedColor.R;
+                    SourceImage.RawData[ByteIdx + 3] = 0;
                 }
 
                 TArray64<uint8> CompressedBytes;
@@ -650,7 +745,13 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             // Embed Baked BaseColor Texture (if present)
             if (PBR.BaseColorTexture)
             {
-                const FString TexKey = FString::Printf(TEXT("%s_Baked_%s"), *PBR.BaseColorTexture->GetPathName(), *PBR.BaseColor.ToString());
+                // Build generic mesh-aware UV coverage mask for this section
+                TArray<uint8> UVCoverageMask;
+                const int32 TexW = PBR.BaseColorTexture->GetSizeX();
+                const int32 TexH = PBR.BaseColorTexture->GetSizeY();
+                BuildMeshUVCoverageMask(VertBuffer, AllIndices, FirstIndex, IndexCount, PBR.UVTransform, TexW, TexH, UVCoverageMask);
+
+                const FString TexKey = FString::Printf(TEXT("%s_Baked_%s_Sec%d"), *PBR.BaseColorTexture->GetPathName(), *PBR.BaseColor.ToString(), SectionIdx);
                 Prim.BaseColorTextureKey = TexKey;
 
                 if (TArray<uint8>* CachedPNG = TextureCache.Find(TexKey))
@@ -661,7 +762,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 else
                 {
                     TArray<uint8> PNGBytes;
-                    if (BakeTextureWithTintPNG(PBR.BaseColorTexture, PBR.BaseColor, PNGBytes) && PNGBytes.Num() > 0)
+                    if (BakeTextureWithTintPNG(PBR.BaseColorTexture, PBR.BaseColor, PNGBytes, &UVCoverageMask) && PNGBytes.Num() > 0)
                     {
                         UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Baked BaseColor texture %s (%d bytes) for %s"), *TexKey, PNGBytes.Num(), *Prim.MeshName);
                         TextureCache.Add(TexKey, PNGBytes);
