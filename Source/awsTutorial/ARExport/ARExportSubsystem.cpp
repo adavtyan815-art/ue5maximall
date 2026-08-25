@@ -304,14 +304,18 @@ namespace
                     const uint8 G8 = SourceImage.RawData[ByteIdx + 1];
                     const uint8 R8 = SourceImage.RawData[ByteIdx + 2];
 
-                    // Convert sRGB to Linear float
-                    FLinearColor Lin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
-                    Lin.R *= TintColor.R;
-                    Lin.G *= TintColor.G;
-                    Lin.B *= TintColor.B;
+                    // Material Graph: Desaturation (Luminance) -> Power(2.0) -> Multiply Tint
+                    const FLinearColor RawLin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
+                    const float Lum = 0.299f * RawLin.R + 0.587f * RawLin.G + 0.114f * RawLin.B;
+                    const float LumSq = Lum * Lum;
+
+                    FLinearColor Lin;
+                    Lin.R = LumSq * TintColor.R;
+                    Lin.G = LumSq * TintColor.G;
+                    Lin.B = LumSq * TintColor.B;
 
                     // Convert Linear float back to sRGB byte
-                    FColor BakedColor = Lin.ToFColor(true);
+                    const FColor BakedColor = Lin.ToFColor(true);
                     SourceImage.RawData[ByteIdx]     = BakedColor.B;
                     SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
                     SourceImage.RawData[ByteIdx + 2] = BakedColor.R;
