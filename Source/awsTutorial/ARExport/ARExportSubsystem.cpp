@@ -77,23 +77,14 @@ namespace
     {
         FLinearColor BaseColor = FLinearColor::White;
         float Metallic = 0.0f;
-        float Roughness = 0.35f;
+        float Roughness = 0.5f;
         UTexture2D* BaseColorTexture = nullptr;
         UTexture2D* NormalTexture = nullptr;
-        UTexture2D* MetallicRoughnessTexture = nullptr;
-        UTexture2D* RoughnessTexture = nullptr;
-        UTexture2D* MetallicTexture = nullptr;
         FUVTransform UVTransform;
     };
 
     /** Recursively searches a material and its nested Material Functions for all referenced UTexture2D assets */
-    void FindTexturesInMaterial(
-        UMaterialInterface* Mat,
-        TArray<UTexture2D*>& OutBaseColorTextures,
-        TArray<UTexture2D*>& OutNormalTextures,
-        TArray<UTexture2D*>& OutRoughnessTextures,
-        TArray<UTexture2D*>& OutMetallicTextures,
-        TArray<UTexture2D*>& OutORMTextures)
+    void FindTexturesInMaterial(UMaterialInterface* Mat, TArray<UTexture2D*>& OutBaseColorTextures, TArray<UTexture2D*>& OutNormalTextures)
     {
         if (!Mat)
         {
@@ -112,19 +103,6 @@ namespace
                 FullIdentifier.Contains(TEXT("norm")) || FullIdentifier.Contains(TEXT("bump")))
             {
                 OutNormalTextures.AddUnique(Tex);
-            }
-            else if (FullIdentifier.Contains(TEXT("orm")) || FullIdentifier.Contains(TEXT("arm")) || FullIdentifier.Contains(TEXT("mro")))
-            {
-                OutORMTextures.AddUnique(Tex);
-            }
-            else if (FullIdentifier.Contains(TEXT("rough")) || FullIdentifier.Contains(TEXT("gloss")) ||
-                     FullIdentifier.Contains(TEXT("ref")) || FullIdentifier.Contains(TEXT("spec")))
-            {
-                OutRoughnessTextures.AddUnique(Tex);
-            }
-            else if (FullIdentifier.Contains(TEXT("metal")) || FullIdentifier.Contains(TEXT("metallic")))
-            {
-                OutMetallicTextures.AddUnique(Tex);
             }
             else
             {
@@ -260,75 +238,8 @@ namespace
         return false;
     }
 
-    /** Extracts or combines Roughness and Metallic textures into a standard glTF 2.0 MetallicRoughness PNG (G=Roughness, B=Metallic) */
-    bool ExtractMetallicRoughnessPNG(UTexture2D* InRoughnessTex, UTexture2D* InMetallicTex, UTexture2D* InORMTex, float FallbackMetallic, float FallbackRoughness, TArray<uint8>& OutPNG)
-    {
-        if (InORMTex)
-        {
-            return ExtractTexturePNG(InORMTex, OutPNG);
-        }
-
-        UTexture2D* SourceTex = InRoughnessTex ? InRoughnessTex : InMetallicTex;
-        if (!SourceTex)
-        {
-            return false;
-        }
-
-        FImage SourceImg;
-        if (!FImageUtils::GetTexture2DSourceImage(SourceTex, SourceImg) || SourceImg.RawData.Num() == 0)
-        {
-            return false;
-        }
-
-        const int32 Width = SourceImg.SizeX;
-        const int32 Height = SourceImg.SizeY;
-        TArray64<uint8> CombinedData;
-        CombinedData.SetNumUninitialized(Width * Height * 4);
-
-        const bool bIsInvertGloss = InRoughnessTex && (InRoughnessTex->GetName().ToLower().Contains(TEXT("gloss")) || 
-                                                       InRoughnessTex->GetName().ToLower().Contains(TEXT("ref")));
-        const uint8 MetallicByte = FMath::Clamp(FMath::RoundToInt(FallbackMetallic * 255.0f), 0, 255);
-        const uint8 RoughnessByte = FMath::Clamp(FMath::RoundToInt(FallbackRoughness * 255.0f), 0, 255);
-
-        for (int32 i = 0; i < Width * Height; ++i)
-        {
-            const int32 SrcOffset = i * 4;
-            const int32 DstOffset = i * 4;
-
-            uint8 R = 255; // Occlusion
-            uint8 G = RoughnessByte; // Roughness
-            uint8 B = MetallicByte; // Metallic
-            uint8 A = 255;
-
-            if (InRoughnessTex && SrcOffset < SourceImg.RawData.Num())
-            {
-                uint8 RawVal = SourceImg.RawData[SrcOffset];
-                G = bIsInvertGloss ? (255 - RawVal) : RawVal;
-            }
-
-            if (InMetallicTex && SrcOffset < SourceImg.RawData.Num())
-            {
-                B = SourceImg.RawData[SrcOffset];
-            }
-
-            CombinedData[DstOffset + 0] = R;
-            CombinedData[DstOffset + 1] = G;
-            CombinedData[DstOffset + 2] = B;
-            CombinedData[DstOffset + 3] = A;
-        }
-
-        IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-        TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-        if (ImageWrapper.IsValid() && ImageWrapper->SetRaw(CombinedData.GetData(), CombinedData.Num(), Width, Height, ERGBFormat::BGRA, 8))
-        {
-            OutPNG = ImageWrapper->GetCompressed(100);
-            return OutPNG.Num() > 0;
-        }
-        return false;
-    }
-
     /**
-     * 100% Material-Agnostic PBR Parameter Resolver:
+     * Material Parameter Resolver:
      * Reads BaseColor, Metallic, Roughness, Normal, and UV Transforms directly
      * from any active UMaterialInterface / UMaterialInstance / Datasmith / CAD shader.
      */
@@ -341,13 +252,8 @@ namespace
         }
 
         bool bBaseColorFound = false;
-        bool bMetallicFound = false;
-        bool bRoughnessFound = false;
-        FLinearColor ReflectionColor = FLinearColor::Black;
-        float ReflectionLevel = 0.0f;
-        float ReflectionGlossiness = 0.0f;
 
-        // ── 1. Parse Vector Parameters on UMaterialInterface (Works for UMaterial, MIC, MID) ───
+        // ── 1. Parse Vector Parameters on UMaterialInterface ─────────────────
         TArray<FMaterialParameterInfo> VInfos;
         TArray<FGuid> Guids;
         SlotMat->GetAllVectorParameterInfo(VInfos, Guids);
@@ -392,10 +298,6 @@ namespace
                     bBaseColorFound = true;
                 }
             }
-            else if (LowerName.Contains(TEXT("reflection")) && !LowerName.Contains(TEXT("gloss")))
-            {
-                ReflectionColor = Val;
-            }
         }
 
         // ── 2. Parse Scalar Parameters on UMaterialInterface ─────────────────
@@ -414,25 +316,10 @@ namespace
             if (LowerName.Contains(TEXT("metallic")) || LowerName.Contains(TEXT("metalness")) || LowerName.Equals(TEXT("metal")))
             {
                 State.Metallic = FMath::Clamp(SVal, 0.0f, 1.0f);
-                bMetallicFound = true;
             }
             else if (LowerName.Contains(TEXT("roughness")) || LowerName.Contains(TEXT("rough")))
             {
                 State.Roughness = FMath::Clamp(SVal, 0.0f, 1.0f);
-                bRoughnessFound = true;
-            }
-            else if (LowerName.Contains(TEXT("reflection_glossiness")) || LowerName.Contains(TEXT("glossiness")) || LowerName.Equals(TEXT("gloss")))
-            {
-                ReflectionGlossiness = SVal;
-                if (!bRoughnessFound)
-                {
-                    // In PBR, Roughness = 1.0 - Glossiness
-                    State.Roughness = FMath::Clamp(1.0f - SVal, 0.0f, 1.0f);
-                }
-            }
-            else if (LowerName.Contains(TEXT("reflection_level")) || LowerName.Contains(TEXT("reflection (")))
-            {
-                ReflectionLevel = SVal;
             }
             // Scalar UV parameters
             else if (LowerName.Contains(TEXT("w_rotation")) || LowerName.Contains(TEXT("rotation")))
@@ -462,58 +349,10 @@ namespace
             }
         }
 
-        // ── 3. V-Ray / Datasmith Specular Workflow Conversion ────────────
-        // In V-Ray metals (e.g. gold, chrome, brass), diffuse is black and color is in Reflection.
-        if (!bMetallicFound && ReflectionLevel > 0.5f)
-        {
-            const float MaxRefl = FMath::Max3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
-            if (MaxRefl > 0.3f && State.BaseColor.GetLuminance() < 0.2f)
-            {
-                State.Metallic = FMath::Clamp(ReflectionLevel, 0.0f, 1.0f);
-                State.BaseColor = ReflectionColor;
-            }
-        }
-
-        // ── 4. Fallback for non-parameterized UMaterials ─────────────────────
-        if (!bMetallicFound || !bRoughnessFound)
-        {
-            const FString MatName = SlotMat->GetName().ToLower();
-            if (MatName.Contains(TEXT("mirror")) || MatName.Contains(TEXT("glass")))
-            {
-                if (!bMetallicFound) State.Metallic = 0.98f;
-                if (!bRoughnessFound) State.Roughness = 0.02f;
-                if (!bBaseColorFound) State.BaseColor = FLinearColor(0.95f, 0.97f, 1.0f, 1.0f);
-            }
-            else if (MatName.Contains(TEXT("chrome")) || MatName.Contains(TEXT("brass")) || MatName.Contains(TEXT("gold")) || MatName.Contains(TEXT("metal")) || MatName.Contains(TEXT("faucet")))
-            {
-                if (!bMetallicFound) State.Metallic = 0.95f;
-                if (!bRoughnessFound) State.Roughness = 0.08f;
-            }
-            else if (MatName.Contains(TEXT("ceramic")) || MatName.Contains(TEXT("porcelain")) || MatName.Contains(TEXT("sink")) || MatName.Contains(TEXT("glaze")) || MatName.Contains(TEXT("enamel")))
-            {
-                if (!bMetallicFound) State.Metallic = 0.0f;
-                if (!bRoughnessFound) State.Roughness = 0.08f;
-            }
-            else if (MatName.Contains(TEXT("frame")) || MatName.Contains(TEXT("dark")) || MatName.Contains(TEXT("black")) || MatName.Contains(TEXT("nero")))
-            {
-                if (!bMetallicFound) State.Metallic = 0.85f;
-                if (!bRoughnessFound) State.Roughness = 0.25f;
-                if (!bBaseColorFound) State.BaseColor = FLinearColor(0.015f, 0.015f, 0.018f, 1.0f);
-            }
-            else if (MatName.Contains(TEXT("countertop")) || MatName.Contains(TEXT("marble")) || MatName.Contains(TEXT("quartz")) || MatName.Contains(TEXT("granite")))
-            {
-                if (!bMetallicFound) State.Metallic = 0.0f;
-                if (!bRoughnessFound) State.Roughness = 0.15f;
-            }
-        }
-
-        // ── 5. Extract Textures ──────────────────────────────────────────────
+        // ── 3. Extract Textures ──────────────────────────────────────────────
         TArray<UTexture2D*> BaseTextures;
         TArray<UTexture2D*> NormalTextures;
-        TArray<UTexture2D*> RoughnessTextures;
-        TArray<UTexture2D*> MetallicTextures;
-        TArray<UTexture2D*> ORMTextures;
-        FindTexturesInMaterial(SlotMat, BaseTextures, NormalTextures, RoughnessTextures, MetallicTextures, ORMTextures);
+        FindTexturesInMaterial(SlotMat, BaseTextures, NormalTextures);
 
         if (BaseTextures.Num() > 0)
         {
@@ -522,18 +361,6 @@ namespace
         if (NormalTextures.Num() > 0)
         {
             State.NormalTexture = NormalTextures[0];
-        }
-        if (ORMTextures.Num() > 0)
-        {
-            State.MetallicRoughnessTexture = ORMTextures[0];
-        }
-        else if (RoughnessTextures.Num() > 0)
-        {
-            State.RoughnessTexture = RoughnessTextures[0];
-        }
-        if (MetallicTextures.Num() > 0)
-        {
-            State.MetallicTexture = MetallicTextures[0];
         }
 
         return State;
@@ -686,29 +513,6 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                         UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded Normal texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
                         TextureCache.Add(TexPath, PNGBytes);
                         Prim.NormalTexturePNG = MoveTemp(PNGBytes);
-                    }
-                }
-            }
-
-            // Embed Metallic-Roughness Texture (if present)
-            if (PBR.MetallicRoughnessTexture || PBR.RoughnessTexture || PBR.MetallicTexture)
-            {
-                UTexture2D* MainMRTex = PBR.MetallicRoughnessTexture ? PBR.MetallicRoughnessTexture : (PBR.RoughnessTexture ? PBR.RoughnessTexture : PBR.MetallicTexture);
-                const FString TexPath = MainMRTex->GetPathName() + TEXT("_MR");
-                Prim.MetallicRoughnessTextureKey = TexPath;
-
-                if (TArray<uint8>* CachedPNG = TextureCache.Find(TexPath))
-                {
-                    Prim.MetallicRoughnessTexturePNG = *CachedPNG;
-                }
-                else
-                {
-                    TArray<uint8> PNGBytes;
-                    if (ExtractMetallicRoughnessPNG(PBR.RoughnessTexture, PBR.MetallicTexture, PBR.MetallicRoughnessTexture, PBR.Metallic, PBR.Roughness, PNGBytes) && PNGBytes.Num() > 0)
-                    {
-                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded MetallicRoughness texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
-                        TextureCache.Add(TexPath, PNGBytes);
-                        Prim.MetallicRoughnessTexturePNG = MoveTemp(PNGBytes);
                     }
                 }
             }
