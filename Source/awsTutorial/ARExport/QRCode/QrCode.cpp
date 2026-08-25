@@ -1,40 +1,26 @@
 /* 
- * QR Code generator library (C++)
+ * QR Code generator library for Unreal Engine
  * 
- * Copyright (c) Project Nayuki. (MIT License)
+ * Adapted from Project Nayuki (MIT License)
  * https://www.nayuki.io/page/qr-code-generator-library
  */
 
-#include "QrCode.hpp"
-#include <algorithm>
+#include "ARExport/QRCode/QrCode.hpp"
 #include <climits>
-#include <cstddef>
-#include <cstdlib>
 #include <cstring>
-#include <sstream>
-#include <utility>
-
-using std::int8_t;
-using std::uint8_t;
-using std::size_t;
-using std::vector;
 
 namespace qrcodegen {
 
-QrSegment::QrSegment(Mode md, int numCh, const vector<bool> &dt) :
+QrSegment::QrSegment(Mode md, int numCh, const TArray<bool>& dt) :
 		mode(md),
 		numChars(numCh),
 		data(dt) {
-	if (numCh < 0)
-		throw std::domain_error("Invalid value");
 }
 
-QrSegment::QrSegment(Mode md, int numCh, vector<bool> &&dt) :
+QrSegment::QrSegment(Mode md, int numCh, TArray<bool>&& dt) :
 		mode(md),
 		numChars(numCh),
-		data(std::move(dt)) {
-	if (numCh < 0)
-		throw std::domain_error("Invalid value");
+		data(MoveTemp(dt)) {
 }
 
 QrSegment::Mode QrSegment::getMode() const {
@@ -45,94 +31,94 @@ int QrSegment::getNumChars() const {
 	return numChars;
 }
 
-const vector<bool> &QrSegment::getData() const {
+const TArray<bool>& QrSegment::getData() const {
 	return data;
 }
 
-QrSegment QrSegment::makeBytes(const vector<uint8_t> &data) {
-	if (data.size() > static_cast<unsigned int>(INT_MAX))
-		throw std::length_error("Data too long");
-	vector<bool> bb;
-	for (uint8_t b : data) {
+QrSegment QrSegment::makeBytes(const TArray<uint8>& data) {
+	TArray<bool> bb;
+	bb.Reserve(data.Num() * 8);
+	for (uint8 b : data) {
 		for (int i = 7; i >= 0; i--)
-			bb.push_back((b >> i) & 1);
+			bb.Add((b >> i) & 1);
 	}
-	return QrSegment(Mode::BYTE, static_cast<int>(data.size()), std::move(bb));
+	return QrSegment(Mode::BYTE, data.Num(), MoveTemp(bb));
 }
 
 QrSegment QrSegment::makeNumeric(const char *digits) {
 	size_t len = std::strlen(digits);
-	vector<bool> bb;
+	TArray<bool> bb;
 	for (size_t i = 0; i < len; ) {
 		int n = 0;
 		int count = 0;
 		for (; count < 3 && i < len; count++, i++) {
 			char c = digits[i];
-			if (c < '0' || c > '9')
-				throw std::domain_error("String contains non-numeric characters");
-			n = n * 10 + (c - '0');
+			if (c >= '0' && c <= '9')
+			{
+				n = n * 10 + (c - '0');
+			}
 		}
 		int bitLen = count * 3 + 1;
 		for (int j = bitLen - 1; j >= 0; j--)
-			bb.push_back((n >> j) & 1);
+			bb.Add((n >> j) & 1);
 	}
-	return QrSegment(Mode::NUMERIC, static_cast<int>(len), std::move(bb));
+	return QrSegment(Mode::NUMERIC, static_cast<int>(len), MoveTemp(bb));
 }
 
 static const char *ALPHANUMERIC_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
 
 QrSegment QrSegment::makeAlphanumeric(const char *text) {
 	size_t len = std::strlen(text);
-	vector<bool> bb;
+	TArray<bool> bb;
 	for (size_t i = 0; i < len; ) {
 		int temp = 0;
 		int count = 0;
 		for (; count < 2 && i < len; count++, i++) {
 			const char *p = std::strchr(ALPHANUMERIC_CHARSET, text[i]);
-			if (p == nullptr)
-				throw std::domain_error("String contains unencodable characters in alphanumeric mode");
-			temp = temp * 45 + static_cast<int>(p - ALPHANUMERIC_CHARSET);
+			if (p != nullptr)
+			{
+				temp = temp * 45 + static_cast<int>(p - ALPHANUMERIC_CHARSET);
+			}
 		}
 		int bitLen = count * 5 + 1;
 		for (int j = bitLen - 1; j >= 0; j--)
-			bb.push_back((temp >> j) & 1);
+			bb.Add((temp >> j) & 1);
 	}
-	return QrSegment(Mode::ALPHANUMERIC, static_cast<int>(len), std::move(bb));
+	return QrSegment(Mode::ALPHANUMERIC, static_cast<int>(len), MoveTemp(bb));
 }
 
-vector<QrSegment> QrSegment::makeSegments(const char *text) {
+TArray<QrSegment> QrSegment::makeSegments(const char *text) {
+	TArray<QrSegment> result;
 	if (text[0] == '\0')
-		return vector<QrSegment>();
-	vector<uint8_t> bytes;
+		return result;
+	TArray<uint8> bytes;
 	for (size_t i = 0, len = std::strlen(text); i < len; i++)
-		bytes.push_back(static_cast<uint8_t>(text[i]));
-	return vector<QrSegment>{makeBytes(bytes)};
+		bytes.Add(static_cast<uint8>(text[i]));
+	result.Add(makeBytes(bytes));
+	return result;
 }
 
 QrSegment QrSegment::makeEci(long assignVal) {
-	vector<bool> bb;
-	if (assignVal < 0)
-		throw std::domain_error("ECI assignment value out of range");
-	else if (assignVal < (1 << 7)) {
+	TArray<bool> bb;
+	if (assignVal < (1 << 7)) {
 		for (int i = 7; i >= 0; i--)
-			bb.push_back((assignVal >> i) & 1);
+			bb.Add((assignVal >> i) & 1);
 	} else if (assignVal < (1 << 14)) {
-		bb.push_back(1);
-		bb.push_back(0);
+		bb.Add(1);
+		bb.Add(0);
 		for (int i = 13; i >= 0; i--)
-			bb.push_back((assignVal >> i) & 1);
+			bb.Add((assignVal >> i) & 1);
 	} else if (assignVal < 1000000L) {
-		bb.push_back(1);
-		bb.push_back(1);
-		bb.push_back(0);
+		bb.Add(1);
+		bb.Add(1);
+		bb.Add(0);
 		for (int i = 20; i >= 0; i--)
-			bb.push_back((assignVal >> i) & 1);
-	} else
-		throw std::domain_error("ECI assignment value out of range");
-	return QrSegment(Mode::ECI, 0, std::move(bb));
+			bb.Add((assignVal >> i) & 1);
+	}
+	return QrSegment(Mode::ECI, 0, MoveTemp(bb));
 }
 
-int QrSegment::getTotalBits(const vector<QrSegment> &segs, int version) {
+int QrSegment::getTotalBits(const TArray<QrSegment>& segs, int version) {
 	int result = 0;
 	for (const QrSegment &seg : segs) {
 		int ccbits = 0;
@@ -145,44 +131,54 @@ int QrSegment::getTotalBits(const vector<QrSegment> &segs, int version) {
 		}
 		if (seg.numChars >= (1 << ccbits))
 			return -1;
-		result += 4 + ccbits + static_cast<int>(seg.data.size());
+		result += 4 + ccbits + seg.data.Num();
 	}
 	return result;
 }
 
+QrCode::QrCode()
+	: version(0)
+	, size(0)
+	, errorCorrectionLevel(Ecc::MEDIUM)
+	, mask(0)
+{
+}
+
 QrCode QrCode::encodeText(const char *text, Ecc ecl) {
-	vector<QrSegment> segs = QrSegment::makeSegments(text);
+	TArray<QrSegment> segs = QrSegment::makeSegments(text);
 	return encodeSegments(segs, ecl);
 }
 
-QrCode QrCode::encodeBinary(const vector<uint8_t> &data, Ecc ecl) {
-	vector<QrSegment> segs{QrSegment::makeBytes(data)};
+QrCode QrCode::encodeBinary(const TArray<uint8>& data, Ecc ecl) {
+	TArray<QrSegment> segs;
+	segs.Add(QrSegment::makeBytes(data));
 	return encodeSegments(segs, ecl);
 }
 
-QrCode QrCode::encodeSegments(const vector<QrSegment> &segs, Ecc ecl, int minVersion, int maxVersion, int mask, bool boostEcl) {
-	if (minVersion < MIN_VERSION || minVersion > maxVersion || maxVersion > MAX_VERSION || mask < -1 || mask > 7)
-		throw std::invalid_argument("Invalid value");
-	
+QrCode QrCode::encodeSegments(const TArray<QrSegment>& segs, Ecc ecl, int minVersion, int maxVersion, int mask, bool boostEcl) {
 	int version;
 	int dataUsedBits = -1;
-	for (version = minVersion; ; version++) {
+	for (version = minVersion; version <= maxVersion; version++) {
 		int dataCapacityBits = getNumDataCodewords(version, ecl) * 8;
 		dataUsedBits = QrSegment::getTotalBits(segs, version);
 		if (dataUsedBits != -1 && dataUsedBits <= dataCapacityBits)
 			break;
-		if (version >= maxVersion)
-			throw std::invalid_argument("Data too long");
+	}
+	
+	if (version > maxVersion)
+	{
+		return QrCode();
 	}
 	
 	if (boostEcl) {
-		for (Ecc newEcl : {Ecc::MEDIUM, Ecc::QUARTILE, Ecc::HIGH}) {
+		const Ecc Ecls[3] = {Ecc::MEDIUM, Ecc::QUARTILE, Ecc::HIGH};
+		for (Ecc newEcl : Ecls) {
 			if (dataUsedBits <= getNumDataCodewords(version, newEcl) * 8)
 				ecl = newEcl;
 		}
 	}
 	
-	vector<bool> bb;
+	TArray<bool> bb;
 	for (const QrSegment &seg : segs) {
 		int modeBits = 0;
 		switch (seg.getMode()) {
@@ -193,7 +189,7 @@ QrCode QrCode::encodeSegments(const vector<QrSegment> &segs, Ecc ecl, int minVer
 			case QrSegment::Mode::ECI:          modeBits = 7; break;
 		}
 		for (int i = 3; i >= 0; i--)
-			bb.push_back((modeBits >> i) & 1);
+			bb.Add((modeBits >> i) & 1);
 		int ccbits = 0;
 		switch (seg.getMode()) {
 			case QrSegment::Mode::NUMERIC:      ccbits = (version < 10 ? 10 : (version < 27 ? 12 : 14)); break;
@@ -203,38 +199,45 @@ QrCode QrCode::encodeSegments(const vector<QrSegment> &segs, Ecc ecl, int minVer
 			case QrSegment::Mode::ECI:          ccbits = 0; break;
 		}
 		for (int i = ccbits - 1; i >= 0; i--)
-			bb.push_back((seg.getNumChars() >> i) & 1);
+			bb.Add((seg.getNumChars() >> i) & 1);
 		for (bool b : seg.getData())
-			bb.push_back(b);
+			bb.Add(b);
 	}
 	
 	int dataCapacityBits = getNumDataCodewords(version, ecl) * 8;
-	for (int i = 0; i < 4 && bb.size() < static_cast<unsigned int>(dataCapacityBits); i++)
-		bb.push_back(false);
-	while (bb.size() % 8 != 0)
-		bb.push_back(false);
-	for (uint8_t padByte = 0xEC; bb.size() < static_cast<unsigned int>(dataCapacityBits); padByte ^= 0xEC ^ 0x11) {
+	for (int i = 0; i < 4 && bb.Num() < dataCapacityBits; i++)
+		bb.Add(false);
+	while (bb.Num() % 8 != 0)
+		bb.Add(false);
+	for (uint8 padByte = 0xEC; bb.Num() < dataCapacityBits; padByte ^= 0xEC ^ 0x11) {
 		for (int i = 7; i >= 0; i--)
-			bb.push_back((padByte >> i) & 1);
+			bb.Add((padByte >> i) & 1);
 	}
 	
-	vector<uint8_t> dataCodewords(bb.size() / 8);
-	for (size_t i = 0; i < bb.size(); i++)
+	TArray<uint8> dataCodewords;
+	dataCodewords.SetNumZeroed(bb.Num() / 8);
+	for (int i = 0; i < bb.Num(); i++)
 		dataCodewords[i >> 3] |= (bb[i] ? 1 : 0) << (7 - (i & 7));
 	
 	return QrCode(version, ecl, dataCodewords, mask);
 }
 
-QrCode::QrCode(int ver, Ecc ecl, const vector<uint8_t> &dataCodewords, int msk) :
+QrCode::QrCode(int ver, Ecc ecl, const TArray<uint8>& dataCodewords, int msk) :
 		version(ver),
 		size(ver * 4 + 17),
 		errorCorrectionLevel(ecl),
-		mask(msk),
-		modules(size, vector<bool>(size)),
-		isFunction(size, vector<bool>(size)) {
+		mask(msk) {
 	
+	modules.SetNum(size);
+	isFunction.SetNum(size);
+	for (int y = 0; y < size; ++y)
+	{
+		modules[y].SetNumZeroed(size);
+		isFunction[y].SetNumZeroed(size);
+	}
+
 	drawFunctionPatterns();
-	const vector<uint8_t> allCodewords = addEccAndInterleave(dataCodewords);
+	const TArray<uint8> allCodewords = addEccAndInterleave(dataCodewords);
 	drawCodewords(allCodewords);
 	
 	if (msk == -1) {
@@ -273,7 +276,8 @@ void QrCode::drawFunctionPatterns() {
 	if (version >= 2) {
 		int numAlign = version / 7 + 2;
 		int step = (version == 32) ? 26 : (version * 4 + numAlign * 2 + 1) / (numAlign * 2 - 2) * 2;
-		vector<int> alignPatPos(numAlign);
+		TArray<int> alignPatPos;
+		alignPatPos.SetNumZeroed(numAlign);
 		alignPatPos[0] = 6;
 		for (int i = numAlign - 1, pos = size - 7; i >= 1; i--, pos -= step)
 			alignPatPos[i] = pos;
@@ -292,7 +296,7 @@ void QrCode::drawFunctionPatterns() {
 void QrCode::drawFinderPattern(int x, int y) {
 	for (int dy = -1; dy <= 7; dy++) {
 		for (int dx = -1; dx <= 7; dx++) {
-			int dist = std::max(std::abs(dx - 3), std::abs(dy - 3));
+			int dist = FMath::Max(FMath::Abs(dx - 3), FMath::Abs(dy - 3));
 			int xx = x + dx, yy = y + dy;
 			if (xx >= 0 && xx < size && yy >= 0 && yy < size)
 				setFunctionModule(xx, yy, dist == 0 || dist == 2 || dist == 3);
@@ -303,7 +307,7 @@ void QrCode::drawFinderPattern(int x, int y) {
 void QrCode::drawAlignmentPattern(int x, int y) {
 	for (int dy = -2; dy <= 2; dy++) {
 		for (int dx = -2; dx <= 2; dx++)
-			setFunctionModule(x + dx, y + dy, std::max(std::abs(dx), std::abs(dy)) != 1);
+			setFunctionModule(x + dx, y + dy, FMath::Max(FMath::Abs(dx), FMath::Abs(dy)) != 1);
 	}
 }
 
@@ -356,23 +360,24 @@ void QrCode::drawVersion() {
 	}
 }
 
-static uint8_t reedSolomonMultiply(uint8_t x, uint8_t y) {
+static uint8 reedSolomonMultiply(uint8 x, uint8 y) {
 	int z = 0;
 	for (int i = 7; i >= 0; i--) {
 		z = (z << 1) ^ ((z >> 8) * 0x11D);
 		z ^= ((y >> i) & 1) * x;
 	}
-	return static_cast<uint8_t>(z);
+	return static_cast<uint8>(z);
 }
 
-static vector<uint8_t> reedSolomonComputeDivisor(int degree) {
-	vector<uint8_t> result(degree, 0);
+static TArray<uint8> reedSolomonComputeDivisor(int degree) {
+	TArray<uint8> result;
+	result.SetNumZeroed(degree);
 	result[degree - 1] = 1;
-	uint8_t root = 1;
+	uint8 root = 1;
 	for (int i = 0; i < degree; i++) {
-		for (size_t j = 0; j < result.size(); j++) {
+		for (int j = 0; j < result.Num(); j++) {
 			result[j] = reedSolomonMultiply(result[j], root);
-			if (j + 1 < result.size())
+			if (j + 1 < result.Num())
 				result[j] ^= result[j + 1];
 		}
 		root = reedSolomonMultiply(root, 0x02);
@@ -380,42 +385,50 @@ static vector<uint8_t> reedSolomonComputeDivisor(int degree) {
 	return result;
 }
 
-vector<uint8_t> QrCode::addEccAndInterleave(const vector<uint8_t> &data) const {
+TArray<uint8> QrCode::addEccAndInterleave(const TArray<uint8>& data) const {
 	int numBlocks = NUM_ERROR_CORRECTION_BLOCKS[static_cast<int>(errorCorrectionLevel)][version];
 	int blockEccLen = ECC_CODEWORDS_PER_BLOCK[static_cast<int>(errorCorrectionLevel)][version];
 	int rawCodewords = getNumRawDataModules(version) / 8;
 	int numShortBlocks = numBlocks - rawCodewords % numBlocks;
 	int shortBlockLen = rawCodewords / numBlocks;
 	
-	vector<vector<uint8_t>> blocks;
-	const vector<uint8_t> rsDiv = reedSolomonComputeDivisor(blockEccLen);
+	TArray<TArray<uint8>> blocks;
+	const TArray<uint8> rsDiv = reedSolomonComputeDivisor(blockEccLen);
 	for (int i = 0, k = 0; i < numBlocks; i++) {
-		vector<uint8_t> dat(data.cbegin() + k, data.cbegin() + (k + shortBlockLen - blockEccLen + (i >= numShortBlocks ? 1 : 0)));
-		k += static_cast<int>(dat.size());
-		vector<uint8_t> ecc(blockEccLen, 0);
-		for (uint8_t b : dat) {
-			uint8_t factor = b ^ ecc[0];
-			ecc.erase(ecc.begin());
-			ecc.push_back(0);
-			for (size_t j = 0; j < ecc.size(); j++)
+		int datLen = shortBlockLen - blockEccLen + (i >= numShortBlocks ? 1 : 0);
+		TArray<uint8> dat;
+		dat.Reserve(datLen + blockEccLen);
+		for (int d = 0; d < datLen && (k + d) < data.Num(); ++d)
+		{
+			dat.Add(data[k + d]);
+		}
+		k += datLen;
+
+		TArray<uint8> ecc;
+		ecc.SetNumZeroed(blockEccLen);
+		for (uint8 b : dat) {
+			uint8 factor = b ^ ecc[0];
+			ecc.RemoveAt(0);
+			ecc.Add(0);
+			for (int j = 0; j < ecc.Num(); j++)
 				ecc[j] ^= reedSolomonMultiply(rsDiv[j], factor);
 		}
-		dat.insert(dat.end(), ecc.cbegin(), ecc.cend());
-		blocks.push_back(std::move(dat));
+		dat.Append(ecc);
+		blocks.Add(MoveTemp(dat));
 	}
 	
-	vector<uint8_t> result;
-	for (size_t i = 0; i < blocks[0].size(); i++) {
-		for (size_t j = 0; j < blocks.size(); j++) {
-			if (i < blocks[j].size())
-				result.push_back(blocks[j][i]);
+	TArray<uint8> result;
+	for (int i = 0; i < blocks[0].Num(); i++) {
+		for (int j = 0; j < blocks.Num(); j++) {
+			if (i < blocks[j].Num())
+				result.Add(blocks[j][i]);
 		}
 	}
 	return result;
 }
 
-void QrCode::drawCodewords(const vector<uint8_t> &data) {
-	size_t i = 0;
+void QrCode::drawCodewords(const TArray<uint8>& data) {
+	int i = 0;
 	for (int right = size - 1; right >= 1; right -= 2) {
 		if (right == 6)
 			right = 5;
@@ -424,8 +437,8 @@ void QrCode::drawCodewords(const vector<uint8_t> &data) {
 				int x = right - j;
 				bool upward = ((right + 1) & 2) == 0;
 				int y = upward ? size - 1 - vert : vert;
-				if (!isFunction[y][x] && i < data.size() * 8) {
-					modules[y][x] = getBit(data[i >> 3], 7 - static_cast<int>(i & 7));
+				if (!isFunction[y][x] && i < data.Num() * 8) {
+					modules[y][x] = getBit(data[i >> 3], 7 - (i & 7));
 					i++;
 				}
 			}

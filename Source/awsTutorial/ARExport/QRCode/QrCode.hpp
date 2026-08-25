@@ -1,17 +1,13 @@
 /* 
- * QR Code generator library (C++)
+ * QR Code generator library for Unreal Engine
  * 
- * Copyright (c) Project Nayuki. (MIT License)
+ * Adapted from Project Nayuki (MIT License)
  * https://www.nayuki.io/page/qr-code-generator-library
  */
 
 #pragma once
 
-#include <array>
-#include <cstdint>
-#include <stdexcept>
-#include <string>
-#include <vector>
+#include "CoreMinimal.h"
 
 namespace qrcodegen {
 
@@ -25,25 +21,25 @@ public:
 		ECI,
 	};
 
-	static QrSegment makeBytes(const std::vector<uint8_t> &data);
+	static QrSegment makeBytes(const TArray<uint8>& data);
 	static QrSegment makeNumeric(const char *digits);
 	static QrSegment makeAlphanumeric(const char *text);
-	static std::vector<QrSegment> makeSegments(const char *text);
+	static TArray<QrSegment> makeSegments(const char *text);
 	static QrSegment makeEci(long assignVal);
 
-	QrSegment(Mode md, int numCh, const std::vector<bool> &dt);
-	QrSegment(Mode md, int numCh, std::vector<bool> &&dt);
+	QrSegment(Mode md, int numCh, const TArray<bool>& dt);
+	QrSegment(Mode md, int numCh, TArray<bool>&& dt);
 
 	Mode getMode() const;
 	int getNumChars() const;
-	const std::vector<bool> &getData() const;
+	const TArray<bool>& getData() const;
 
-	static int getTotalBits(const std::vector<QrSegment> &segs, int version);
+	static int getTotalBits(const TArray<QrSegment>& segs, int version);
 
 private:
 	Mode mode;
 	int numChars;
-	std::vector<bool> data;
+	TArray<bool> data;
 };
 
 class QrCode final {
@@ -56,28 +52,30 @@ public:
 	};
 
 	static QrCode encodeText(const char *text, Ecc ecl);
-	static QrCode encodeBinary(const std::vector<uint8_t> &data, Ecc ecl);
-	static QrCode encodeSegments(const std::vector<QrSegment> &segs, Ecc ecl,
+	static QrCode encodeBinary(const TArray<uint8>& data, Ecc ecl);
+	static QrCode encodeSegments(const TArray<QrSegment>& segs, Ecc ecl,
 		int minVersion = 1, int maxVersion = 40, int mask = -1, bool boostEcl = true);
 
-	QrCode(int ver, Ecc ecl, const std::vector<uint8_t> &dataCodewords, int msk);
+	QrCode(int ver, Ecc ecl, const TArray<uint8>& dataCodewords, int msk);
+	QrCode();
 
 	int getVersion() const;
 	int getSize() const;
 	Ecc getErrorCorrectionLevel() const;
 	int getMask() const;
 	bool getModule(int x, int y) const;
+	bool isValid() const { return size > 0; }
 
 	static constexpr int MIN_VERSION =  1;
 	static constexpr int MAX_VERSION = 40;
 
 private:
-	int version;
-	int size;
-	Ecc errorCorrectionLevel;
-	int mask;
-	std::vector<std::vector<bool>> modules;
-	std::vector<std::vector<bool>> isFunction;
+	int version = 0;
+	int size = 0;
+	Ecc errorCorrectionLevel = Ecc::MEDIUM;
+	int mask = 0;
+	TArray<TArray<bool>> modules;
+	TArray<TArray<bool>> isFunction;
 
 	void drawFunctionPatterns();
 	void drawFormatBits(int msk);
@@ -87,8 +85,8 @@ private:
 	void setFunctionModule(int x, int y, bool isBlack);
 	bool module(int x, int y, bool isFunc) const;
 
-	std::vector<uint8_t> addEccAndInterleave(const std::vector<uint8_t> &data) const;
-	void drawCodewords(const std::vector<uint8_t> &data);
+	TArray<uint8> addEccAndInterleave(const TArray<uint8>& data) const;
+	void drawCodewords(const TArray<uint8>& data);
 	void applyMask(int msk);
 	long getPenaltyScore() const;
 
