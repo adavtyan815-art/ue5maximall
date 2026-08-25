@@ -8,7 +8,7 @@ public class awsTutorial : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "NetCore", "UMG", "HTTP", "Json", "JsonUtilities", "ApplicationCore", "RenderCore", "ProceduralMeshComponent" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "NetCore", "UMG", "HTTP", "Json", "JsonUtilities", "ApplicationCore", "RenderCore", "ProceduralMeshComponent", "Sockets" });
 
         PrivateDependencyModuleNames.AddRange(new string[]
        {

@@ -9,6 +9,7 @@
 #include "Engine/Texture2D.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "awsTutorial_PlayerController.h"
+#include "ARExport/UI/ARExportModalWidget.h"
 #include "Engine/Engine.h"
 #include "Components/ScrollBox.h"
 #include "Components/UniformGridPanel.h"
@@ -77,6 +78,16 @@ void UConfiguratorMainWidget::NativeConstruct()
     {
         BtnCinematicTour->OnClicked.RemoveAll(this);
         BtnCinematicTour->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnCinematicTourButtonClicked);
+    }
+    if (Btn_ARExport)
+    {
+        Btn_ARExport->OnClicked.RemoveAll(this);
+        Btn_ARExport->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnARExportClicked);
+    }
+    if (BtnARExport)
+    {
+        BtnARExport->OnClicked.RemoveAll(this);
+        BtnARExport->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnARExportClicked);
     }
 }
 
@@ -895,6 +906,23 @@ void UConfiguratorMainWidget::UpdateCinematicTourButtonStyle()
     if (BtnCinematicTour)
     {
         BtnCinematicTour->SetBackgroundColor(bActive ? ActiveColor : InactiveColor);
+    }
+}
+
+void UConfiguratorMainWidget::OnARExportClicked()
+{
+    AShowroomBooth* Booth = TargetBooth.Get();
+    if (!Booth || !OwningPC)
+    {
+        return;
+    }
+
+    UClass* ModalClass = ARExportModalClass ? ARExportModalClass.Get() : UARExportModalWidget::StaticClass();
+    UARExportModalWidget* Modal = CreateWidget<UARExportModalWidget>(OwningPC, ModalClass);
+    if (Modal)
+    {
+        Modal->AddToViewport(100);
+        Modal->StartExport(Booth);
     }
 }
 

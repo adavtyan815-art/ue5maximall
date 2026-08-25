@@ -76,6 +76,15 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UButton> BtnCinematicTour;
 
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> Btn_ARExport;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> BtnARExport;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Classes")
+    TSubclassOf<UUserWidget> ARExportModalClass;
+
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Txt_BtnURL;
 
@@ -107,6 +116,9 @@ protected:
 
     UFUNCTION()
     void OnCinematicTourButtonClicked();
+
+    UFUNCTION()
+    void OnARExportClicked();
 
     UFUNCTION()
     void HandleColorSelected(FLinearColor SelectedColor, UMaterialInterface* OverrideMaterial);
