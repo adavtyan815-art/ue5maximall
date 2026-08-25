@@ -317,8 +317,16 @@ namespace
             CombinedData[DstOffset + 3] = A;
         }
 
-        FImageView CombinedView(CombinedData.GetData(), Width, Height, ERawImageFormat::BGRA8, EGammaSpace::Linear);
-        return FImageUtils::CompressImage(OutPNG, TEXT("PNG"), CombinedView);
+        FImage CombinedImage(Width, Height, ERawImageFormat::BGRA8, EGammaSpace::Linear);
+        CombinedImage.RawData = MoveTemp(CombinedData);
+        TArray64<uint8> CompressedBytes;
+        if (FImageUtils::CompressImage(CompressedBytes, TEXT("png"), CombinedImage))
+        {
+            OutPNG.SetNumUninitialized(CompressedBytes.Num());
+            FMemory::Memcpy(OutPNG.GetData(), CompressedBytes.GetData(), CompressedBytes.Num());
+            return OutPNG.Num() > 0;
+        }
+        return false;
     }
 
     /**
