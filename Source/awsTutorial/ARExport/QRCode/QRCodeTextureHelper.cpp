@@ -22,30 +22,27 @@ UTexture2D* FQRCodeTextureHelper::GenerateQRCodeTexture(const FString& TextToEnc
     }
 
     const int32 QRSize = QR.getSize();
-    const int32 TotalModules = QRSize + (BorderModules * 2);
+    // Use generous quiet zone (at least 8 modules) for guaranteed camera detection
+    const int32 Margin = FMath::Max(BorderModules, 8);
+    const int32 TotalModules = QRSize + (Margin * 2);
 
-    if (TotalModules <= 0 || TargetResolution <= 0)
-    {
-        return nullptr;
-    }
-
-    const int32 TexWidth = TargetResolution;
-    const int32 TexHeight = TargetResolution;
+    const int32 TexWidth = (TargetResolution > 0) ? TargetResolution : 1024;
+    const int32 TexHeight = (TargetResolution > 0) ? TargetResolution : 1024;
     const float ModulePixelSize = static_cast<float>(TexWidth) / static_cast<float>(TotalModules);
 
     TArray<FColor> Pixels;
     Pixels.SetNumUninitialized(TexWidth * TexHeight);
 
-    const FColor BlackColor(0, 0, 0, 255);
-    const FColor WhiteColor(255, 255, 255, 255);
+    const FColor PureBlack(0, 0, 0, 255);
+    const FColor PureWhite(255, 255, 255, 255);
 
     for (int32 Y = 0; Y < TexHeight; ++Y)
     {
-        const int32 ModuleY = FMath::FloorToInt(static_cast<float>(Y) / ModulePixelSize) - BorderModules;
+        const int32 ModuleY = FMath::FloorToInt(static_cast<float>(Y) / ModulePixelSize) - Margin;
 
         for (int32 X = 0; X < TexWidth; ++X)
         {
-            const int32 ModuleX = FMath::FloorToInt(static_cast<float>(X) / ModulePixelSize) - BorderModules;
+            const int32 ModuleX = FMath::FloorToInt(static_cast<float>(X) / ModulePixelSize) - Margin;
 
             bool bIsBlack = false;
             if (ModuleX >= 0 && ModuleX < QRSize && ModuleY >= 0 && ModuleY < QRSize)
@@ -53,7 +50,7 @@ UTexture2D* FQRCodeTextureHelper::GenerateQRCodeTexture(const FString& TextToEnc
                 bIsBlack = QR.getModule(ModuleX, ModuleY);
             }
 
-            Pixels[Y * TexWidth + X] = bIsBlack ? BlackColor : WhiteColor;
+            Pixels[Y * TexWidth + X] = bIsBlack ? PureBlack : PureWhite;
         }
     }
 
