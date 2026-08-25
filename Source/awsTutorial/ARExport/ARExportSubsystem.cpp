@@ -8,6 +8,7 @@
 #include "StaticMeshResources.h"
 #include "Rendering/PositionVertexBuffer.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -80,15 +81,13 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
     const FString FileName = FString::Printf(TEXT("export_%s_%s.glb"), *ProductID, *Timestamp);
     const FString FullFilePath = FPaths::Combine(ExportsDir, FileName);
 
-    // Compute WebAR URL
+    // Compute WebAR Root URL (Short 26-char URL produces a bold Version 2 QR code that scans instantly)
     const FString LocalIP = GetLocalHostIPAddress();
-    FString URL = WebARViewerPrefix;
-    URL = URL.Replace(TEXT("{IP}"), *LocalIP);
-    URL = URL.Replace(TEXT("{PORT}"), *FString::FromInt(LocalServerPort));
-    URL += FileName;
+    const FString ShortWebARURL = FString::Printf(TEXT("http://%s:%d/"), *LocalIP, LocalServerPort);
+    const FString DirectModelURL = FString::Printf(TEXT("http://%s:%d/index.html?model=%s"), *LocalIP, LocalServerPort, *FileName);
 
     // ── 2. Run Heavy Serialization on Background Worker Thread ──────────────
-    Async(EAsyncExecution::ThreadPool, [Primitives = MoveTemp(Primitives), FullFilePath, URL, OnFinished]()
+    Async(EAsyncExecution::ThreadPool, [Primitives = MoveTemp(Primitives), FullFilePath, ShortWebARURL, DirectModelURL, OnFinished]()
     {
         TArray<uint8> GLBData;
         const bool bSerializeSuccess = FSimpleGLBWriter::SerializeToGLB(Primitives, GLBData);
@@ -101,15 +100,16 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
         }
 
         // ── 3. Dispatch Back to Game Thread for QR Texture & UI Notification ─
-        AsyncTask(ENamedThreads::GameThread, [bWriteSuccess, FullFilePath, URL, OnFinished]()
+        AsyncTask(ENamedThreads::GameThread, [bWriteSuccess, FullFilePath, ShortWebARURL, DirectModelURL, OnFinished]()
         {
             UTexture2D* QRTexture = nullptr;
             if (bWriteSuccess)
             {
-                QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(URL, 1024, 6);
+                // Generates high-contrast QR code pointing to the root URL (auto-loads latest model)
+                QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(ShortWebARURL, 1024, 6);
             }
 
-            OnFinished.ExecuteIfBound(bWriteSuccess, FullFilePath, URL, QRTexture);
+            OnFinished.ExecuteIfBound(bWriteSuccess, FullFilePath, DirectModelURL, QRTexture);
         });
     });
 }
@@ -118,27 +118,27 @@ void UARExportSubsystem::ExtractPrimitivesFromBooth(AShowroomBooth* Booth, TArra
 {
     if (!Booth) return;
 
-    // 1. Cabinet Body (Warm wood / lacquer tone fallback)
+    // 1. Cabinet Body (Dark fluted wood finish)
     ExtractComponentGeometry(Booth, Booth->MainCabinet.Get(), EFurnitureComponentType::Cabinet, TEXT("Cabinet"),
-        FLinearColor(0.55f, 0.42f, 0.32f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+        FLinearColor(0.24f, 0.18f, 0.14f, 1.0f), 0.02f, 0.5f, OutPrimitives);
 
-    // 2. Closet Body
+    // 2. Closet Body (White cabinet body)
     ExtractComponentGeometry(Booth, Booth->ClosetMesh.Get(), EFurnitureComponentType::Closet, TEXT("Closet"),
-        FLinearColor(0.55f, 0.42f, 0.32f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+        FLinearColor(0.94f, 0.94f, 0.94f, 1.0f), 0.02f, 0.4f, OutPrimitives);
 
-    // 3. Cabinet Doors
+    // 3. Cabinet Doors (Dark fluted wood finish)
     ExtractComponentGeometry(Booth, Booth->DoorMeshSlot0.Get(), EFurnitureComponentType::Doors, TEXT("CabinetDoor_0"),
-        FLinearColor(0.58f, 0.45f, 0.35f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+        FLinearColor(0.24f, 0.18f, 0.14f, 1.0f), 0.02f, 0.5f, OutPrimitives);
     ExtractComponentGeometry(Booth, Booth->DoorMeshSlot1.Get(), EFurnitureComponentType::Doors, TEXT("CabinetDoor_1"),
-        FLinearColor(0.58f, 0.45f, 0.35f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+        FLinearColor(0.24f, 0.18f, 0.14f, 1.0f), 0.02f, 0.5f, OutPrimitives);
 
-    // 4. Closet Doors
+    // 4. Closet Doors (White cabinet door)
     ExtractComponentGeometry(Booth, Booth->ClosetDoorMeshSlot0.Get(), EFurnitureComponentType::Doors, TEXT("ClosetDoor_0"),
-        FLinearColor(0.58f, 0.45f, 0.35f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+        FLinearColor(0.94f, 0.94f, 0.94f, 1.0f), 0.02f, 0.4f, OutPrimitives);
     ExtractComponentGeometry(Booth, Booth->ClosetDoorMeshSlot1.Get(), EFurnitureComponentType::Doors, TEXT("ClosetDoor_1"),
-        FLinearColor(0.58f, 0.45f, 0.35f, 1.0f), 0.02f, 0.45f, OutPrimitives);
+        FLinearColor(0.94f, 0.94f, 0.94f, 1.0f), 0.02f, 0.4f, OutPrimitives);
 
-    // 5. Countertop (Stone / Quartz finish)
+    // 5. Countertop (White Quartz / Stone finish)
     ExtractComponentGeometry(Booth, Booth->CountertopMesh.Get(), EFurnitureComponentType::Countertop, TEXT("Countertop"),
         FLinearColor(0.88f, 0.88f, 0.88f, 1.0f), 0.05f, 0.25f, OutPrimitives);
 
@@ -154,7 +154,7 @@ void UARExportSubsystem::ExtractPrimitivesFromBooth(AShowroomBooth* Booth, TArra
     ExtractComponentGeometry(Booth, Booth->MirrorMesh.Get(), EFurnitureComponentType::Mirror, TEXT("Mirror"),
         FLinearColor(0.92f, 0.95f, 0.98f, 1.0f), 0.98f, 0.02f, OutPrimitives);
 
-    // 9. Scan for any additional custom attached static mesh components (Shelves, Legs, Accents)
+    // 9. Extra Attached Static Mesh Components
     TArray<UStaticMeshComponent*> AllMeshComponents;
     Booth->GetComponents<UStaticMeshComponent>(AllMeshComponents);
 
@@ -202,10 +202,7 @@ void UARExportSubsystem::ExtractComponentGeometry(
         return;
     }
 
-    // ── 1. Calculate Exact Assembled Pose Relative to Booth Root ─────────────
-    // Using GetComponentTransform().GetRelativeTransform(Booth->GetActorTransform())
-    // guarantees that parent-child attachments (Sink->Countertop->Cabinet->Root)
-    // are fully resolved into a single unified booth-space coordinate frame.
+    // ── 1. Calculate Unified Assembly Transform Relative to Booth Root ───────
     const FTransform ComponentToBoothTransform = Comp->GetComponentTransform().GetRelativeTransform(Booth->GetActorTransform());
 
     const FStaticMeshLODResources& LOD = Mesh->GetRenderData()->LODResources[0];
@@ -213,112 +210,198 @@ void UARExportSubsystem::ExtractComponentGeometry(
     const FStaticMeshVertexBuffer& VertBuffer = LOD.VertexBuffers.StaticMeshVertexBuffer;
     const FRawStaticIndexBuffer& IndexBuffer = LOD.IndexBuffer;
 
-    const int32 NumVerts = PosBuffer.GetNumVertices();
-    if (NumVerts == 0)
+    TArray<uint32> AllIndices;
+    IndexBuffer.GetCopy(AllIndices);
+
+    const int32 NumSections = LOD.Sections.Num();
+    if (NumSections == 0 || AllIndices.Num() == 0)
     {
         return;
     }
 
-    // ── 2. Resolve Material Color & PBR Parameters ───────────────────────────
-    FLinearColor ResolvedColor = FallbackColor;
-    float ResolvedMetallic = FallbackMetallic;
-    float ResolvedRoughness = FallbackRoughness;
-
-    // Check custom RAL/NCS Color Override on the booth first
-    bool bHasCustomColor = false;
-    for (const FCustomColorOverride& Override : Booth->CustomColors)
+    // ── 2. Extract Each Material Section As Its Own GLB Primitive ────────────
+    for (int32 SectionIdx = 0; SectionIdx < NumSections; ++SectionIdx)
     {
-        if (Override.ComponentType == CompType)
+        const FStaticMeshSection& Section = LOD.Sections[SectionIdx];
+        const int32 MatSlotIndex = Section.MaterialIndex;
+        const uint32 FirstIndex = Section.FirstIndex;
+        const uint32 IndexCount = Section.NumTriangles * 3;
+
+        if (IndexCount == 0 || FirstIndex >= (uint32)AllIndices.Num())
         {
-            ResolvedColor = Override.CustomColor;
-            bHasCustomColor = true;
-            break;
+            continue;
         }
-    }
 
-    // If no custom RAL/NCS override, query the active Material / Material Instance parameters
-    if (!bHasCustomColor)
-    {
-        UMaterialInterface* Mat = Comp->GetMaterial(0);
-        if (Mat)
+        // Get Material assigned to this specific slot
+        UMaterialInterface* SlotMat = Comp->GetMaterial(MatSlotIndex);
+        if (!SlotMat)
         {
-            FLinearColor ParamColor;
-            if (Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("Color")), ParamColor) ||
-                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("BaseColor")), ParamColor) ||
-                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("Base Color")), ParamColor) ||
-                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("TintColor")), ParamColor) ||
-                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("BaseColor_Tint")), ParamColor) ||
-                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("DiffuseColor")), ParamColor) ||
-                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("CabinetColor")), ParamColor) ||
-                Mat->GetVectorParameterValue(FMaterialParameterInfo(TEXT("WoodColor")), ParamColor))
-            {
-                ResolvedColor = ParamColor;
-            }
+            SlotMat = Mesh->GetMaterial(MatSlotIndex);
+        }
 
-            float ParamRoughness = 0.5f;
-            if (Mat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Roughness")), ParamRoughness) ||
-                Mat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Roughness_Value")), ParamRoughness))
-            {
-                ResolvedRoughness = ParamRoughness;
-            }
+        FLinearColor ResolvedColor = FallbackColor;
+        float ResolvedMetallic = FallbackMetallic;
+        float ResolvedRoughness = FallbackRoughness;
 
-            float ParamMetallic = 0.0f;
-            if (Mat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Metallic")), ParamMetallic) ||
-                Mat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Metallic_Value")), ParamMetallic))
+        // Check custom RAL/NCS override on Booth
+        bool bHasCustomColor = false;
+        for (const FCustomColorOverride& Override : Booth->CustomColors)
+        {
+            if (Override.ComponentType == CompType)
             {
-                ResolvedMetallic = ParamMetallic;
+                // Slot 0 receives custom color; accent slots preserve distinct accents unless specified
+                if (MatSlotIndex == 0)
+                {
+                    ResolvedColor = Override.CustomColor;
+                    bHasCustomColor = true;
+                }
+                break;
             }
         }
-    }
 
-    // ── 3. Extract & Transform Vertices into glTF Space ──────────────────────
-    FGLBPrimitive Prim;
-    Prim.MeshName = MeshName;
-    Prim.BaseColor = ResolvedColor;
-    Prim.Metallic = ResolvedMetallic;
-    Prim.Roughness = ResolvedRoughness;
-    Prim.Vertices.Reserve(NumVerts);
-
-    for (int32 i = 0; i < NumVerts; ++i)
-    {
-        const FVector3f RawPos = PosBuffer.VertexPosition(i);
-        const FVector LocalPos = ComponentToBoothTransform.TransformPosition(FVector(RawPos));
-
-        // Coordinate transformation:
-        // Unreal Engine Booth Space (X=Forward into room, Y=Right, Z=Up in cm)
-        // -> glTF 2.0 / WebXR Standard (X=Right, Y=Up, Z=Forward towards viewer in meters)
-        FGLBVertex V;
-        V.Position.X = static_cast<float>(LocalPos.Y * 0.01);
-        V.Position.Y = static_cast<float>(LocalPos.Z * 0.01);
-        V.Position.Z = static_cast<float>(LocalPos.X * 0.01);
-
-        const FVector3f RawNormal = VertBuffer.VertexTangentZ(i);
-        const FVector LocalNormal = ComponentToBoothTransform.TransformVector(FVector(RawNormal)).GetSafeNormal();
-        V.Normal.X = static_cast<float>(LocalNormal.Y);
-        V.Normal.Y = static_cast<float>(LocalNormal.Z);
-        V.Normal.Z = static_cast<float>(LocalNormal.X);
-
-        if (VertBuffer.GetNumTexCoords() > 0)
+        // Read active parameters from material instance
+        if (!bHasCustomColor && SlotMat)
         {
-            V.UV = VertBuffer.GetVertexUV(i, 0);
+            UMaterialInstance* InstMat = Cast<UMaterialInstance>(SlotMat);
+            if (InstMat)
+            {
+                TArray<FMaterialParameterInfo> ParamInfos;
+                TArray<FGuid> Guids;
+                InstMat->GetAllVectorParameterInfo(ParamInfos, Guids);
+
+                for (const FMaterialParameterInfo& Info : ParamInfos)
+                {
+                    FString PName = Info.Name.ToString().ToLower();
+                    FLinearColor PColor;
+                    if (InstMat->GetVectorParameterValue(Info, PColor))
+                    {
+                        if (PName.Contains(TEXT("base")) || PName.Contains(TEXT("color")) || PName.Contains(TEXT("tint")) ||
+                            PName.Contains(TEXT("albedo")) || PName.Contains(TEXT("diffuse")) || PName.Contains(TEXT("wood")) ||
+                            PName.Contains(TEXT("accent")) || PName.Contains(TEXT("strip")) || PName.Contains(TEXT("frame")))
+                        {
+                            ResolvedColor = PColor;
+                            break;
+                        }
+                    }
+                }
+
+                float PVal = 0.5f;
+                if (InstMat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Roughness")), PVal) ||
+                    InstMat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Roughness_Value")), PVal))
+                {
+                    ResolvedRoughness = PVal;
+                }
+
+                if (InstMat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Metallic")), PVal) ||
+                    InstMat->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Metallic_Value")), PVal))
+                {
+                    ResolvedMetallic = PVal;
+                }
+            }
+
+            // Material Name heuristics for multi-material parts (Accents, Frames, Glass)
+            const FString MatName = SlotMat->GetName().ToLower();
+            if (MatName.Contains(TEXT("red")) || MatName.Contains(TEXT("accent")) || MatName.Contains(TEXT("strip")))
+            {
+                ResolvedColor = FLinearColor(0.82f, 0.08f, 0.08f, 1.0f); // Bright Red Accent Strip
+                ResolvedMetallic = 0.05f;
+                ResolvedRoughness = 0.35f;
+            }
+            else if (MatName.Contains(TEXT("dark")) || MatName.Contains(TEXT("black")) || MatName.Contains(TEXT("frame")) || MatName.Contains(TEXT("nero")) || MatName.Contains(TEXT("graphite")))
+            {
+                ResolvedColor = FLinearColor(0.12f, 0.12f, 0.14f, 1.0f); // Dark Frame / Charcoal
+                ResolvedMetallic = 0.8f;
+                ResolvedRoughness = 0.3f;
+            }
+            else if (MatName.Contains(TEXT("gold")) || MatName.Contains(TEXT("brass")) || MatName.Contains(TEXT("oro")) || MatName.Contains(TEXT("ottone")))
+            {
+                ResolvedColor = FLinearColor(0.85f, 0.68f, 0.28f, 1.0f); // Polished Brass
+                ResolvedMetallic = 0.92f;
+                ResolvedRoughness = 0.2f;
+            }
+            else if (MatName.Contains(TEXT("mirror")) || MatName.Contains(TEXT("specchio")) || MatName.Contains(TEXT("glass")))
+            {
+                ResolvedColor = FLinearColor(0.92f, 0.95f, 0.98f, 1.0f); // Mirror Glass
+                ResolvedMetallic = 0.98f;
+                ResolvedRoughness = 0.02f;
+            }
         }
-        else
+
+        // Special handling for Mirror component multi-material slots:
+        if (CompType == EFurnitureComponentType::Mirror)
         {
-            V.UV = FVector2f::ZeroVector;
+            if (MatSlotIndex == 0)
+            {
+                // Slot 0 = Mirror Glass
+                ResolvedColor = FLinearColor(0.92f, 0.95f, 0.98f, 1.0f);
+                ResolvedMetallic = 0.98f;
+                ResolvedRoughness = 0.02f;
+            }
+            else if (MatSlotIndex == 1)
+            {
+                // Slot 1 = Mirror Frame (Dark Grey / Black)
+                ResolvedColor = FLinearColor(0.12f, 0.12f, 0.14f, 1.0f);
+                ResolvedMetallic = 0.8f;
+                ResolvedRoughness = 0.3f;
+            }
         }
 
-        Prim.Vertices.Add(V);
+        // ── 3. Extract & Transform Section Geometry ───────────────────────────
+        FGLBPrimitive Prim;
+        Prim.MeshName = FString::Printf(TEXT("%s_Slot%d"), *MeshName, MatSlotIndex);
+        Prim.BaseColor = ResolvedColor;
+        Prim.Metallic = ResolvedMetallic;
+        Prim.Roughness = ResolvedRoughness;
+
+        TMap<uint32, uint32> OldToNewIndexMap;
+        const uint32 EndIndex = FMath::Min(FirstIndex + IndexCount, (uint32)AllIndices.Num());
+
+        for (uint32 idx = FirstIndex; idx < EndIndex; ++idx)
+        {
+            const uint32 OldVertIdx = AllIndices[idx];
+            uint32 NewVertIdx = 0;
+
+            if (const uint32* Found = OldToNewIndexMap.Find(OldVertIdx))
+            {
+                NewVertIdx = *Found;
+            }
+            else
+            {
+                NewVertIdx = Prim.Vertices.Num();
+                OldToNewIndexMap.Add(OldVertIdx, NewVertIdx);
+
+                const FVector3f RawPos = PosBuffer.VertexPosition(OldVertIdx);
+                const FVector LocalPos = ComponentToBoothTransform.TransformPosition(FVector(RawPos));
+
+                FGLBVertex V;
+                V.Position.X = static_cast<float>(LocalPos.Y * 0.01);
+                V.Position.Y = static_cast<float>(LocalPos.Z * 0.01);
+                V.Position.Z = static_cast<float>(LocalPos.X * 0.01);
+
+                const FVector3f RawNormal = VertBuffer.VertexTangentZ(OldVertIdx);
+                const FVector LocalNormal = ComponentToBoothTransform.TransformVector(FVector(RawNormal)).GetSafeNormal();
+                V.Normal.X = static_cast<float>(LocalNormal.Y);
+                V.Normal.Y = static_cast<float>(LocalNormal.Z);
+                V.Normal.Z = static_cast<float>(LocalNormal.X);
+
+                if (VertBuffer.GetNumTexCoords() > 0)
+                {
+                    V.UV = VertBuffer.GetVertexUV(OldVertIdx, 0);
+                }
+                else
+                {
+                    V.UV = FVector2f::ZeroVector;
+                }
+
+                Prim.Vertices.Add(V);
+            }
+
+            Prim.Indices.Add(NewVertIdx);
+        }
+
+        if (Prim.Vertices.Num() > 0 && Prim.Indices.Num() > 0)
+        {
+            OutPrimitives.Add(MoveTemp(Prim));
+        }
     }
-
-    // ── 4. Extract Indices (Standard Order Preserved) ────────────────────────
-    TArray<uint32> RawIndices;
-    IndexBuffer.GetCopy(RawIndices);
-
-    Prim.Indices.Reserve(RawIndices.Num());
-    for (int32 i = 0; i < RawIndices.Num(); ++i)
-    {
-        Prim.Indices.Add(RawIndices[i]);
-    }
-
-    OutPrimitives.Add(MoveTemp(Prim));
 }
