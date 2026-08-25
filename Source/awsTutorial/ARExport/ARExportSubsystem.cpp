@@ -601,20 +601,20 @@ namespace
         // Metals: a COLORED reflection over a dark diffuse (gold/brass), or a true mirror
         // (strong neutral reflection, dark diffuse, high glossiness). V-Ray dielectrics also
         // carry bright NEUTRAL reflection as their specular term - that must stay dielectric.
-        // Texture-driven slots keep their texture; this only applies to untextured metals.
-        if (!State.BaseColorTexture && !bMetallicExplicit && bHasReflection)
+        if (!bMetallicExplicit && bHasReflection)
         {
             const float ReflMax = FMath::Max3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
             const float ReflMin = FMath::Min3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
             const bool bColoredReflection = ReflMax > 0.35f && (ReflMax - ReflMin) > 0.08f;
             const bool bDarkBase = !bBaseColorFound || State.BaseColor.GetLuminance() < 0.08f;
             const float MirrorGloss = bHasGloss ? GlossValue : 0.9f;
-            const bool bMirrorLike = ReflMax >= 0.5f && MirrorGloss >= 0.8f && bDarkBase;
+            const bool bMirrorLike = ReflMax >= 0.5f && MirrorGloss >= 0.65f && bDarkBase;
 
             if ((bColoredReflection && bDarkBase) || bMirrorLike)
             {
                 State.BaseColor = ReflectionColor;
                 State.Metallic = 1.0f;
+                State.BaseColorTexture = nullptr; // Unused master graph diffuse texture is disregarded for true metals
                 if (!bRoughnessExplicit)
                 {
                     State.Roughness = FMath::Clamp(1.0f - MirrorGloss, 0.03f, 1.0f);
