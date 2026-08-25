@@ -294,7 +294,14 @@ namespace
         FImage SourceImage;
         if (FImageUtils::GetTexture2DSourceImage(Tex, SourceImage))
         {
-            if (SourceImage.Format == ERawImageFormat::BGRA8)
+            if (SourceImage.Format != ERawImageFormat::BGRA8)
+            {
+                FImage ConvertedImage;
+                SourceImage.CopyTo(ConvertedImage, ERawImageFormat::BGRA8, EGammaSpace::sRGB);
+                SourceImage = MoveTemp(ConvertedImage);
+            }
+
+            if (SourceImage.Format == ERawImageFormat::BGRA8 && SourceImage.RawData.Num() >= 4)
             {
                 const int64 NumPixels = SourceImage.RawData.Num() / 4;
                 for (int64 i = 0; i < NumPixels; ++i)
@@ -315,35 +322,6 @@ namespace
                     SourceImage.RawData[ByteIdx]     = BakedColor.B;
                     SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
                     SourceImage.RawData[ByteIdx + 2] = BakedColor.R;
-                }
-
-                TArray64<uint8> CompressedBytes;
-                if (FImageUtils::CompressImage(CompressedBytes, TEXT("png"), SourceImage))
-                {
-                    OutPNG.SetNumUninitialized(CompressedBytes.Num());
-                    FMemory::Memcpy(OutPNG.GetData(), CompressedBytes.GetData(), CompressedBytes.Num());
-                    return OutPNG.Num() > 0;
-                }
-            }
-            else if (SourceImage.Format == ERawImageFormat::RGBA8)
-            {
-                const int64 NumPixels = SourceImage.RawData.Num() / 4;
-                for (int64 i = 0; i < NumPixels; ++i)
-                {
-                    const int64 ByteIdx = i * 4;
-                    const uint8 R8 = SourceImage.RawData[ByteIdx];
-                    const uint8 G8 = SourceImage.RawData[ByteIdx + 1];
-                    const uint8 B8 = SourceImage.RawData[ByteIdx + 2];
-
-                    FLinearColor Lin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
-                    Lin.R *= TintColor.R;
-                    Lin.G *= TintColor.G;
-                    Lin.B *= TintColor.B;
-
-                    FColor BakedColor = Lin.ToFColor(true);
-                    SourceImage.RawData[ByteIdx]     = BakedColor.R;
-                    SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
-                    SourceImage.RawData[ByteIdx + 2] = BakedColor.B;
                 }
 
                 TArray64<uint8> CompressedBytes;
