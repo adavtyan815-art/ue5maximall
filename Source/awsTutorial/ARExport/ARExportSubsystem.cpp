@@ -72,13 +72,43 @@ namespace
         }
     };
 
+    /** Extracted PBR parameter state for any dynamic or static material */
+    struct FPBRParsedState
+    {
+        FLinearColor BaseColor = FLinearColor::White;
+        float Metallic = 0.0f;
+        float Roughness = 0.5f;
+        UTexture2D* BaseColorTexture = nullptr;
+        UTexture2D* NormalTexture = nullptr;
+        FUVTransform UVTransform;
+    };
+
     /** Recursively searches a material and its nested Material Functions for all referenced UTexture2D assets */
-    void FindTexturesInMaterial(UMaterialInterface* Mat, TArray<UTexture2D*>& OutTextures)
+    void FindTexturesInMaterial(UMaterialInterface* Mat, TArray<UTexture2D*>& OutBaseColorTextures, TArray<UTexture2D*>& OutNormalTextures)
     {
         if (!Mat)
         {
             return;
         }
+
+        auto ClassifyAndAddTexture = [&](UTexture2D* Tex, const FString& ParamName)
+        {
+            if (!Tex)
+            {
+                return;
+            }
+
+            const FString FullIdentifier = (ParamName + TEXT(" ") + Tex->GetPathName() + TEXT(" ") + Tex->GetName()).ToLower();
+            if (FullIdentifier.Contains(TEXT("normal")) || FullIdentifier.Contains(TEXT("nrm")) ||
+                FullIdentifier.Contains(TEXT("norm")) || FullIdentifier.Contains(TEXT("bump")))
+            {
+                OutNormalTextures.AddUnique(Tex);
+            }
+            else
+            {
+                OutBaseColorTextures.AddUnique(Tex);
+            }
+        };
 
         // 1. Texture Parameters on Material Instance
         if (UMaterialInstance* Inst = Cast<UMaterialInstance>(Mat))
@@ -93,7 +123,7 @@ namespace
                 {
                     if (UTexture2D* Tex2D = Cast<UTexture2D>(Tex))
                     {
-                        OutTextures.AddUnique(Tex2D);
+                        ClassifyAndAddTexture(Tex2D, Info.Name.ToString());
                     }
                 }
             }
@@ -126,14 +156,14 @@ namespace
                 {
                     if (UTexture2D* Tex2D = Cast<UTexture2D>(TS->Texture))
                     {
-                        OutTextures.AddUnique(Tex2D);
+                        ClassifyAndAddTexture(Tex2D, TS->GetName());
                     }
                 }
                 else if (UMaterialExpressionTextureBase* TB = Cast<UMaterialExpressionTextureBase>(Expr))
                 {
                     if (UTexture2D* Tex2D = Cast<UTexture2D>(TB->Texture))
                     {
-                        OutTextures.AddUnique(Tex2D);
+                        ClassifyAndAddTexture(Tex2D, TB->GetName());
                     }
                 }
                 else if (UMaterialExpressionMaterialFunctionCall* FuncCall = Cast<UMaterialExpressionMaterialFunctionCall>(Expr))
@@ -207,6 +237,173 @@ namespace
 
         return false;
     }
+
+    /**
+     * 100% Material-Agnostic PBR Parameter Resolver:
+     * Reads BaseColor, Metallic, Roughness, Normal, and UV Transforms directly
+     * from any active UMaterialInterface / UMaterialInstance / Datasmith / CAD shader.
+     */
+    FPBRParsedState ResolveMaterialPBRState(UMaterialInterface* SlotMat)
+    {
+        FPBRParsedState State;
+        if (!SlotMat)
+        {
+            return State;
+        }
+
+        bool bBaseColorFound = false;
+        bool bMetallicFound = false;
+        bool bRoughnessFound = false;
+        FLinearColor ReflectionColor = FLinearColor::Black;
+        float ReflectionLevel = 0.0f;
+        float ReflectionGlossiness = 0.0f;
+
+        // ── 1. Parse Vector Parameters ───────────────────────────────────────
+        if (UMaterialInstance* Inst = Cast<UMaterialInstance>(SlotMat))
+        {
+            TArray<FMaterialParameterInfo> VInfos;
+            TArray<FGuid> Guids;
+            Inst->GetAllVectorParameterInfo(VInfos, Guids);
+
+            for (const FMaterialParameterInfo& VInfo : VInfos)
+            {
+                const FString LowerName = VInfo.Name.ToString().ToLower();
+                FLinearColor Val;
+                if (!Inst->GetVectorParameterValue(VInfo, Val))
+                {
+                    continue;
+                }
+
+                // UV Scale / Offset / Pivots
+                if (LowerName.Contains(TEXT("uv_tiling")) || LowerName.Contains(TEXT("tiling (")))
+                {
+                    State.UVTransform.Tiling = FVector2f(Val.R, Val.G);
+                    State.UVTransform.bHasTransform = true;
+                }
+                else if (LowerName.Contains(TEXT("uv_offset")) || LowerName.Contains(TEXT("offset (")))
+                {
+                    State.UVTransform.Offset = FVector2f(Val.R, Val.G);
+                    State.UVTransform.bHasTransform = true;
+                }
+                else if (LowerName.Contains(TEXT("rotation_pivot")))
+                {
+                    State.UVTransform.RotationPivot = FVector2f(Val.R, Val.G);
+                }
+                else if (LowerName.Contains(TEXT("tiling_pivot")))
+                {
+                    State.UVTransform.TilingPivot = FVector2f(Val.R, Val.G);
+                }
+                // Base Color / Diffuse
+                else if (LowerName.Contains(TEXT("basecolor")) || LowerName.Contains(TEXT("base_color")) ||
+                         LowerName.Contains(TEXT("albedo")) || LowerName.Contains(TEXT("diffuse")) ||
+                         LowerName.Contains(TEXT("maincolor")) || LowerName.Contains(TEXT("tint")) ||
+                         LowerName.Equals(TEXT("color")))
+                {
+                    if (!bBaseColorFound)
+                    {
+                        State.BaseColor = Val;
+                        bBaseColorFound = true;
+                    }
+                }
+                else if (LowerName.Contains(TEXT("reflection")) && !LowerName.Contains(TEXT("gloss")))
+                {
+                    ReflectionColor = Val;
+                }
+            }
+
+            // ── 2. Parse Scalar Parameters ───────────────────────────────────
+            TArray<FMaterialParameterInfo> SInfos;
+            Inst->GetAllScalarParameterInfo(SInfos, Guids);
+
+            for (const FMaterialParameterInfo& SInfo : SInfos)
+            {
+                const FString LowerName = SInfo.Name.ToString().ToLower();
+                float SVal = 0.0f;
+                if (!Inst->GetScalarParameterValue(SInfo, SVal))
+                {
+                    continue;
+                }
+
+                if (LowerName.Contains(TEXT("metallic")) || LowerName.Contains(TEXT("metalness")) || LowerName.Equals(TEXT("metal")))
+                {
+                    State.Metallic = FMath::Clamp(SVal, 0.0f, 1.0f);
+                    bMetallicFound = true;
+                }
+                else if (LowerName.Contains(TEXT("roughness")) || LowerName.Contains(TEXT("rough")))
+                {
+                    State.Roughness = FMath::Clamp(SVal, 0.0f, 1.0f);
+                    bRoughnessFound = true;
+                }
+                else if (LowerName.Contains(TEXT("reflection_glossiness")) || LowerName.Contains(TEXT("glossiness")) || LowerName.Equals(TEXT("gloss")))
+                {
+                    ReflectionGlossiness = SVal;
+                    if (!bRoughnessFound)
+                    {
+                        // In PBR, Roughness = 1.0 - Glossiness
+                        State.Roughness = FMath::Clamp(1.0f - SVal, 0.0f, 1.0f);
+                    }
+                }
+                else if (LowerName.Contains(TEXT("reflection_level")) || LowerName.Contains(TEXT("reflection (")))
+                {
+                    ReflectionLevel = SVal;
+                }
+                // Scalar UV parameters
+                else if (LowerName.Contains(TEXT("w_rotation")) || LowerName.Contains(TEXT("rotation")))
+                {
+                    State.UVTransform.W_Rotation = SVal;
+                    State.UVTransform.bHasTransform = true;
+                }
+                else if (LowerName.Contains(TEXT("tiling_u")) || LowerName.Contains(TEXT("tiling_x")))
+                {
+                    State.UVTransform.Tiling.X = SVal;
+                    State.UVTransform.bHasTransform = true;
+                }
+                else if (LowerName.Contains(TEXT("tiling_v")) || LowerName.Contains(TEXT("tiling_y")))
+                {
+                    State.UVTransform.Tiling.Y = SVal;
+                    State.UVTransform.bHasTransform = true;
+                }
+                else if (LowerName.Contains(TEXT("offset_u")) || LowerName.Contains(TEXT("offset_x")))
+                {
+                    State.UVTransform.Offset.X = SVal;
+                    State.UVTransform.bHasTransform = true;
+                }
+                else if (LowerName.Contains(TEXT("offset_v")) || LowerName.Contains(TEXT("offset_y")))
+                {
+                    State.UVTransform.Offset.Y = SVal;
+                    State.UVTransform.bHasTransform = true;
+                }
+            }
+
+            // ── 3. V-Ray / Datasmith Specular Workflow Conversion ────────────
+            // In V-Ray metals (e.g. gold, chrome, brass), diffuse is black and color is in Reflection.
+            if (!bMetallicFound && ReflectionLevel > 0.5f)
+            {
+                const float MaxRefl = FMath::Max3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
+                if (MaxRefl > 0.3f && State.BaseColor.ComputeLuminance() < 0.2f)
+                {
+                    State.Metallic = FMath::Clamp(ReflectionLevel, 0.0f, 1.0f);
+                    State.BaseColor = ReflectionColor;
+                }
+            }
+        }
+
+        // ── 4. Extract Textures ──────────────────────────────────────────────
+        TArray<UTexture2D*> BaseTextures;
+        TArray<UTexture2D*> NormalTextures;
+        FindTexturesInMaterial(SlotMat, BaseTextures, NormalTextures);
+
+        if (BaseTextures.Num() > 0)
+        {
+            State.BaseColorTexture = BaseTextures[0];
+        }
+        if (NormalTextures.Num() > 0)
+        {
+            State.NormalTexture = NormalTextures[0];
+        }
+
+        return State;
+    }
 }
 
 void UARExportSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -249,7 +446,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
         return;
     }
 
-    // ── 1. Extract Geometry, PBR Parameters & Textures on Game Thread ────────
+    // ── 1. Extract Geometry, Dynamic PBR Parameters & Textures ───────────────
     TArray<FGLBPrimitive> Primitives;
     TMap<FString, TArray<uint8>> TextureCache;
 
@@ -280,33 +477,6 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
 
         const FString CompName = Comp->GetName();
 
-        // Determine Component Category
-        EFurnitureComponentType CompType = EFurnitureComponentType::Cabinet;
-        if (CompName.Contains(TEXT("Faucet")))
-        {
-            CompType = EFurnitureComponentType::Faucet;
-        }
-        else if (CompName.Contains(TEXT("Mirror")))
-        {
-            CompType = EFurnitureComponentType::Mirror;
-        }
-        else if (CompName.Contains(TEXT("Sink")))
-        {
-            CompType = EFurnitureComponentType::Sink;
-        }
-        else if (CompName.Contains(TEXT("Countertop")))
-        {
-            CompType = EFurnitureComponentType::Countertop;
-        }
-        else if (CompName.Contains(TEXT("Closet")))
-        {
-            CompType = EFurnitureComponentType::Closet;
-        }
-        else if (CompName.Contains(TEXT("Door")))
-        {
-            CompType = EFurnitureComponentType::Doors;
-        }
-
         for (int32 SectionIdx = 0; SectionIdx < LOD.Sections.Num(); ++SectionIdx)
         {
             const FStaticMeshSection& Section = LOD.Sections[SectionIdx];
@@ -330,203 +500,20 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 SlotMat = Mesh->GetMaterial(MatSlotIndex);
             }
 
-            // ── 2. Accurate Component PBR Profile ────────────────────────────
-            FLinearColor ResolvedColor = FLinearColor::White;
-            float ResolvedMetallic = 0.0f;
-            float ResolvedRoughness = 0.5f;
-            UTexture2D* FoundTexture = nullptr;
+            // ── 2. Universal Material-Agnostic PBR Extraction ────────────────
+            FPBRParsedState PBR = ResolveMaterialPBRState(SlotMat);
 
-            switch (CompType)
-            {
-            case EFurnitureComponentType::Faucet:
-                ResolvedColor = FLinearColor(0.85f, 0.65f, 0.22f, 1.0f);
-                ResolvedMetallic = 0.92f;
-                ResolvedRoughness = 0.18f;
-                break;
-
-            case EFurnitureComponentType::Mirror:
-                if (MatSlotIndex == 0)
-                {
-                    ResolvedColor = FLinearColor(0.95f, 0.97f, 1.0f, 1.0f);
-                    ResolvedMetallic = 0.98f;
-                    ResolvedRoughness = 0.02f;
-                }
-                else
-                {
-                    ResolvedColor = FLinearColor(0.015f, 0.015f, 0.018f, 1.0f);
-                    ResolvedMetallic = 0.85f;
-                    ResolvedRoughness = 0.25f;
-                }
-                break;
-
-            case EFurnitureComponentType::Sink:
-                ResolvedColor = FLinearColor(0.96f, 0.96f, 0.96f, 1.0f);
-                ResolvedMetallic = 0.0f;
-                ResolvedRoughness = 0.08f;
-                break;
-
-            case EFurnitureComponentType::Countertop:
-                ResolvedColor = FLinearColor(0.85f, 0.85f, 0.85f, 1.0f);
-                ResolvedMetallic = 0.05f;
-                ResolvedRoughness = 0.25f;
-                break;
-
-            case EFurnitureComponentType::Closet:
-                if (MatSlotIndex == 1)
-                {
-                    ResolvedColor = FLinearColor(0.85f, 0.05f, 0.05f, 1.0f);
-                    ResolvedMetallic = 0.02f;
-                    ResolvedRoughness = 0.3f;
-                }
-                else
-                {
-                    ResolvedColor = FLinearColor(0.95f, 0.95f, 0.95f, 1.0f);
-                    ResolvedMetallic = 0.02f;
-                    ResolvedRoughness = 0.35f;
-                }
-                break;
-
-            case EFurnitureComponentType::Doors:
-                if (CompName.Contains(TEXT("Closet")))
-                {
-                    if (MatSlotIndex == 1)
-                    {
-                        ResolvedColor = FLinearColor(0.85f, 0.05f, 0.05f, 1.0f);
-                        ResolvedMetallic = 0.02f;
-                        ResolvedRoughness = 0.3f;
-                    }
-                    else
-                    {
-                        ResolvedColor = FLinearColor(0.95f, 0.95f, 0.95f, 1.0f);
-                        ResolvedMetallic = 0.02f;
-                        ResolvedRoughness = 0.35f;
-                    }
-                }
-                else
-                {
-                    ResolvedColor = FLinearColor(0.035f, 0.022f, 0.015f, 1.0f);
-                    ResolvedMetallic = 0.02f;
-                    ResolvedRoughness = 0.65f;
-                }
-                break;
-
-            case EFurnitureComponentType::Cabinet:
-            default:
-                ResolvedColor = FLinearColor(0.035f, 0.022f, 0.015f, 1.0f);
-                ResolvedMetallic = 0.02f;
-                ResolvedRoughness = 0.65f;
-                break;
-            }
-
-            // ── 3. Apply Active RAL/NCS Custom Color Overrides ───────────────
-            for (const FCustomColorOverride& Override : TargetBooth->CustomColors)
-            {
-                if (Override.ComponentType == CompType)
-                {
-                    if (MatSlotIndex == 0)
-                    {
-                        ResolvedColor = Override.CustomColor;
-                    }
-                    break;
-                }
-            }
-
-            // ── 4. Extract UV Transformation Parameters (Tiling/Offset/Rotation)
-            FUVTransform UVTransform;
-            if (SlotMat)
-            {
-                if (UMaterialInstance* Inst = Cast<UMaterialInstance>(SlotMat))
-                {
-                    TArray<FMaterialParameterInfo> VInfos;
-                    TArray<FGuid> Guids;
-                    Inst->GetAllVectorParameterInfo(VInfos, Guids);
-
-                    for (const FMaterialParameterInfo& VInfo : VInfos)
-                    {
-                        const FString LowerName = VInfo.Name.ToString().ToLower();
-                        FLinearColor VVal;
-                        if (Inst->GetVectorParameterValue(VInfo, VVal))
-                        {
-                            if (LowerName.Contains(TEXT("uv_tiling")) || LowerName.Contains(TEXT("tiling (")))
-                            {
-                                UVTransform.Tiling = FVector2f(VVal.R, VVal.G);
-                                UVTransform.bHasTransform = true;
-                            }
-                            else if (LowerName.Contains(TEXT("uv_offset")) || LowerName.Contains(TEXT("offset (")))
-                            {
-                                UVTransform.Offset = FVector2f(VVal.R, VVal.G);
-                                UVTransform.bHasTransform = true;
-                            }
-                            else if (LowerName.Contains(TEXT("rotation_pivot")))
-                            {
-                                UVTransform.RotationPivot = FVector2f(VVal.R, VVal.G);
-                            }
-                            else if (LowerName.Contains(TEXT("tiling_pivot")))
-                            {
-                                UVTransform.TilingPivot = FVector2f(VVal.R, VVal.G);
-                            }
-                        }
-                    }
-
-                    TArray<FMaterialParameterInfo> SInfos;
-                    Inst->GetAllScalarParameterInfo(SInfos, Guids);
-                    for (const FMaterialParameterInfo& SInfo : SInfos)
-                    {
-                        const FString LowerName = SInfo.Name.ToString().ToLower();
-                        float SVal = 0.0f;
-                        if (Inst->GetScalarParameterValue(SInfo, SVal))
-                        {
-                            if (LowerName.Contains(TEXT("w_rotation")) || LowerName.Contains(TEXT("rotation")))
-                            {
-                                UVTransform.W_Rotation = SVal;
-                                UVTransform.bHasTransform = true;
-                            }
-                            else if (LowerName.Contains(TEXT("tiling_u")) || LowerName.Contains(TEXT("tiling_x")))
-                            {
-                                UVTransform.Tiling.X = SVal;
-                                UVTransform.bHasTransform = true;
-                            }
-                            else if (LowerName.Contains(TEXT("tiling_v")) || LowerName.Contains(TEXT("tiling_y")))
-                            {
-                                UVTransform.Tiling.Y = SVal;
-                                UVTransform.bHasTransform = true;
-                            }
-                            else if (LowerName.Contains(TEXT("offset_u")) || LowerName.Contains(TEXT("offset_x")))
-                            {
-                                UVTransform.Offset.X = SVal;
-                                UVTransform.bHasTransform = true;
-                            }
-                            else if (LowerName.Contains(TEXT("offset_v")) || LowerName.Contains(TEXT("offset_y")))
-                            {
-                                UVTransform.Offset.Y = SVal;
-                                UVTransform.bHasTransform = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ── 5. Recursively Extract Diffuse Texture from Material Graph ───
-            if (SlotMat)
-            {
-                TArray<UTexture2D*> FoundTextures;
-                FindTexturesInMaterial(SlotMat, FoundTextures);
-                if (FoundTextures.Num() > 0)
-                {
-                    FoundTexture = FoundTextures[0];
-                }
-            }
-
-            // ── 6. Build GLB Primitive with Embedded Texture ─────────────────
+            // ── 3. Build GLB Primitive ───────────────────────────────────────
             FGLBPrimitive Prim;
             Prim.MeshName = FString::Printf(TEXT("%s_Slot%d"), *CompName, MatSlotIndex);
-            Prim.BaseColor = ResolvedColor;
-            Prim.Metallic = ResolvedMetallic;
-            Prim.Roughness = ResolvedRoughness;
+            Prim.BaseColor = PBR.BaseColor;
+            Prim.Metallic = PBR.Metallic;
+            Prim.Roughness = PBR.Roughness;
 
-            if (FoundTexture)
+            // Embed BaseColor Texture (if present)
+            if (PBR.BaseColorTexture)
             {
-                const FString TexPath = FoundTexture->GetPathName();
+                const FString TexPath = PBR.BaseColorTexture->GetPathName();
                 Prim.BaseColorTextureKey = TexPath;
 
                 if (TArray<uint8>* CachedPNG = TextureCache.Find(TexPath))
@@ -537,12 +524,34 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                 else
                 {
                     TArray<uint8> PNGBytes;
-                    if (ExtractTexturePNG(FoundTexture, PNGBytes) && PNGBytes.Num() > 0)
+                    if (ExtractTexturePNG(PBR.BaseColorTexture, PNGBytes) && PNGBytes.Num() > 0)
                     {
-                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
+                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded Diffuse texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
                         TextureCache.Add(TexPath, PNGBytes);
                         Prim.BaseColorTexturePNG = MoveTemp(PNGBytes);
                         Prim.BaseColor = FLinearColor::White;
+                    }
+                }
+            }
+
+            // Embed Normal Texture (if present)
+            if (PBR.NormalTexture)
+            {
+                const FString TexPath = PBR.NormalTexture->GetPathName();
+                Prim.NormalTextureKey = TexPath;
+
+                if (TArray<uint8>* CachedPNG = TextureCache.Find(TexPath))
+                {
+                    Prim.NormalTexturePNG = *CachedPNG;
+                }
+                else
+                {
+                    TArray<uint8> PNGBytes;
+                    if (ExtractTexturePNG(PBR.NormalTexture, PNGBytes) && PNGBytes.Num() > 0)
+                    {
+                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded Normal texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
+                        TextureCache.Add(TexPath, PNGBytes);
+                        Prim.NormalTexturePNG = MoveTemp(PNGBytes);
                     }
                 }
             }
@@ -581,7 +590,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
                     if (VertBuffer.GetNumTexCoords() > 0)
                     {
                         const FVector2f RawUV = VertBuffer.GetVertexUV(OldVertIdx, 0);
-                        V.UV = UVTransform.TransformUV(RawUV);
+                        V.UV = PBR.UVTransform.TransformUV(RawUV);
                     }
                     else
                     {
@@ -626,7 +635,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
     const FString ShortWebARURL = FString::Printf(TEXT("http://%s:%d/"), *LocalIP, LocalServerPort);
     const FString DirectModelURL = FString::Printf(TEXT("http://%s:%d/index.html?model=%s"), *LocalIP, LocalServerPort, *FileName);
 
-    // ── 7. Run Heavy GLB Serialization on Background Worker Thread ───────────
+    // ── 4. Run Heavy GLB Serialization on Background Worker Thread ───────────
     Async(EAsyncExecution::ThreadPool, [Primitives = MoveTemp(Primitives), FullFilePath, ShortWebARURL, DirectModelURL, OnFinished]()
     {
         TArray<uint8> GLBData;
@@ -639,7 +648,7 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
             UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Successfully wrote GLB (%d bytes) to %s"), GLBData.Num(), *FullFilePath);
         }
 
-        // ── 8. Dispatch Back to Game Thread for QR Texture & UI Callback ─────
+        // ── 5. Dispatch Back to Game Thread for QR Texture & UI Callback ─────
         AsyncTask(ENamedThreads::GameThread, [bWriteSuccess, FullFilePath, ShortWebARURL, DirectModelURL, OnFinished]()
         {
             UTexture2D* QRTexture = nullptr;

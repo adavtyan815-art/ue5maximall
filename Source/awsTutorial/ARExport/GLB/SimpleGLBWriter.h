@@ -20,15 +20,13 @@ struct FGLBPrimitive
     float Metallic = 0.0f;
     float Roughness = 0.5f;
 
-    /**
-     * Optional real base color texture, embedded into the .glb and sampled via TEXCOORD_0.
-     * BaseColorTextureKey deduplicates: primitives sharing a key share one glTF image/texture;
-     * the FIRST primitive carrying that key must provide the PNG bytes, later ones may leave
-     * BaseColorTexturePNG empty. When a texture is present, BaseColor acts as the glTF
-     * baseColorFactor multiplier (use white for the unmodified texture appearance).
-     */
+    /** Base Color / Diffuse texture embedded into .glb binary payload */
     FString BaseColorTextureKey;
     TArray<uint8> BaseColorTexturePNG;
+
+    /** Normal / Bump map texture embedded into .glb binary payload */
+    FString NormalTextureKey;
+    TArray<uint8> NormalTexturePNG;
 };
 
 class AWSTUTORIAL_API FSimpleGLBWriter
