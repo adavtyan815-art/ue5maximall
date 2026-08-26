@@ -23,8 +23,9 @@
 // Output: Saved/AR_Exports/New folder/proto_PROXY_WOOD_TEST_<timestamp>.glb
 
 #include "CoreMinimal.h"
+#include "Runtime/Launch/Resources/Version.h"
 
-#if WITH_EDITOR
+#if WITH_EDITOR && (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION <= 3)
 
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -861,4 +862,4 @@ namespace
     static FARGLTFProxyProtoAutoRun GARGLTFProxyProtoAutoRun;
 }
 
-#endif // WITH_EDITOR
+#endif // WITH_EDITOR && (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION <= 3)

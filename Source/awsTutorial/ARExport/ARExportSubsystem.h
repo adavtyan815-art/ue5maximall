@@ -16,7 +16,7 @@ DECLARE_DYNAMIC_DELEGATE_FourParams(FOnARExportFinished, bool, bSuccess, const F
 /**
  * UARExportSubsystem
  * Standalone GameInstance subsystem handling in-engine GLB 3D model export,
- * local network IP resolution, and dynamic QR Code generation for instant AR preview.
+ * upload to maximall-web orchestrator, and dynamic QR Code generation for instant WebAR preview.
  */
 UCLASS(BlueprintType)
 class AWSTUTORIAL_API UARExportSubsystem : public UGameInstanceSubsystem
@@ -29,8 +29,8 @@ public:
 
     /**
      * Starts an export of the configured showroom booth to a local .glb file
-     * using the official engine GLTFExporter (with full texture & material baking)
-     * and generates a WebAR URL & QR Code texture.
+     * using the official engine GLTFExporter (with full texture & material baking),
+     * uploads it to the web backend, and generates a WebAR URL & QR Code texture.
      */
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | AR Export")
     void ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExportFinished OnFinished);
@@ -51,20 +51,23 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | AR Export")
     void ExportActorComponentsToAR(AActor* TargetActor, const TArray<UStaticMeshComponent*>& OnlyComponents, FOnARExportFinished OnFinished);
 
-private:
-    void ExportActorToAR_Internal(AActor* TargetActor, const TArray<UStaticMeshComponent*>* OnlyComponents, const FOnARExportFinished& OnFinished);
+    /** Resolves the base URL of the maximall-web backend orchestrator. */
+    UFUNCTION(BlueprintPure, Category = "MaxiMall | AR Export")
+    FString GetBackendBaseURL() const;
 
-public:
-
-    /** Resolves the local LAN IPv4 address of the host machine (e.g. 192.168.1.105). */
+    /** Resolves the local LAN IPv4 address of the host machine (e.g. 192.168.1.105) for local test fallback. */
     UFUNCTION(BlueprintPure, Category = "MaxiMall | AR Export")
     FString GetLocalHostIPAddress() const;
 
-    /** Configurable local HTTP server port (default: 8080). */
+    /** Configurable base backend URL override (e.g. "https://18-185-5-251.nip.io" or empty for auto-detect). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | AR Export Config")
+    FString BackendBaseURL = TEXT("");
+
+    /** Configurable local HTTP server port for offline dev testing fallback (default: 8080). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | AR Export Config")
     int32 LocalServerPort = 8080;
 
-    /** Base cloud or local viewer URL prefix (e.g. "http://{IP}:{PORT}/index.html?model="). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | AR Export Config")
-    FString WebARViewerPrefix = TEXT("http://{IP}:{PORT}/index.html?model=");
+private:
+    void ExportActorToAR_Internal(AActor* TargetActor, const TArray<UStaticMeshComponent*>* OnlyComponents, const FOnARExportFinished& OnFinished);
+    void UploadGLBToBackend(const FString& FullFilePath, const FString& FileName, const FString& FallbackLocalURL, const FOnARExportFinished& OnFinished);
 };

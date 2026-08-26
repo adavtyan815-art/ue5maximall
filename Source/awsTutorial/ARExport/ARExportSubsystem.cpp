@@ -13,8 +13,16 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/CommandLine.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
+
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 #include "Exporters/GLTFExporter.h"
 #include "Options/GLTFExportOptions.h"
@@ -176,6 +184,56 @@ void UARExportSubsystem::Deinitialize()
     Super::Deinitialize();
 }
 
+FString UARExportSubsystem::GetBackendBaseURL() const
+{
+    if (!BackendBaseURL.IsEmpty())
+    {
+        return BackendBaseURL;
+    }
+
+    const TCHAR* CommandLine = FCommandLine::Get();
+
+    // 1. Explicit command line override: -BackendURL="https://yourdomain.com"
+    FString ExplicitBackendURL;
+    if (FParse::Value(CommandLine, TEXT("-BackendURL="), ExplicitBackendURL))
+    {
+        return ExplicitBackendURL;
+    }
+
+    // 2. Retrieve host from standard Pixel Streaming launch argument: -PixelStreamingURL="ws://ip:port"
+    FString PixelStreamingURL;
+    if (FParse::Value(CommandLine, TEXT("-PixelStreamingURL="), PixelStreamingURL))
+    {
+        FString HostAndPort = PixelStreamingURL;
+        if (HostAndPort.StartsWith(TEXT("ws://")))
+        {
+            HostAndPort.RightChopInline(5);
+        }
+        else if (HostAndPort.StartsWith(TEXT("wss://")))
+        {
+            HostAndPort.RightChopInline(6);
+        }
+
+        FString Host;
+        FString Port;
+        if (HostAndPort.Split(TEXT(":"), &Host, &Port))
+        {
+            return FString::Printf(TEXT("http://%s:3000"), *Host);
+        }
+        else
+        {
+            if (HostAndPort.EndsWith(TEXT("/")))
+            {
+                HostAndPort.LeftChopInline(1);
+            }
+            return FString::Printf(TEXT("http://%s:3000"), *HostAndPort);
+        }
+    }
+
+    // 3. Default fallback to the known AWS web orchestrator
+    return TEXT("https://18-185-5-251.nip.io");
+}
+
 FString UARExportSubsystem::GetLocalHostIPAddress() const
 {
     bool bCanBindAll = false;
@@ -191,7 +249,6 @@ FString UARExportSubsystem::GetLocalHostIPAddress() const
 
 void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExportFinished OnFinished)
 {
-    // Full configured booth/scene export (WBP_PreviewWindow flow).
     ExportActorToAR(TargetBooth, OnFinished);
 }
 
@@ -213,7 +270,7 @@ void UARExportSubsystem::ExportActorToAR_Internal(AActor* TargetActor, const TAr
         return;
     }
 
-    // ── 1. Destination path & WebAR URL (unchanged delivery layer) ───────────
+    // ── 1. Destination path & local fallback URL ─────────────────────────────
     const FString ExportsDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("AR_Exports"));
     IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
     if (!PlatformFile.DirectoryExists(*ExportsDir))
@@ -228,15 +285,9 @@ void UARExportSubsystem::ExportActorToAR_Internal(AActor* TargetActor, const TAr
     const FString FullFilePath = FPaths::Combine(ExportsDir, FileName);
 
     const FString LocalIP = GetLocalHostIPAddress();
-    const FString DirectModelURL = FString::Printf(TEXT("http://%s:%d/index.html?model=%s"), *LocalIP, LocalServerPort, *FileName);
+    const FString FallbackLocalURL = FString::Printf(TEXT("http://%s:%d/index.html?model=%s"), *LocalIP, LocalServerPort, *FileName);
 
-    // ── 2a. Make the actor exportable: the official exporter skips meshes on
-    //        HiddenInGame actors/components (GLTFNodeConverters.cpp), but it does
-    //        NOT check per-component visibility. Temporarily lift actor-level
-    //        hiding (e.g. the booth is hidden while ViewMode shows its preview
-    //        copy) and mirror "not visible" components to HiddenInGame so the GLB
-    //        contains exactly what is currently displayed. All restored below;
-    //        the export is synchronous, so nothing renders in between.
+    // ── 2a. Make the actor exportable: temporarily lift actor-level hiding ───
     const bool bWasActorHidden = TargetActor->IsHidden();
     if (bWasActorHidden)
     {
@@ -262,8 +313,6 @@ void UARExportSubsystem::ExportActorToAR_Internal(AActor* TargetActor, const TAr
         {
             continue;
         }
-        // Selected-object export: everything outside the requested component set is
-        // treated like an invisible component (excluded, restored after export).
         const bool bFilteredOut = OnlyComponents && OnlyComponents->Num() > 0 && !OnlyComponents->Contains(Comp);
         if (!Comp->IsVisible() || bFilteredOut)
         {
@@ -294,12 +343,7 @@ void UARExportSubsystem::ExportActorToAR_Internal(AActor* TargetActor, const TAr
         }
     }
 
-    // ── 2c. ViewMode only: neutralize the preview's interactive MeshRoot pose.
-    //       RotatePreview bakes the user's yaw/pitch and an orbital offset into the
-    //       MeshRoot CHILD component, which actor-level relocation cannot undo —
-    //       without this, the GLB inherits whatever tilt the preview showed at
-    //       export time. Computed in relative space (while the actor still sits at
-    //       its original transform) so it composes correctly with the origin move.
+    // ── 2c. ViewMode only: neutralize preview MeshRoot interactive pose ──────
     USceneComponent* PreviewMeshRoot = nullptr;
     FTransform SavedMeshRootRelative;
     if (AFurniturePreviewActor* Preview = Cast<AFurniturePreviewActor>(TargetActor))
@@ -316,8 +360,7 @@ void UARExportSubsystem::ExportActorToAR_Internal(AActor* TargetActor, const TAr
         }
     }
 
-    // ── 3. Export at the origin for a clean AR anchor (restored below; the ────
-    //      export is synchronous, so no frame renders the moved actor).
+    // ── 3. Export at the origin for a clean AR floor anchor ──────────────────
     const FTransform OriginalTransform = TargetActor->GetActorTransform();
     TargetActor->SetActorLocationAndRotation(FVector::ZeroVector, FQuat::Identity, false, nullptr, ETeleportType::TeleportPhysics);
 
@@ -326,7 +369,7 @@ void UARExportSubsystem::ExportActorToAR_Internal(AActor* TargetActor, const TAr
     Options->ResetToDefault();
     Options->BakeMaterialInputs = EGLTFMaterialBakeMode::UseMeshData;
     Options->TextureImageFormat = EGLTFTextureImageFormat::PNG;
-    Options->bExportLights = false;  // preview studio lights must not ride into the GLB
+    Options->bExportLights = false;
     Options->bExportCameras = false;
 
     FGLTFExportMessages Messages;
@@ -363,12 +406,71 @@ void UARExportSubsystem::ExportActorToAR_Internal(AActor* TargetActor, const TAr
     UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Official glTF export %s (%.1fs) -> %s"),
         bSuccess ? TEXT("succeeded") : TEXT("FAILED"), Elapsed, *FullFilePath);
 
-    // ── 6. QR code & UI callback (unchanged delivery layer) ──────────────────
-    UTexture2D* QRTexture = nullptr;
-    if (bSuccess)
+    if (!bSuccess)
     {
-        QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(DirectModelURL, 512, 8);
+        OnFinished.ExecuteIfBound(false, FullFilePath, FallbackLocalURL, nullptr);
+        return;
     }
 
-    OnFinished.ExecuteIfBound(bSuccess, FullFilePath, DirectModelURL, QRTexture);
+    // ── 6. Upload GLB to web orchestrator backend and generate QR code ───────
+    UploadGLBToBackend(FullFilePath, FileName, FallbackLocalURL, OnFinished);
+}
+
+void UARExportSubsystem::UploadGLBToBackend(const FString& FullFilePath, const FString& FileName, const FString& FallbackLocalURL, const FOnARExportFinished& OnFinished)
+{
+    TArray<uint8> FileBytes;
+    if (!FFileHelper::LoadFileToArray(FileBytes, *FullFilePath) || FileBytes.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[ARExportSubsystem] Failed to read exported GLB file from disk: %s"), *FullFilePath);
+        UTexture2D* QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(FallbackLocalURL, 512, 8);
+        OnFinished.ExecuteIfBound(false, FullFilePath, FallbackLocalURL, QRTexture);
+        return;
+    }
+
+    const FString BaseURL = GetBackendBaseURL();
+    const FString UploadURL = FString::Printf(TEXT("%s/api/ar/upload"), *BaseURL);
+    UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Uploading GLB '%s' (%d bytes) to %s ..."), *FileName, FileBytes.Num(), *UploadURL);
+
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(UploadURL);
+    Request->SetVerb(TEXT("POST"));
+    Request->SetHeader(TEXT("Content-Type"), TEXT("model/gltf-binary"));
+    Request->SetHeader(TEXT("X-File-Name"), FileName);
+    Request->SetContent(FileBytes);
+    Request->SetTimeout(15.0f);
+
+    Request->OnProcessRequestComplete().BindLambda(
+        [this, FullFilePath, FallbackLocalURL, OnFinished](FHttpRequestPtr Req, FHttpResponsePtr Res, bool bConnectedSuccessfully)
+        {
+            FString FinalURL = FallbackLocalURL;
+            bool bUploadSucceeded = false;
+
+            if (bConnectedSuccessfully && Res.IsValid() && EHttpResponseCodes::IsOk(Res->GetResponseCode()))
+            {
+                const FString ResponseStr = Res->GetContentAsString();
+                TSharedPtr<FJsonObject> JsonObj;
+                TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseStr);
+                if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
+                {
+                    if (JsonObj->HasTypedField<EJson::String>(TEXT("url")))
+                    {
+                        FinalURL = JsonObj->GetStringField(TEXT("url"));
+                        bUploadSucceeded = true;
+                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Upload succeeded! Public WebAR URL: %s"), *FinalURL);
+                    }
+                }
+            }
+
+            if (!bUploadSucceeded)
+            {
+                const int32 ResponseCode = Res.IsValid() ? Res->GetResponseCode() : 0;
+                UE_LOG(LogTemp, Warning, TEXT("[ARExportSubsystem] Backend upload failed (code: %d, connected: %d). Using fallback local URL: %s"),
+                    ResponseCode, bConnectedSuccessfully ? 1 : 0, *FallbackLocalURL);
+            }
+
+            UTexture2D* QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(FinalURL, 512, 8);
+            OnFinished.ExecuteIfBound(true, FullFilePath, FinalURL, QRTexture);
+        });
+
+    Request->ProcessRequest();
 }
