@@ -119,6 +119,9 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Preview", meta = (DisplayName = "Get Current Target Booth"))
     AShowroomBooth* GetCurrentTargetBooth() const { return CurrentTargetBooth.Get(); }
 
+    /** The ViewMode preview actor currently displayed (null when not in ViewMode). */
+    AFurniturePreviewActor* GetActivePreviewActor() const { return ActivePreviewActor.Get(); }
+
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Preview")
     EFurnitureComponentType CurrentTargetComponent;
 

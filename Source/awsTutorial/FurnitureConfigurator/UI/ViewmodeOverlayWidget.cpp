@@ -3,6 +3,8 @@
 #include "FurnitureConfigurator/UI/ViewmodeOverlayWidget.h"
 #include "Components/Button.h"
 #include "awsTutorial_PlayerController.h"
+#include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
+#include "FurnitureConfigurator/ShowroomBooth.h"
 #include "ARExport/UI/ARExportModalWidget.h"
 
 void UViewmodeOverlayWidget::NativeConstruct()
@@ -45,8 +47,14 @@ void UViewmodeOverlayWidget::OnARExportClicked()
         return;
     }
 
-    AShowroomBooth* Booth = PC->GetCurrentTargetBooth();
-    if (!Booth)
+    // ViewMode exports the mesh currently displayed: the preview actor. The booth
+    // is hidden while ViewMode is active, so it is only a fallback target.
+    AActor* ExportTarget = PC->GetActivePreviewActor();
+    if (!ExportTarget)
+    {
+        ExportTarget = PC->GetCurrentTargetBooth();
+    }
+    if (!ExportTarget)
     {
         return;
     }
@@ -56,6 +64,6 @@ void UViewmodeOverlayWidget::OnARExportClicked()
     if (Modal)
     {
         Modal->AddToViewport(100);
-        Modal->StartExport(Booth);
+        Modal->StartExportForActor(ExportTarget);
     }
 }

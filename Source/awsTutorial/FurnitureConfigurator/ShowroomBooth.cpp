@@ -1451,39 +1451,23 @@ void AShowroomBooth::OnRep_CustomColors()
             for (int32 MatIdx = 0; MatIdx < MatCount; ++MatIdx)
             {
                 UMaterialInstanceDynamic* DynamicMat = nullptr;
-                UMaterialInterface* BaseMat = TargetMesh->GetMaterial(MatIdx);
 
-                // 1. If the current slot material was previously replaced with a flat OverrideMaterial,
-                // recover the authentic original material from the underlying StaticMesh asset.
-                if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(TargetMesh))
+                if (Override.OverrideMaterial)
                 {
-                    if (UStaticMesh* SM = SMC->GetStaticMesh())
+                    UMaterialInterface* CurrentMat = TargetMesh->GetMaterial(MatIdx);
+                    DynamicMat = Cast<UMaterialInstanceDynamic>(CurrentMat);
+                    // If it's not a dynamic instance of our OverrideMaterial, create a new one
+                    if (!DynamicMat || DynamicMat->Parent != Override.OverrideMaterial)
                     {
-                        if (SM->GetStaticMaterials().IsValidIndex(MatIdx) && SM->GetStaticMaterials()[MatIdx].MaterialInterface)
-                        {
-                            UMaterialInterface* OrigMat = SM->GetStaticMaterials()[MatIdx].MaterialInterface;
-                            if (UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(BaseMat))
-                            {
-                                if (MID->Parent != OrigMat && Override.OverrideMaterial && MID->Parent == Override.OverrideMaterial)
-                                {
-                                    BaseMat = OrigMat;
-                                }
-                            }
-                            else if (BaseMat == Override.OverrideMaterial)
-                            {
-                                BaseMat = OrigMat;
-                            }
-                            else if (!BaseMat)
-                            {
-                                BaseMat = OrigMat;
-                            }
-                        }
+                        DynamicMat = UMaterialInstanceDynamic::Create(Override.OverrideMaterial, TargetMesh);
+                        TargetMesh->SetMaterial(MatIdx, DynamicMat);
                     }
                 }
-
-                // 2. Prefer creating a Dynamic Material Instance from the authentic base material (preserving textures & shaders)
-                if (BaseMat)
+                else
                 {
+                    UMaterialInterface* BaseMat = TargetMesh->GetMaterial(MatIdx);
+                    if (!BaseMat) continue;
+
                     DynamicMat = Cast<UMaterialInstanceDynamic>(BaseMat);
                     if (!DynamicMat)
                     {
@@ -1491,14 +1475,6 @@ void AShowroomBooth::OnRep_CustomColors()
                     }
                 }
 
-                // 3. Fallback to OverrideMaterial only if the slot has no base material at all
-                if (!DynamicMat && Override.OverrideMaterial)
-                {
-                    DynamicMat = UMaterialInstanceDynamic::Create(Override.OverrideMaterial, TargetMesh);
-                    TargetMesh->SetMaterial(MatIdx, DynamicMat);
-                }
-
-                // 4. Apply the runtime selected color to the material's vector parameters
                 if (DynamicMat)
                 {
                     DynamicMat->SetVectorParameterValue(FName("BaseColor"), Override.CustomColor);

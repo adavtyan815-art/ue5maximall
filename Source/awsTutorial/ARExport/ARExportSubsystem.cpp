@@ -1,728 +1,167 @@
 // Copyright MaxiMall Project. All Rights Reserved.
 
-#include "ARExport/ARExportSubsystem.h"
+#include "ARExportSubsystem.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
-#include "ARExport/QRCode/QRCodeTextureHelper.h"
-#include "ARExport/GLB/SimpleGLBWriter.h"
+#include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
+#include "QRCode/QRCodeTextureHelper.h"
+
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
-#include "StaticMeshResources.h"
-#include "Rendering/PositionVertexBuffer.h"
-#include "Materials/MaterialInterface.h"
-#include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "Materials/Material.h"
-#include "Materials/MaterialFunction.h"
-#include "Materials/MaterialExpressionTextureSample.h"
-#include "Materials/MaterialExpressionTextureBase.h"
-#include "Materials/MaterialExpressionMaterialFunctionCall.h"
-#include "IImageWrapper.h"
-#include "IImageWrapperModule.h"
-#include "Modules/ModuleManager.h"
-#include "ImageUtils.h"
+#include "Materials/MaterialInstance.h"
+#include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "HAL/PlatformFileManager.h"
-#include "Async/Async.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
 
+#include "Exporters/GLTFExporter.h"
+#include "Options/GLTFExportOptions.h"
+#include "Utilities/GLTFProxyMaterialUtilities.h"
+#include "UserData/GLTFMaterialUserData.h"
+
+// The export itself is Epic's official glTF exporter (GLTFExporter plugin):
+// all geometry extraction, coordinate conversions, UV transforms, texture baking,
+// and PBR material synthesis are handled by the official engine pipeline.
+
 namespace
 {
-    /** Holds UV Transformation parameters (Tiling, Offset, Rotation) extracted from Material Instances */
-    struct FUVTransform
+    void CopyProxyParamsToBridgeMID(const UMaterialInterface* FamilyProxy, UMaterialInstanceDynamic* MID)
     {
-        FVector2f Tiling = FVector2f(1.0f, 1.0f);
-        FVector2f Offset = FVector2f(0.0f, 0.0f);
-        float W_Rotation = 0.0f;
-        FVector2f RotationPivot = FVector2f(0.0f, 0.0f);
-        FVector2f TilingPivot = FVector2f(0.0f, 0.0f);
-        bool bHasTransform = false;
+        static const TCHAR* ScalarParams[] = {
+            TEXT("Metallic Factor"), TEXT("Roughness Factor"), TEXT("Emissive Strength"),
+            TEXT("Occlusion Strength"), TEXT("Normal Scale") };
+        static const TCHAR* VectorParams[] = { TEXT("Base Color Factor"), TEXT("Emissive Factor") };
+        static const TCHAR* TextureGroups[] = {
+            TEXT("Base Color"), TEXT("Metallic Roughness"), TEXT("Normal"), TEXT("Emissive"), TEXT("Occlusion") };
 
-        FVector2f TransformUV(const FVector2f& InUV) const
+        for (const TCHAR* Name : ScalarParams)
         {
-            if (!bHasTransform)
+            float V;
+            if (FamilyProxy->GetScalarParameterValue(FMaterialParameterInfo(Name), V))
             {
-                return InUV;
+                MID->SetScalarParameterValue(FName(Name), V);
             }
-
-            FVector2f Out = InUV;
-
-            // 1. Tiling around TilingPivot
-            Out = (Out - TilingPivot) * Tiling + TilingPivot;
-
-            // 2. Offset
-            Out += Offset;
-
-            // 3. Rotation around RotationPivot
-            if (!FMath::IsNearlyZero(W_Rotation))
-            {
-                // In 3ds Max / Datasmith, W_Rotation is in turns (-0.25 = -90 degrees = -PI/2)
-                const float AngleRad = W_Rotation * 2.0f * PI;
-                const float CosA = FMath::Cos(AngleRad);
-                const float SinA = FMath::Sin(AngleRad);
-
-                const FVector2f P = Out - RotationPivot;
-                Out.X = P.X * CosA - P.Y * SinA + RotationPivot.X;
-                Out.Y = P.X * SinA + P.Y * CosA + RotationPivot.Y;
-            }
-
-            return Out;
         }
-    };
-
-    /** Extracted PBR parameter state for any dynamic or static material */
-    struct FPBRParsedState
-    {
-        FLinearColor BaseColor = FLinearColor::White;
-        float Metallic = 0.0f;
-        float Roughness = 0.5f;
-        bool bTwoSided = false;
-        FString AlphaMode = TEXT("OPAQUE");
-        float AlphaCutoff = 0.5f;
-        UTexture2D* BaseColorTexture = nullptr;
-        UTexture2D* NormalTexture = nullptr;
-        FUVTransform UVTransform;
-    };
-
-    /** Recursively searches a material and its nested Material Functions for all referenced UTexture2D assets */
-    void FindTexturesInMaterial(UMaterialInterface* Mat, TArray<UTexture2D*>& OutBaseColorTextures, TArray<UTexture2D*>& OutNormalTextures)
-    {
-        if (!Mat)
+        for (const TCHAR* Name : VectorParams)
         {
-            return;
+            FLinearColor V;
+            if (FamilyProxy->GetVectorParameterValue(FMaterialParameterInfo(Name), V))
+            {
+                MID->SetVectorParameterValue(FName(Name), V);
+            }
         }
-
-        auto ClassifyAndAddTexture = [&](UTexture2D* Tex, const FString& ParamName)
+        for (const TCHAR* Group : TextureGroups)
         {
-            if (!Tex)
+            UTexture* Tex = nullptr;
+            if (FamilyProxy->GetTextureParameterValue(FMaterialParameterInfo(*(FString(Group) + TEXT(" Texture"))), Tex) && Tex)
             {
-                return;
-            }
-
-            const FString FullIdentifier = (ParamName + TEXT(" ") + Tex->GetPathName() + TEXT(" ") + Tex->GetName()).ToLower();
-            if (FullIdentifier.Contains(TEXT("normal")) || FullIdentifier.Contains(TEXT("nrm")) ||
-                FullIdentifier.Contains(TEXT("norm")) || FullIdentifier.Contains(TEXT("bump")))
-            {
-                OutNormalTextures.AddUnique(Tex);
-            }
-            else
-            {
-                OutBaseColorTextures.AddUnique(Tex);
-            }
-        };
-
-        // 1. Texture Parameters on Material Instance
-        if (UMaterialInstance* Inst = Cast<UMaterialInstance>(Mat))
-        {
-            TArray<FMaterialParameterInfo> TexInfos;
-            TArray<FGuid> Guids;
-            Inst->GetAllTextureParameterInfo(TexInfos, Guids);
-            for (const FMaterialParameterInfo& Info : TexInfos)
-            {
-                UTexture* Tex = nullptr;
-                if (Inst->GetTextureParameterValue(Info, Tex) && Tex)
+                MID->SetTextureParameterValue(FName(*(FString(Group) + TEXT(" Texture"))), Tex);
+                static const TCHAR* ScalarSubs[] = { TEXT(" UV Index"), TEXT(" UV Rotation") };
+                static const TCHAR* VectorSubs[] = { TEXT(" UV Offset"), TEXT(" UV Scale") };
+                for (const TCHAR* Sub : ScalarSubs)
                 {
-                    if (UTexture2D* Tex2D = Cast<UTexture2D>(Tex))
+                    float V;
+                    if (FamilyProxy->GetScalarParameterValue(FMaterialParameterInfo(*(FString(Group) + Sub)), V))
                     {
-                        ClassifyAndAddTexture(Tex2D, Info.Name.ToString());
+                        MID->SetScalarParameterValue(FName(*(FString(Group) + Sub)), V);
                     }
                 }
-            }
-        }
-
-#if WITH_EDITORONLY_DATA
-        // 2. Expressions in Base Material and all nested Material Functions
-        // (expression graphs are editor-only data, stripped from cooked builds)
-        UMaterial* BaseMat = Mat->GetMaterial();
-        if (BaseMat)
-        {
-            TArray<UMaterialExpression*> ExpressionsToProcess;
-            for (const TObjectPtr<UMaterialExpression>& ExprPtr : BaseMat->GetExpressions())
-            {
-                if (ExprPtr)
+                for (const TCHAR* Sub : VectorSubs)
                 {
-                    ExpressionsToProcess.Add(ExprPtr.Get());
-                }
-            }
-
-            TSet<UMaterialFunctionInterface*> ProcessedFunctions;
-
-            for (int32 i = 0; i < ExpressionsToProcess.Num(); ++i)
-            {
-                UMaterialExpression* Expr = ExpressionsToProcess[i];
-                if (!Expr)
-                {
-                    continue;
-                }
-
-                if (UMaterialExpressionTextureSample* TS = Cast<UMaterialExpressionTextureSample>(Expr))
-                {
-                    if (UTexture2D* Tex2D = Cast<UTexture2D>(TS->Texture))
+                    FLinearColor V;
+                    if (FamilyProxy->GetVectorParameterValue(FMaterialParameterInfo(*(FString(Group) + Sub)), V))
                     {
-                        ClassifyAndAddTexture(Tex2D, TS->GetName());
-                    }
-                }
-                else if (UMaterialExpressionTextureBase* TB = Cast<UMaterialExpressionTextureBase>(Expr))
-                {
-                    if (UTexture2D* Tex2D = Cast<UTexture2D>(TB->Texture))
-                    {
-                        ClassifyAndAddTexture(Tex2D, TB->GetName());
-                    }
-                }
-                else if (UMaterialExpressionMaterialFunctionCall* FuncCall = Cast<UMaterialExpressionMaterialFunctionCall>(Expr))
-                {
-                    if (FuncCall->MaterialFunction && !ProcessedFunctions.Contains(FuncCall->MaterialFunction))
-                    {
-                        ProcessedFunctions.Add(FuncCall->MaterialFunction);
-                        if (UMaterialFunction* MF = Cast<UMaterialFunction>(FuncCall->MaterialFunction))
-                        {
-                            for (const TObjectPtr<UMaterialExpression>& FuncExprPtr : MF->GetExpressions())
-                            {
-                                if (FuncExprPtr)
-                                {
-                                    ExpressionsToProcess.Add(FuncExprPtr.Get());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-#else
-        // Cooked builds: no expression graphs. Classify the textures actually in use -
-        // color maps are sRGB, normal maps are identified by their compression settings.
-        TArray<UTexture*> UsedTextures;
-        Mat->GetUsedTextures(UsedTextures, EMaterialQualityLevel::Num, true, ERHIFeatureLevel::SM5, true);
-        for (UTexture* UsedTex : UsedTextures)
-        {
-            if (UTexture2D* UsedTex2D = Cast<UTexture2D>(UsedTex))
-            {
-                if (UsedTex2D->CompressionSettings == TC_Normalmap)
-                {
-                    OutNormalTextures.AddUnique(UsedTex2D);
-                }
-                else if (UsedTex2D->SRGB)
-                {
-                    OutBaseColorTextures.AddUnique(UsedTex2D);
-                }
-            }
-        }
-#endif
-    }
-
-    /**
-     * Extracts an uncompressed PNG byte buffer from a UTexture2D for embedding into .glb.
-     * bFlipGreenChannel converts UE's DirectX-style normal maps (green down) to the
-     * OpenGL-style convention (green up) that glTF mandates.
-     */
-    bool ExtractTexturePNG(UTexture2D* Tex, TArray<uint8>& OutPNG, bool bFlipGreenChannel = false)
-    {
-        if (!Tex)
-        {
-            return false;
-        }
-
-        // 1. Try ImageUtils Source Image (fastest, lossless, full resolution)
-        FImage SourceImage;
-        if (FImageUtils::GetTexture2DSourceImage(Tex, SourceImage))
-        {
-            if (bFlipGreenChannel && SourceImage.Format == ERawImageFormat::BGRA8)
-            {
-                for (int64 Idx = 1; Idx < SourceImage.RawData.Num(); Idx += 4)
-                {
-                    SourceImage.RawData[Idx] = 255 - SourceImage.RawData[Idx];
-                }
-            }
-            TArray64<uint8> CompressedBytes;
-            if (FImageUtils::CompressImage(CompressedBytes, TEXT("png"), SourceImage))
-            {
-                OutPNG.SetNumUninitialized(CompressedBytes.Num());
-                FMemory::Memcpy(OutPNG.GetData(), CompressedBytes.GetData(), CompressedBytes.Num());
-                return OutPNG.Num() > 0;
-            }
-        }
-
-        // 2. Fallback: Read Mip 0 Platform Data
-        FTexturePlatformData* PlatformData = Tex->GetPlatformData();
-        if (PlatformData && PlatformData->Mips.Num() > 0)
-        {
-            FTexture2DMipMap& Mip0 = PlatformData->Mips[0];
-            const int32 Width = Mip0.SizeX;
-            const int32 Height = Mip0.SizeY;
-            if (Width > 0 && Height > 0)
-            {
-                const void* RawData = Mip0.BulkData.LockReadOnly();
-                if (RawData)
-                {
-                    if (PlatformData->PixelFormat == PF_B8G8R8A8)
-                    {
-                        IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-                        TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-                        if (ImageWrapper.IsValid() && ImageWrapper->SetRaw(RawData, Width * Height * 4, Width, Height, ERGBFormat::BGRA, 8))
-                        {
-                            OutPNG = ImageWrapper->GetCompressed(100);
-                        }
-                    }
-                    Mip0.BulkData.Unlock();
-                    return OutPNG.Num() > 0;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Builds a generic 2D coverage mask of texture pixels covered by non-degenerate UV triangles
-     * of the mesh section (matching UE IMaterialBakingModule / FGLTFMaterialUtilities).
-     */
-    void BuildMeshUVCoverageMask(
-        const FStaticMeshVertexBuffer& VertBuffer,
-        const TArray<uint32>& AllIndices,
-        uint32 FirstIndex,
-        uint32 IndexCount,
-        const FUVTransform& UVTransform,
-        int32 TextureWidth,
-        int32 TextureHeight,
-        TArray<uint8>& OutCoverageMask)
-    {
-        OutCoverageMask.SetNumZeroed(TextureWidth * TextureHeight);
-        if (TextureWidth <= 0 || TextureHeight <= 0 || VertBuffer.GetNumTexCoords() == 0 || IndexCount < 3)
-        {
-            return;
-        }
-
-        const uint32 EndIndex = FMath::Min(FirstIndex + IndexCount, (uint32)AllIndices.Num());
-        const float Wf = static_cast<float>(TextureWidth);
-        const float Hf = static_cast<float>(TextureHeight);
-
-        auto EdgeFunc = [](float X0, float Y0, float X1, float Y1, float X2, float Y2) -> float
-        {
-            return (X2 - X0) * (Y1 - Y0) - (Y2 - Y0) * (X1 - X0);
-        };
-
-        for (uint32 i = FirstIndex; i + 2 < EndIndex; i += 3)
-        {
-            const uint32 I0 = AllIndices[i];
-            const uint32 I1 = AllIndices[i + 1];
-            const uint32 I2 = AllIndices[i + 2];
-
-            const FVector2f UV0 = UVTransform.TransformUV(VertBuffer.GetVertexUV(I0, 0));
-            const FVector2f UV1 = UVTransform.TransformUV(VertBuffer.GetVertexUV(I1, 0));
-            const FVector2f UV2 = UVTransform.TransformUV(VertBuffer.GetVertexUV(I2, 0));
-
-            const float U0 = UV0.X * Wf, V0 = UV0.Y * Hf;
-            const float U1 = UV1.X * Wf, V1 = UV1.Y * Hf;
-            const float U2 = UV2.X * Wf, V2 = UV2.Y * Hf;
-
-            // Degenerate triangle check (cross-product in pixel space):
-            const float DoubleArea = FMath::Abs((U1 - U0) * (V2 - V0) - (U2 - U0) * (V1 - V0));
-            if (DoubleArea < 0.1f) // Skip collapsed 1D / zero-area UV projections
-            {
-                continue;
-            }
-
-            const int32 MinX = FMath::Clamp(FMath::FloorToInt32(FMath::Min3(U0, U1, U2)), 0, TextureWidth - 1);
-            const int32 MaxX = FMath::Clamp(FMath::CeilToInt32(FMath::Max3(U0, U1, U2)), 0, TextureWidth - 1);
-            const int32 MinY = FMath::Clamp(FMath::FloorToInt32(FMath::Min3(V0, V1, V2)), 0, TextureHeight - 1);
-            const int32 MaxY = FMath::Clamp(FMath::CeilToInt32(FMath::Max3(V0, V1, V2)), 0, TextureHeight - 1);
-
-            for (int32 Y = MinY; Y <= MaxY; ++Y)
-            {
-                const float Py = static_cast<float>(Y) + 0.5f;
-                const int32 RowOffset = Y * TextureWidth;
-
-                for (int32 X = MinX; X <= MaxX; ++X)
-                {
-                    const float Px = static_cast<float>(X) + 0.5f;
-
-                    const float W0 = EdgeFunc(U1, V1, U2, V2, Px, Py);
-                    const float W1 = EdgeFunc(U2, V2, U0, V0, Px, Py);
-                    const float W2 = EdgeFunc(U0, V0, U1, V1, Px, Py);
-
-                    if ((W0 >= 0.0f && W1 >= 0.0f && W2 >= 0.0f) || (W0 <= 0.0f && W1 <= 0.0f && W2 <= 0.0f))
-                    {
-                        OutCoverageMask[RowOffset + X] = 255;
+                        MID->SetVectorParameterValue(FName(*(FString(Group) + Sub)), V);
                     }
                 }
             }
         }
     }
 
-    /**
-     * GPU/Analytical Material BaseColor Baker:
-     * Generically evaluates texture data based on intrinsic texture properties:
-     * - Full-color diffuse/albedo textures (wood, stone, marble, photo): preserves authentic RGB channels via linear tint multiplication.
-     * - Monochrome modulation/relief masks (bump masks, fluting): evaluates material graph (Luminance^2 * Tint).
-     * Pixels outside valid mesh UV triangles remain clean neutral zero (RGBA 0,0,0,0).
-     */
-    bool BakeTextureWithTintPNG(
-        UTexture2D* Tex,
-        const FLinearColor& TintColor,
-        TArray<uint8>& OutPNG,
-        const TArray<uint8>* OptionalUVCoverageMask = nullptr)
+    UMaterialInstanceDynamic* CreateProxyBridgeForRuntimeMID(UMaterialInstanceDynamic* RuntimeMID, UObject* Outer)
     {
-        if (!Tex)
+        if (!RuntimeMID || !RuntimeMID->Parent)
         {
-            return false;
+            return nullptr;
         }
 
-        // If tint is pure white AND no UV masking requested, standard extract is faster
-        if (TintColor.Equals(FLinearColor::White, 1e-3f) && (!OptionalUVCoverageMask || OptionalUVCoverageMask->Num() == 0))
+        // 1. Walk up to find the root source material (the proxy is attached to the asset, not to dynamic instances)
+        UMaterialInterface* ParentMat = RuntimeMID->Parent;
+        UMaterialInterface* Proxy = FGLTFProxyMaterialUtilities::GetProxyMaterial(ParentMat);
+        if (!Proxy)
         {
-            return ExtractTexturePNG(Tex, OutPNG, false);
-        }
-
-        FImage SourceImage;
-        if (FImageUtils::GetTexture2DSourceImage(Tex, SourceImage))
-        {
-            if (SourceImage.Format == ERawImageFormat::BGRA8 && SourceImage.RawData.Num() >= 4)
+            if (UMaterialInstance* ParentMI = Cast<UMaterialInstance>(ParentMat))
             {
-                const int64 NumPixels = SourceImage.RawData.Num() / 4;
-
-                // Generic texture classification: Measure chromatic difference across sampled pixels
-                int64 ChromaticDiffSum = 0;
-                int64 SampleCount = 0;
-                const int64 Step = FMath::Max<int64>(1, NumPixels / 200);
-                for (int64 i = 0; i < NumPixels; i += Step)
+                if (ParentMI->Parent)
                 {
-                    const int64 ByteIdx = i * 4;
-                    const int32 B8 = SourceImage.RawData[ByteIdx];
-                    const int32 G8 = SourceImage.RawData[ByteIdx + 1];
-                    const int32 R8 = SourceImage.RawData[ByteIdx + 2];
-                    ChromaticDiffSum += FMath::Abs(R8 - G8) + FMath::Abs(G8 - B8) + FMath::Abs(R8 - B8);
-                    SampleCount++;
-                }
-
-                const bool bIsFullColorTexture = (SampleCount > 0 && (ChromaticDiffSum / SampleCount) > 12);
-                const bool bUseMask = !bIsFullColorTexture && (OptionalUVCoverageMask != nullptr && OptionalUVCoverageMask->Num() == NumPixels);
-
-                for (int64 i = 0; i < NumPixels; ++i)
-                {
-                    const int64 ByteIdx = i * 4;
-
-                    if (bUseMask && (*OptionalUVCoverageMask)[i] == 0)
-                    {
-                        // Outside valid mesh UV triangles -> neutral transparent background (matching UE IMaterialBakingModule)
-                        SourceImage.RawData[ByteIdx]     = 0;
-                        SourceImage.RawData[ByteIdx + 1] = 0;
-                        SourceImage.RawData[ByteIdx + 2] = 0;
-                        SourceImage.RawData[ByteIdx + 3] = 0;
-                        continue;
-                    }
-
-                    const uint8 B8 = SourceImage.RawData[ByteIdx];
-                    const uint8 G8 = SourceImage.RawData[ByteIdx + 1];
-                    const uint8 R8 = SourceImage.RawData[ByteIdx + 2];
-
-                    if (bIsFullColorTexture)
-                    {
-                        // 1. Full-Color Diffuse/Albedo Texture (Wood, Marble, Stone, Fabric):
-                        // Linear color multiplication (RGB * TintColor) preserving authentic natural colors
-                        if (!TintColor.Equals(FLinearColor::White, 1e-3f))
-                        {
-                            const FLinearColor RawLin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
-                            FLinearColor Lin;
-                            Lin.R = RawLin.R * TintColor.R;
-                            Lin.G = RawLin.G * TintColor.G;
-                            Lin.B = RawLin.B * TintColor.B;
-
-                            const FColor BakedColor = Lin.ToFColor(true);
-                            SourceImage.RawData[ByteIdx]     = BakedColor.B;
-                            SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
-                            SourceImage.RawData[ByteIdx + 2] = BakedColor.R;
-                        }
-                    }
-                    else
-                    {
-                        // 2. Grayscale Modulation / Relief Mask (e.g. Fluted Facade Bump Mask):
-                        // Evaluates material graph: Desaturation (Luminance) -> Power(2.0) -> Multiply Tint
-                        const FLinearColor RawLin = FLinearColor::FromSRGBColor(FColor(R8, G8, B8, 255));
-                        const float Lum = 0.299f * RawLin.R + 0.587f * RawLin.G + 0.114f * RawLin.B;
-                        const float LumSq = Lum * Lum;
-
-                        FLinearColor Lin;
-                        Lin.R = LumSq * TintColor.R;
-                        Lin.G = LumSq * TintColor.G;
-                        Lin.B = LumSq * TintColor.B;
-
-                        const FColor BakedColor = Lin.ToFColor(true);
-                        SourceImage.RawData[ByteIdx]     = BakedColor.B;
-                        SourceImage.RawData[ByteIdx + 1] = BakedColor.G;
-                        SourceImage.RawData[ByteIdx + 2] = BakedColor.R;
-                    }
-
-                    SourceImage.RawData[ByteIdx + 3] = 255;
-                }
-
-                TArray64<uint8> CompressedBytes;
-                if (FImageUtils::CompressImage(CompressedBytes, TEXT("png"), SourceImage))
-                {
-                    OutPNG.SetNumUninitialized(CompressedBytes.Num());
-                    FMemory::Memcpy(OutPNG.GetData(), CompressedBytes.GetData(), CompressedBytes.Num());
-                    return OutPNG.Num() > 0;
+                    Proxy = FGLTFProxyMaterialUtilities::GetProxyMaterial(ParentMI->Parent);
                 }
             }
         }
 
-        // Fallback: extract raw texture if source image format cannot be modified
-        return ExtractTexturePNG(Tex, OutPNG, false);
-    }
-
-    /**
-     * Material Parameter Resolver:
-     * Reads BaseColor, Metallic, Roughness, Normal, and UV Transforms directly
-     * from any active UMaterialInterface / UMaterialInstance / Datasmith / CAD shader.
-     */
-    FPBRParsedState ResolveMaterialPBRState(UMaterialInterface* SlotMat)
-    {
-        FPBRParsedState State;
-        if (!SlotMat)
+        if (!Proxy)
         {
-            return State;
+            return nullptr;
         }
 
-        State.bTwoSided = SlotMat->IsTwoSided();
-        bool bBaseColorFound = false;
-
-        // V-Ray/Datasmith channels: metals carry their visible color in Reflection with a
-        // near-black diffuse, and roughness is expressed as Reflection_Glossiness.
-        bool bHasReflection = false;
-        FLinearColor ReflectionColor = FLinearColor::Black;
-        bool bMetallicExplicit = false, bRoughnessExplicit = false;
-        bool bHasReflGloss = false, bHasGenericGloss = false;
-        float ReflGloss = 0.0f, GenericGloss = 0.0f;
-
-        // ── 1. Parse Vector Parameters on UMaterialInterface ─────────────────
-        TArray<FMaterialParameterInfo> VInfos;
-        TArray<FGuid> Guids;
-        SlotMat->GetAllVectorParameterInfo(VInfos, Guids);
-
-        for (const FMaterialParameterInfo& VInfo : VInfos)
+        // 2. Create the bridge MID from the proxy's base material
+        UMaterialInstanceDynamic* BridgeMID = UMaterialInstanceDynamic::Create(Proxy->GetMaterial(), Outer);
+        if (!BridgeMID)
         {
-            const FString LowerName = VInfo.Name.ToString().ToLower();
+            return nullptr;
+        }
+
+        // 3. Copy resolved proxy parameters onto the bridge
+        CopyProxyParamsToBridgeMID(Proxy, BridgeMID);
+
+        // 4. Copy dynamic runtime parameter overrides from RuntimeMID to BridgeMID
+        TArray<FMaterialParameterInfo> OutVectorInfos;
+        TArray<FGuid> OutVectorGuids;
+        RuntimeMID->GetAllVectorParameterInfo(OutVectorInfos, OutVectorGuids);
+        for (const FMaterialParameterInfo& Info : OutVectorInfos)
+        {
             FLinearColor Val;
-            if (!SlotMat->GetVectorParameterValue(VInfo, Val))
+            if (RuntimeMID->GetVectorParameterValue(Info, Val))
             {
-                continue;
-            }
-
-            // UV Scale / Offset / Pivots
-            if (LowerName.Contains(TEXT("uv_tiling")) || LowerName.Contains(TEXT("tiling (")))
-            {
-                State.UVTransform.Tiling = FVector2f(Val.R, Val.G);
-                State.UVTransform.bHasTransform = true;
-            }
-            else if (LowerName.Contains(TEXT("uv_offset")) || LowerName.Contains(TEXT("offset (")))
-            {
-                State.UVTransform.Offset = FVector2f(Val.R, Val.G);
-                State.UVTransform.bHasTransform = true;
-            }
-            else if (LowerName.Contains(TEXT("rotation_pivot")))
-            {
-                State.UVTransform.RotationPivot = FVector2f(Val.R, Val.G);
-            }
-            else if (LowerName.Contains(TEXT("tiling_pivot")))
-            {
-                State.UVTransform.TilingPivot = FVector2f(Val.R, Val.G);
-            }
-            // V-Ray reflection color (the visible surface color of Datasmith metals)
-            else if (LowerName.Equals(TEXT("reflection")) || LowerName.Equals(TEXT("reflection (4)")) || LowerName.Equals(TEXT("refl_color")))
-            {
-                if (!bHasReflection)
+                const FString ParamName = Info.Name.ToString().ToLower();
+                if (ParamName.Contains(TEXT("basecolor")) || ParamName.Contains(TEXT("color")) || ParamName.Contains(TEXT("tint")))
                 {
-                    bHasReflection = true;
-                    ReflectionColor = Val;
+                    BridgeMID->SetVectorParameterValue(FName(TEXT("Base Color Factor")), Val);
                 }
-            }
-            // Base Color / Diffuse (strict name matching to avoid capturing secondary lighting/scatter vectors)
-            else if (LowerName.Equals(TEXT("basecolor")) || LowerName.Equals(TEXT("base_color")) ||
-                     LowerName.Equals(TEXT("albedo")) || LowerName.Equals(TEXT("maincolor")) ||
-                     LowerName.Equals(TEXT("diffuse")) || LowerName.Equals(TEXT("diffuse (1)")) ||
-                     LowerName.Equals(TEXT("color")) || LowerName.Equals(TEXT("tint")))
-            {
-                State.BaseColor = Val;
-                bBaseColorFound = true;
-            }
-            else if (!bBaseColorFound && (LowerName.Contains(TEXT("basecolor")) || LowerName.Contains(TEXT("base_color")) || LowerName.Contains(TEXT("albedo"))))
-            {
-                State.BaseColor = Val;
-                bBaseColorFound = true;
-            }
-        }
-
-        // ── 2. Parse Scalar Parameters on UMaterialInterface ─────────────────
-        TArray<FMaterialParameterInfo> SInfos;
-        SlotMat->GetAllScalarParameterInfo(SInfos, Guids);
-
-        for (const FMaterialParameterInfo& SInfo : SInfos)
-        {
-            const FString LowerName = SInfo.Name.ToString().ToLower();
-            float SVal = 0.0f;
-            if (!SlotMat->GetScalarParameterValue(SInfo, SVal))
-            {
-                continue;
-            }
-
-            if (LowerName.Equals(TEXT("metallic")) || LowerName.Equals(TEXT("metalness")) || LowerName.Equals(TEXT("metal")))
-            {
-                State.Metallic = FMath::Clamp(SVal, 0.0f, 1.0f);
-                bMetallicExplicit = true;
-            }
-            else if (LowerName.Equals(TEXT("roughness")) || LowerName.Equals(TEXT("rough")))
-            {
-                State.Roughness = FMath::Clamp(SVal, 0.0f, 1.0f);
-                bRoughnessExplicit = true;
-            }
-            // V-Ray glossiness (prefer the reflection-specific one; refraction gloss is not surface roughness)
-            else if (LowerName.Contains(TEXT("gloss")))
-            {
-                if (LowerName.Contains(TEXT("reflection")) && !bHasReflGloss)
+                else
                 {
-                    bHasReflGloss = true;
-                    ReflGloss = SVal;
-                }
-                else if (!LowerName.Contains(TEXT("refract")) && !bHasGenericGloss)
-                {
-                    bHasGenericGloss = true;
-                    GenericGloss = SVal;
-                }
-            }
-            // Scalar UV parameters
-            else if (LowerName.Contains(TEXT("w_rotation")) || LowerName.Contains(TEXT("rotation")))
-            {
-                State.UVTransform.W_Rotation = SVal;
-                State.UVTransform.bHasTransform = true;
-            }
-            else if (LowerName.Contains(TEXT("tiling_u")) || LowerName.Contains(TEXT("tiling_x")))
-            {
-                State.UVTransform.Tiling.X = SVal;
-                State.UVTransform.bHasTransform = true;
-            }
-            else if (LowerName.Contains(TEXT("tiling_v")) || LowerName.Contains(TEXT("tiling_y")))
-            {
-                State.UVTransform.Tiling.Y = SVal;
-                State.UVTransform.bHasTransform = true;
-            }
-            else if (LowerName.Contains(TEXT("offset_u")) || LowerName.Contains(TEXT("offset_x")))
-            {
-                State.UVTransform.Offset.X = SVal;
-                State.UVTransform.bHasTransform = true;
-            }
-            else if (LowerName.Contains(TEXT("offset_v")) || LowerName.Contains(TEXT("offset_y")))
-            {
-                State.UVTransform.Offset.Y = SVal;
-                State.UVTransform.bHasTransform = true;
-            }
-        }
-
-        // ── 3. Extract Textures ──────────────────────────────────────────────
-        TArray<UTexture2D*> BaseTextures;
-        TArray<UTexture2D*> NormalTextures;
-        FindTexturesInMaterial(SlotMat, BaseTextures, NormalTextures);
-
-        if (BaseTextures.Num() > 0)
-        {
-            State.BaseColorTexture = BaseTextures[0];
-        }
-        if (NormalTextures.Num() > 0)
-        {
-            State.NormalTexture = NormalTextures[0];
-        }
-
-        // ── 4. V-Ray -> glTF PBR Conversion ──────────────────────────────────
-        // Roughness: 1 - glossiness when no explicit roughness parameter exists.
-        const bool bHasGloss = bHasReflGloss || bHasGenericGloss;
-        const float GlossValue = bHasReflGloss ? ReflGloss : GenericGloss;
-        if (!bRoughnessExplicit)
-        {
-            if (State.BaseColorTexture != nullptr)
-            {
-                // Textured diffuse dielectrics (wood, stone): UE bakes MR roughness ~0.60 to prevent specular washout
-                State.Roughness = 0.60f;
-            }
-            else if (bHasGloss)
-            {
-                State.Roughness = FMath::Clamp(1.0f - GlossValue, 0.04f, 1.0f);
-            }
-        }
-
-        // Metals: a COLORED reflection over a dark diffuse (gold/brass), or a true mirror
-        // (strong neutral reflection, dark diffuse, high glossiness). V-Ray dielectrics also
-        // carry bright NEUTRAL reflection as their specular term - that must stay dielectric.
-        if (!bMetallicExplicit && bHasReflection)
-        {
-            const float ReflMax = FMath::Max3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
-            const float ReflMin = FMath::Min3(ReflectionColor.R, ReflectionColor.G, ReflectionColor.B);
-            const bool bColoredReflection = ReflMax > 0.35f && (ReflMax - ReflMin) > 0.08f;
-            const bool bDarkBase = !bBaseColorFound || State.BaseColor.GetLuminance() < 0.08f;
-            const float MirrorGloss = bHasGloss ? GlossValue : 0.9f;
-            const bool bMirrorLike = ReflMax >= 0.5f && MirrorGloss >= 0.65f && bDarkBase;
-
-            if ((bColoredReflection && bDarkBase) || bMirrorLike)
-            {
-                State.BaseColor = ReflectionColor;
-                State.Metallic = bColoredReflection ? 0.85f : 0.95f; // Rich specular metal reflectance
-                State.BaseColorTexture = nullptr; // Unused master graph diffuse texture is disregarded for true metals
-                if (!bRoughnessExplicit)
-                {
-                    State.Roughness = FMath::Clamp(1.0f - MirrorGloss, 0.04f, 1.0f);
+                    BridgeMID->SetVectorParameterValue(Info.Name, Val);
                 }
             }
         }
 
-        // ── 5. BlendMode & Transparency Resolution ───────────────────────────
-        const EBlendMode BlendMode = SlotMat->GetBlendMode();
-        bool bAlphaExplicit = false;
-        float ParsedAlpha = 1.0f;
-
-        // Check for explicit Opacity / Alpha scalar parameters
-        for (const FMaterialParameterInfo& SInfo : SInfos)
+        TArray<FMaterialParameterInfo> OutScalarInfos;
+        TArray<FGuid> OutScalarGuids;
+        RuntimeMID->GetAllScalarParameterInfo(OutScalarInfos, OutScalarGuids);
+        for (const FMaterialParameterInfo& Info : OutScalarInfos)
         {
-            const FString LowerName = SInfo.Name.ToString().ToLower();
-            float SVal = 1.0f;
-            if (SlotMat->GetScalarParameterValue(SInfo, SVal))
+            float Val;
+            if (RuntimeMID->GetScalarParameterValue(Info, Val))
             {
-                if (LowerName.Equals(TEXT("opacity")) || LowerName.Equals(TEXT("alpha")) ||
-                    LowerName.Contains(TEXT("transparen")) || (LowerName.Contains(TEXT("refract")) && !LowerName.Contains(TEXT("ior"))))
+                const FString ParamName = Info.Name.ToString().ToLower();
+                if (ParamName.Contains(TEXT("roughness")))
                 {
-                    ParsedAlpha = FMath::Clamp(SVal, 0.01f, 1.0f);
-                    bAlphaExplicit = true;
-                    break;
+                    BridgeMID->SetScalarParameterValue(FName(TEXT("Roughness Factor")), Val);
+                }
+                else if (ParamName.Contains(TEXT("metallic")))
+                {
+                    BridgeMID->SetScalarParameterValue(FName(TEXT("Metallic Factor")), Val);
+                }
+                else
+                {
+                    BridgeMID->SetScalarParameterValue(Info.Name, Val);
                 }
             }
         }
 
-        // Ceramic / Opaque check: V-Ray imported shaders sometimes have BLEND_Translucent with high diffuse
-        // or diffuse textures, but they are solid dielectrics (like porcelain sinks).
-        const bool bHasSolidDiffuse = (State.BaseColorTexture != nullptr) || (bBaseColorFound && State.BaseColor.GetLuminance() > 0.25f);
-        const bool bIsGenuineTranslucent = (BlendMode == BLEND_Translucent || BlendMode == BLEND_Additive || BlendMode == BLEND_AlphaComposite)
-                                         && (bAlphaExplicit || !bHasSolidDiffuse);
-
-        if (bIsGenuineTranslucent)
-        {
-            State.AlphaMode = TEXT("BLEND");
-            State.BaseColor.A = bAlphaExplicit ? ParsedAlpha : 0.25f;
-            if (!bRoughnessExplicit)
-            {
-                State.Roughness = 0.05f; // Translucent glass is smooth and reflective
-            }
-        }
-        else if (BlendMode == BLEND_Masked)
-        {
-            State.AlphaMode = TEXT("MASK");
-            State.AlphaCutoff = SlotMat->GetOpacityMaskClipValue();
-            State.BaseColor.A = 1.0f;
-        }
-        else
-        {
-            State.AlphaMode = TEXT("OPAQUE");
-            State.BaseColor.A = 1.0f;
-        }
-
-        return State;
+        return BridgeMID;
     }
 }
 
@@ -740,19 +179,11 @@ void UARExportSubsystem::Deinitialize()
 FString UARExportSubsystem::GetLocalHostIPAddress() const
 {
     bool bCanBindAll = false;
-    ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+    TSharedRef<FInternetAddr> LocalAddr = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->GetLocalHostAddr(*GLog, bCanBindAll);
 
-    if (SocketSubsystem)
+    if (LocalAddr->IsValid())
     {
-        TSharedRef<FInternetAddr> LocalAddr = SocketSubsystem->GetLocalHostAddr(*GLog, bCanBindAll);
-        if (LocalAddr->IsValid())
-        {
-            FString IPStr = LocalAddr->ToString(false);
-            if (!IPStr.IsEmpty() && !IPStr.StartsWith(TEXT("127.")))
-            {
-                return IPStr;
-            }
-        }
+        return LocalAddr->ToString(false);
     }
 
     return TEXT("127.0.0.1");
@@ -760,239 +191,29 @@ FString UARExportSubsystem::GetLocalHostIPAddress() const
 
 void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExportFinished OnFinished)
 {
-    if (!TargetBooth)
+    // Full configured booth/scene export (WBP_PreviewWindow flow).
+    ExportActorToAR(TargetBooth, OnFinished);
+}
+
+void UARExportSubsystem::ExportActorToAR(AActor* TargetActor, FOnARExportFinished OnFinished)
+{
+    ExportActorToAR_Internal(TargetActor, nullptr, OnFinished);
+}
+
+void UARExportSubsystem::ExportActorComponentsToAR(AActor* TargetActor, const TArray<UStaticMeshComponent*>& OnlyComponents, FOnARExportFinished OnFinished)
+{
+    ExportActorToAR_Internal(TargetActor, &OnlyComponents, OnFinished);
+}
+
+void UARExportSubsystem::ExportActorToAR_Internal(AActor* TargetActor, const TArray<UStaticMeshComponent*>* OnlyComponents, const FOnARExportFinished& OnFinished)
+{
+    if (!TargetActor || !TargetActor->GetWorld())
     {
         OnFinished.ExecuteIfBound(false, TEXT(""), TEXT(""), nullptr);
         return;
     }
 
-    // ── 1. Extract Geometry, Dynamic PBR Parameters & Textures ───────────────
-    TArray<FGLBPrimitive> Primitives;
-    TMap<FString, TArray<uint8>> TextureCache;
-
-    TArray<UStaticMeshComponent*> AllMeshComponents;
-    TargetBooth->GetComponents<UStaticMeshComponent>(AllMeshComponents);
-
-    for (UStaticMeshComponent* Comp : AllMeshComponents)
-    {
-        if (!Comp || !Comp->IsVisible() || !Comp->GetStaticMesh())
-        {
-            continue;
-        }
-
-        UStaticMesh* Mesh = Comp->GetStaticMesh();
-        if (!Mesh->GetRenderData() || Mesh->GetRenderData()->LODResources.Num() == 0)
-        {
-            continue;
-        }
-
-        const FTransform ComponentToBoothTransform = Comp->GetComponentTransform().GetRelativeTransform(TargetBooth->GetActorTransform());
-        const FStaticMeshLODResources& LOD = Mesh->GetRenderData()->LODResources[0];
-        const FPositionVertexBuffer& PosBuffer = LOD.VertexBuffers.PositionVertexBuffer;
-        const FStaticMeshVertexBuffer& VertBuffer = LOD.VertexBuffers.StaticMeshVertexBuffer;
-        const FRawStaticIndexBuffer& IndexBuffer = LOD.IndexBuffer;
-
-        TArray<uint32> AllIndices;
-        IndexBuffer.GetCopy(AllIndices);
-
-        const FString CompName = Comp->GetName();
-
-        for (int32 SectionIdx = 0; SectionIdx < LOD.Sections.Num(); ++SectionIdx)
-        {
-            const FStaticMeshSection& Section = LOD.Sections[SectionIdx];
-            const int32 MatSlotIndex = Section.MaterialIndex;
-            const uint32 FirstIndex = Section.FirstIndex;
-            const uint32 IndexCount = Section.NumTriangles * 3;
-
-            if (IndexCount == 0 || FirstIndex >= (uint32)AllIndices.Num())
-            {
-                continue;
-            }
-
-            // Resolve Material assigned to this specific slot
-            UMaterialInterface* SlotMat = Comp->GetMaterial(MatSlotIndex);
-            FString MatOrigin = TEXT("ComponentOverride");
-            if (!SlotMat && Mesh->GetStaticMaterials().IsValidIndex(MatSlotIndex))
-            {
-                SlotMat = Mesh->GetStaticMaterials()[MatSlotIndex].MaterialInterface;
-                MatOrigin = TEXT("StaticMaterials");
-            }
-            if (!SlotMat)
-            {
-                SlotMat = Mesh->GetMaterial(MatSlotIndex);
-                MatOrigin = TEXT("GetMaterial");
-            }
-
-            // Diagnostic: Log exact material instance hierarchy and dynamic parameters
-            FString ParentName = TEXT("<none>");
-            if (UMaterialInstance* MI = Cast<UMaterialInstance>(SlotMat))
-            {
-                ParentName = MI->Parent ? MI->Parent->GetName() : TEXT("<none>");
-            }
-
-            // ── 2. Universal Material-Agnostic PBR Extraction ────────────────
-            FPBRParsedState PBR = ResolveMaterialPBRState(SlotMat);
-
-            UE_LOG(LogTemp, Warning, TEXT("[ARExport-Diag] Comp=%s Mesh=%s Slot=%d MatOrigin=%s Mat=%s (Class=%s Parent=%s) -> PBR: RGB=(%.3f, %.3f, %.3f) Metal=%.2f Rough=%.2f Alpha=%s(%.2f) Tex=%s"),
-                *CompName, *Mesh->GetName(), MatSlotIndex, *MatOrigin,
-                SlotMat ? *SlotMat->GetName() : TEXT("<null>"),
-                SlotMat ? *SlotMat->GetClass()->GetName() : TEXT("<null>"),
-                *ParentName,
-                PBR.BaseColor.R, PBR.BaseColor.G, PBR.BaseColor.B, PBR.Metallic, PBR.Roughness,
-                *PBR.AlphaMode, PBR.BaseColor.A,
-                PBR.BaseColorTexture ? *PBR.BaseColorTexture->GetName() : TEXT("<none>"));
-
-            // ── 3. Build GLB Primitive ───────────────────────────────────────
-            FGLBPrimitive Prim;
-            Prim.MeshName = FString::Printf(TEXT("%s_Slot%d"), *CompName, MatSlotIndex);
-            Prim.BaseColor = PBR.BaseColor;
-            Prim.Metallic = PBR.Metallic;
-            Prim.Roughness = PBR.Roughness;
-            Prim.AlphaMode = PBR.AlphaMode;
-            Prim.AlphaCutoff = PBR.AlphaCutoff;
-            // The UE->glTF axis conversion below flips triangle winding, so single-sided
-            // materials would render inside-out (culled faces) in glTF viewers. Keep all
-            // primitives double-sided until winding is reversed during export.
-            Prim.bDoubleSided = true;
-
-            UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] %s: mat=%s rgb=(%.3f, %.3f, %.3f) metal=%.2f rough=%.2f tex=%s normal=%s"),
-                *Prim.MeshName, SlotMat ? *SlotMat->GetName() : TEXT("<none>"),
-                Prim.BaseColor.R, Prim.BaseColor.G, Prim.BaseColor.B, Prim.Metallic, Prim.Roughness,
-                PBR.BaseColorTexture ? *PBR.BaseColorTexture->GetName() : TEXT("<none>"),
-                PBR.NormalTexture ? *PBR.NormalTexture->GetName() : TEXT("<none>"));
-
-            // Embed Baked BaseColor Texture (if present)
-            if (PBR.BaseColorTexture)
-            {
-                // Check if mesh section uses tiled UVs (coordinates outside [0.0, 1.0])
-                bool bHasTiledUVs = false;
-                for (uint32 Idx = 0; Idx < IndexCount; ++Idx)
-                {
-                    const uint32 VertexIndex = AllIndices[FirstIndex + Idx];
-                    const FVector2f UV = VertBuffer.GetVertexUV(VertexIndex, 0);
-                    if (UV.X < -0.05f || UV.X > 1.05f || UV.Y < -0.05f || UV.Y > 1.05f)
-                    {
-                        bHasTiledUVs = true;
-                        break;
-                    }
-                }
-
-                TArray<uint8> UVCoverageMask;
-                const TArray<uint8>* MaskPtr = nullptr;
-
-                if (!bHasTiledUVs)
-                {
-                    const int32 TexW = PBR.BaseColorTexture->GetSizeX();
-                    const int32 TexH = PBR.BaseColorTexture->GetSizeY();
-                    BuildMeshUVCoverageMask(VertBuffer, AllIndices, FirstIndex, IndexCount, PBR.UVTransform, TexW, TexH, UVCoverageMask);
-                    MaskPtr = &UVCoverageMask;
-                }
-
-                const FString TexKey = FString::Printf(TEXT("%s_Baked_%s_Sec%d"), *PBR.BaseColorTexture->GetPathName(), *PBR.BaseColor.ToString(), SectionIdx);
-                Prim.BaseColorTextureKey = TexKey;
-
-                if (TArray<uint8>* CachedPNG = TextureCache.Find(TexKey))
-                {
-                    Prim.BaseColorTexturePNG = *CachedPNG;
-                    Prim.BaseColor = FLinearColor::White;
-                }
-                else
-                {
-                    TArray<uint8> PNGBytes;
-                    if (BakeTextureWithTintPNG(PBR.BaseColorTexture, PBR.BaseColor, PNGBytes, MaskPtr) && PNGBytes.Num() > 0)
-                    {
-                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Baked BaseColor texture %s (%d bytes) for %s"), *TexKey, PNGBytes.Num(), *Prim.MeshName);
-                        TextureCache.Add(TexKey, PNGBytes);
-                        Prim.BaseColorTexturePNG = MoveTemp(PNGBytes);
-                        Prim.BaseColor = FLinearColor::White;
-                    }
-                }
-            }
-
-            // Embed Normal Texture (if present)
-            if (PBR.NormalTexture)
-            {
-                const FString TexPath = PBR.NormalTexture->GetPathName();
-                Prim.NormalTextureKey = TexPath;
-
-                if (TArray<uint8>* CachedPNG = TextureCache.Find(TexPath))
-                {
-                    Prim.NormalTexturePNG = *CachedPNG;
-                }
-                else
-                {
-                    TArray<uint8> PNGBytes;
-                    if (ExtractTexturePNG(PBR.NormalTexture, PNGBytes, /*bFlipGreenChannel=*/true) && PNGBytes.Num() > 0)
-                    {
-                        UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Embedded Normal texture %s (%d bytes) for %s"), *TexPath, PNGBytes.Num(), *Prim.MeshName);
-                        TextureCache.Add(TexPath, PNGBytes);
-                        Prim.NormalTexturePNG = MoveTemp(PNGBytes);
-                    }
-                }
-            }
-
-            TMap<uint32, uint32> OldToNewIndexMap;
-            const uint32 EndIndex = FMath::Min(FirstIndex + IndexCount, (uint32)AllIndices.Num());
-
-            for (uint32 idx = FirstIndex; idx < EndIndex; ++idx)
-            {
-                const uint32 OldVertIdx = AllIndices[idx];
-                uint32 NewVertIdx = 0;
-
-                if (const uint32* Found = OldToNewIndexMap.Find(OldVertIdx))
-                {
-                    NewVertIdx = *Found;
-                }
-                else
-                {
-                    NewVertIdx = Prim.Vertices.Num();
-                    OldToNewIndexMap.Add(OldVertIdx, NewVertIdx);
-
-                    const FVector3f RawPos = PosBuffer.VertexPosition(OldVertIdx);
-                    const FVector LocalPos = ComponentToBoothTransform.TransformPosition(FVector(RawPos));
-
-                    FGLBVertex V;
-                    V.Position.X = static_cast<float>(LocalPos.Y * 0.01);
-                    V.Position.Y = static_cast<float>(LocalPos.Z * 0.01);
-                    V.Position.Z = static_cast<float>(LocalPos.X * 0.01);
-
-                    const FVector3f RawNormal = VertBuffer.VertexTangentZ(OldVertIdx);
-                    const FVector LocalNormal = ComponentToBoothTransform.TransformVector(FVector(RawNormal)).GetSafeNormal();
-                    V.Normal.X = static_cast<float>(LocalNormal.Y);
-                    V.Normal.Y = static_cast<float>(LocalNormal.Z);
-                    V.Normal.Z = static_cast<float>(LocalNormal.X);
-
-                    if (VertBuffer.GetNumTexCoords() > 0)
-                    {
-                        const FVector2f RawUV = VertBuffer.GetVertexUV(OldVertIdx, 0);
-                        V.UV = PBR.UVTransform.TransformUV(RawUV);
-                    }
-                    else
-                    {
-                        V.UV = FVector2f::ZeroVector;
-                    }
-
-                    Prim.Vertices.Add(V);
-                }
-
-                Prim.Indices.Add(NewVertIdx);
-            }
-
-            if (Prim.Vertices.Num() > 0 && Prim.Indices.Num() > 0)
-            {
-                Primitives.Add(MoveTemp(Prim));
-            }
-        }
-    }
-
-    if (Primitives.Num() == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[ARExportSubsystem] No primitives extracted from booth."));
-        OnFinished.ExecuteIfBound(false, TEXT(""), TEXT(""), nullptr);
-        return;
-    }
-
-    // Determine destination path in Saved/AR_Exports/
+    // ── 1. Destination path & WebAR URL (unchanged delivery layer) ───────────
     const FString ExportsDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("AR_Exports"));
     IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
     if (!PlatformFile.DirectoryExists(*ExportsDir))
@@ -1000,39 +221,154 @@ void UARExportSubsystem::ExportBoothToAR(AShowroomBooth* TargetBooth, FOnARExpor
         PlatformFile.CreateDirectoryTree(*ExportsDir);
     }
 
-    const FString ProductID = TargetBooth->ActiveState.ProductID.ToString();
+    const AShowroomBooth* AsBooth = Cast<AShowroomBooth>(TargetActor);
+    const FString ExportLabel = AsBooth ? AsBooth->ActiveState.ProductID.ToString() : TargetActor->GetName();
     const FString Timestamp = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
-    const FString FileName = FString::Printf(TEXT("export_%s_%s.glb"), *ProductID, *Timestamp);
+    const FString FileName = FString::Printf(TEXT("export_%s_%s.glb"), *ExportLabel, *Timestamp);
     const FString FullFilePath = FPaths::Combine(ExportsDir, FileName);
 
-    // Compute the WebAR viewer URL that loads this exact export
     const FString LocalIP = GetLocalHostIPAddress();
     const FString DirectModelURL = FString::Printf(TEXT("http://%s:%d/index.html?model=%s"), *LocalIP, LocalServerPort, *FileName);
 
-    // ── 4. Run Heavy GLB Serialization on Background Worker Thread ───────────
-    Async(EAsyncExecution::ThreadPool, [Primitives = MoveTemp(Primitives), FullFilePath, DirectModelURL, OnFinished]()
+    // ── 2a. Make the actor exportable: the official exporter skips meshes on
+    //        HiddenInGame actors/components (GLTFNodeConverters.cpp), but it does
+    //        NOT check per-component visibility. Temporarily lift actor-level
+    //        hiding (e.g. the booth is hidden while ViewMode shows its preview
+    //        copy) and mirror "not visible" components to HiddenInGame so the GLB
+    //        contains exactly what is currently displayed. All restored below;
+    //        the export is synchronous, so nothing renders in between.
+    const bool bWasActorHidden = TargetActor->IsHidden();
+    if (bWasActorHidden)
     {
-        TArray<uint8> GLBData;
-        const bool bSerializeSuccess = FSimpleGLBWriter::SerializeToGLB(Primitives, GLBData);
+        TargetActor->SetActorHiddenInGame(false);
+    }
 
-        bool bWriteSuccess = false;
-        if (bSerializeSuccess && GLBData.Num() > 0)
+    TArray<UStaticMeshComponent*> HiddenMirrorComps;
+
+    // ── 2b. Bridge runtime MIDs to their glTF family proxies ─────────────────
+    struct FSlotRestore
+    {
+        UStaticMeshComponent* Comp;
+        int32 SlotIndex;
+        UMaterialInterface* Original;
+    };
+    TArray<FSlotRestore> SlotRestores;
+
+    TArray<UStaticMeshComponent*> MeshComponents;
+    TargetActor->GetComponents<UStaticMeshComponent>(MeshComponents);
+    for (UStaticMeshComponent* Comp : MeshComponents)
+    {
+        if (!Comp || !Comp->GetStaticMesh())
         {
-            bWriteSuccess = FFileHelper::SaveArrayToFile(GLBData, *FullFilePath);
-            UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Successfully wrote GLB (%d bytes) to %s"), GLBData.Num(), *FullFilePath);
+            continue;
         }
-
-        // ── 5. Dispatch Back to Game Thread for QR Texture & UI Callback ─────
-        AsyncTask(ENamedThreads::GameThread, [bWriteSuccess, FullFilePath, DirectModelURL, OnFinished]()
+        // Selected-object export: everything outside the requested component set is
+        // treated like an invisible component (excluded, restored after export).
+        const bool bFilteredOut = OnlyComponents && OnlyComponents->Num() > 0 && !OnlyComponents->Contains(Comp);
+        if (!Comp->IsVisible() || bFilteredOut)
         {
-            UTexture2D* QRTexture = nullptr;
-            if (bWriteSuccess)
+            if (!Comp->bHiddenInGame)
             {
-                // Encode the direct model URL so a scan opens this exact export
-                QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(DirectModelURL, 512, 8);
+                Comp->SetHiddenInGame(true);
+                HiddenMirrorComps.Add(Comp);
             }
+            continue;
+        }
+        for (int32 SlotIndex = 0; SlotIndex < Comp->GetNumMaterials(); ++SlotIndex)
+        {
+            if (UMaterialInstanceDynamic* RuntimeMID = Cast<UMaterialInstanceDynamic>(Comp->GetMaterial(SlotIndex)))
+            {
+                if (UMaterialInstanceDynamic* Bridge = CreateProxyBridgeForRuntimeMID(RuntimeMID, Comp))
+                {
+                    SlotRestores.Add({ Comp, SlotIndex, RuntimeMID });
+                    Comp->SetMaterial(SlotIndex, Bridge);
+                    UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] %s slot %d: runtime MID bridged to proxy of %s"),
+                        *Comp->GetName(), SlotIndex, *RuntimeMID->Parent->GetName());
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] %s slot %d: runtime MID has no proxy association - exporter will handle it directly"),
+                        *Comp->GetName(), SlotIndex);
+                }
+            }
+        }
+    }
 
-            OnFinished.ExecuteIfBound(bWriteSuccess, FullFilePath, DirectModelURL, QRTexture);
-        });
-    });
+    // ── 2c. ViewMode only: neutralize the preview's interactive MeshRoot pose.
+    //       RotatePreview bakes the user's yaw/pitch and an orbital offset into the
+    //       MeshRoot CHILD component, which actor-level relocation cannot undo —
+    //       without this, the GLB inherits whatever tilt the preview showed at
+    //       export time. Computed in relative space (while the actor still sits at
+    //       its original transform) so it composes correctly with the origin move.
+    USceneComponent* PreviewMeshRoot = nullptr;
+    FTransform SavedMeshRootRelative;
+    if (AFurniturePreviewActor* Preview = Cast<AFurniturePreviewActor>(TargetActor))
+    {
+        FVector ResetLoc;
+        FQuat ResetQuat;
+        if (IsValid(Preview->MeshRoot) && Preview->GetMeshRootResetState(ResetLoc, ResetQuat))
+        {
+            PreviewMeshRoot = Preview->MeshRoot;
+            SavedMeshRootRelative = PreviewMeshRoot->GetRelativeTransform();
+            const FTransform NeutralRelative = FTransform(ResetQuat, ResetLoc).GetRelativeTransform(TargetActor->GetActorTransform());
+            PreviewMeshRoot->SetRelativeLocationAndRotation(NeutralRelative.GetLocation(), NeutralRelative.GetRotation());
+            UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] ViewMode export: preview MeshRoot pose neutralized for export."));
+        }
+    }
+
+    // ── 3. Export at the origin for a clean AR anchor (restored below; the ────
+    //      export is synchronous, so no frame renders the moved actor).
+    const FTransform OriginalTransform = TargetActor->GetActorTransform();
+    TargetActor->SetActorLocationAndRotation(FVector::ZeroVector, FQuat::Identity, false, nullptr, ETeleportType::TeleportPhysics);
+
+    // ── 4. Official Epic glTF export of the target actor ─────────────────────
+    UGLTFExportOptions* Options = NewObject<UGLTFExportOptions>();
+    Options->ResetToDefault();
+    Options->BakeMaterialInputs = EGLTFMaterialBakeMode::UseMeshData;
+    Options->TextureImageFormat = EGLTFTextureImageFormat::PNG;
+    Options->bExportLights = false;  // preview studio lights must not ride into the GLB
+    Options->bExportCameras = false;
+
+    FGLTFExportMessages Messages;
+    TSet<AActor*> SelectedActors;
+    SelectedActors.Add(TargetActor);
+
+    const double StartTime = FPlatformTime::Seconds();
+    const bool bSuccess = UGLTFExporter::ExportToGLTF(TargetActor->GetWorld(), FullFilePath, Options, SelectedActors, Messages);
+    const double Elapsed = FPlatformTime::Seconds() - StartTime;
+
+    for (const FString& Msg : Messages.Errors)      { UE_LOG(LogTemp, Error,   TEXT("[ARExportSubsystem] Export error: %s"), *Msg); }
+    for (const FString& Msg : Messages.Warnings)    { UE_LOG(LogTemp, Warning, TEXT("[ARExportSubsystem] Export warning: %s"), *Msg); }
+    for (const FString& Msg : Messages.Suggestions) { UE_LOG(LogTemp, Log,     TEXT("[ARExportSubsystem] Export suggestion: %s"), *Msg); }
+
+    // ── 5. Restore transform, hidden states, and original slot materials ─────
+    TargetActor->SetActorTransform(OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
+    if (PreviewMeshRoot)
+    {
+        PreviewMeshRoot->SetRelativeLocationAndRotation(SavedMeshRootRelative.GetLocation(), SavedMeshRootRelative.GetRotation());
+    }
+    if (bWasActorHidden)
+    {
+        TargetActor->SetActorHiddenInGame(true);
+    }
+    for (UStaticMeshComponent* Comp : HiddenMirrorComps)
+    {
+        Comp->SetHiddenInGame(false);
+    }
+    for (const FSlotRestore& Restore : SlotRestores)
+    {
+        Restore.Comp->SetMaterial(Restore.SlotIndex, Restore.Original);
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[ARExportSubsystem] Official glTF export %s (%.1fs) -> %s"),
+        bSuccess ? TEXT("succeeded") : TEXT("FAILED"), Elapsed, *FullFilePath);
+
+    // ── 6. QR code & UI callback (unchanged delivery layer) ──────────────────
+    UTexture2D* QRTexture = nullptr;
+    if (bSuccess)
+    {
+        QRTexture = FQRCodeTextureHelper::GenerateQRCodeTexture(DirectModelURL, 512, 8);
+    }
+
+    OnFinished.ExecuteIfBound(bSuccess, FullFilePath, DirectModelURL, QRTexture);
 }

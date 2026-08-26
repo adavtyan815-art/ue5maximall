@@ -299,7 +299,7 @@ void QrCode::drawFinderPattern(int x, int y) {
 			int dist = FMath::Max(FMath::Abs(dx - 3), FMath::Abs(dy - 3));
 			int xx = x + dx, yy = y + dy;
 			if (xx >= 0 && xx < size && yy >= 0 && yy < size)
-				setFunctionModule(xx, yy, dist == 0 || dist == 2 || dist == 3);
+				setFunctionModule(xx, yy, dist != 2 && dist != 4);
 		}
 	}
 }
