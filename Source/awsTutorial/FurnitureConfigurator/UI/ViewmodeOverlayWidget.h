@@ -24,8 +24,20 @@ protected:
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Btn_Back;
 
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> Btn_ARExport;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> BtnARExport;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Classes")
+    TSubclassOf<UUserWidget> ARExportModalClass;
+
     UFUNCTION()
     void OnBackClicked();
+
+    UFUNCTION()
+    void OnARExportClicked();
 
 private:
     UPROPERTY()

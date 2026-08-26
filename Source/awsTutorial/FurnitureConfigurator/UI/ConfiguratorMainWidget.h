@@ -76,6 +76,22 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UButton> BtnCinematicTour;
 
+    // ── AR export UI (Выбрано / Посмотреть в AR / Вся сцена в AR) ──────────
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> Txt_SelectedMeshName;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UTextBlock> Txt_ARSelectedMeshName;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> Btn_ARSelected;
+
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> Btn_ARFullScene;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Classes")
+    TSubclassOf<UUserWidget> ARExportModalClass;
+
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UButton> Txt_BtnURL;
 
@@ -107,6 +123,18 @@ protected:
 
     UFUNCTION()
     void OnCinematicTourButtonClicked();
+
+    UFUNCTION()
+    void OnARSelectedClicked();
+
+    UFUNCTION()
+    void OnARFullSceneClicked();
+
+    /** Refreshes Txt_SelectedMeshName / Txt_ARSelectedMeshName with the Russian logical name of ActiveComponent. */
+    void UpdateSelectedObjectNameUI();
+
+    /** Creates and shows WBP_ARExportModal (property, then asset fallback) and returns it. */
+    class UARExportModalWidget* OpenARExportModal();
 
     UFUNCTION()
     void HandleColorSelected(FLinearColor SelectedColor, UMaterialInterface* OverrideMaterial);

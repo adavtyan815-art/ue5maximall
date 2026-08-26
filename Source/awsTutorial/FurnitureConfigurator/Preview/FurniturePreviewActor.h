@@ -186,6 +186,18 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<USceneComponent> MeshRoot;
 
+    /**
+     * AR export support: MeshRoot's neutral (reset) world state captured at preview
+     * start — the same values ResetRotation() restores. Returns false when no
+     * WorldInPlace state has been captured yet (nothing to neutralize).
+     */
+    bool GetMeshRootResetState(FVector& OutLocation, FQuat& OutRotation) const
+    {
+        OutLocation = WIP_MeshRootLocAtReset;
+        OutRotation = WIP_InitialMeshRootQuat;
+        return !WIP_MeshRootLocAtReset.IsNearlyZero();
+    }
+
     UPROPERTY(BlueprintReadOnly, Category = "Components")
     TObjectPtr<UStaticMeshComponent> CabinetMesh;
 
