@@ -540,7 +540,7 @@ namespace
     // proxy's resolved values onto it, then overrides Base Color Factor with the
     // runtime-selected catalog color. No per-color or per-family logic involved.
     // ─────────────────────────────────────────────────────────────────────────
-    void CopyProxyParamsToBridgeMID(const UMaterialInterface* FamilyProxy, UMaterialInstanceDynamic* MID)
+    void ProtoCopyProxyParamsToBridgeMID(const UMaterialInterface* FamilyProxy, UMaterialInstanceDynamic* MID)
     {
         static const TCHAR* ScalarParams[] = {
             TEXT("Metallic Factor"), TEXT("Roughness Factor"), TEXT("Emissive Strength"),
@@ -601,7 +601,7 @@ namespace
             return nullptr;
         }
         UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(FamilyProxy->GetMaterial(), Outer);
-        CopyProxyParamsToBridgeMID(FamilyProxy, MID);
+        ProtoCopyProxyParamsToBridgeMID(FamilyProxy, MID);
         MID->SetVectorParameterValue(FName(TEXT("Base Color Factor")), CatalogColor);
         return MID;
     }
