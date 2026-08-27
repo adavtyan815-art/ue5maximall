@@ -17,7 +17,15 @@ void URoomPlannerWidget::NativeConstruct()
 
 	// ── RELOCATE CHARACTER TO PLANNER AREA VIA SERVER RPC ────────────────
 	AAwsTutorial_PlayerController* PC = GetPreviewController();
-	APawn* Pawn = PC ? PC->GetPawn() : GetOwningPlayerPawn();
+	APawn* Pawn = nullptr;
+	if (PC)
+	{
+		Pawn = PC->GetPawn();
+	}
+	else
+	{
+		Pawn = GetOwningPlayerPawn();
+	}
 	ACharacter* CharPawn = Cast<ACharacter>(Pawn);
 
 	if (CharPawn)

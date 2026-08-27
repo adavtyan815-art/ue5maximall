@@ -9,6 +9,7 @@
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
 #include "Engine/World.h"
+#include "Engine/OverlapResult.h"
 #include "TimerManager.h"
 #include "Camera/CameraComponent.h"
 #include "Components/PrimitiveComponent.h"
