@@ -1,4 +1,4 @@
-﻿// Copyright 2026 MaxiMall. All Rights Reserved.
+// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #pragma once
 
@@ -256,9 +256,6 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<AProceduralWallActor> PreviewWallActor;
-
-	UPROPERTY()
-	TObjectPtr<ACameraActor> TopDownCameraActor;
 
 	void ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FVector2D>& OutStartLeftOffsets,
 	                               TMap<int32, FVector2D>& OutStartRightOffsets,

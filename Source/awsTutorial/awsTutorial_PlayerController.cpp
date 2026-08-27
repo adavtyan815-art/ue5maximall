@@ -3,6 +3,8 @@
 
 #include <Net/Core/Connection/NetCloseResult.h>
 #include "GameFramework/GameUserSettings.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/Engine.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
@@ -1844,6 +1846,32 @@ void AAwsTutorial_PlayerController::OnPixelStreamingInput(const FString& Descrip
 
 
 
+void AAwsTutorial_PlayerController::SendPixelStreamingResponse(const FString& Payload)
+{
+    if (UPixelStreamingInput* TargetInput = PixelStreamingInput.Get())
+    {
+        TargetInput->SendPixelStreamingResponse(Payload);
+    }
+#if WITH_ENGINE
+    if (IPixelStreamingModule::IsAvailable())
+    {
+        IPixelStreamingModule& PSModule = IPixelStreamingModule::Get();
+        const FPixelStreamingInputMessage* ResponseMsg = FPixelStreamingInputProtocol::FromStreamerProtocol.Find(TEXT("Response"));
+        if (ResponseMsg)
+        {
+            const uint8 ResponseTypeId = ResponseMsg->GetID();
+            PSModule.ForEachStreamer([ResponseTypeId, &Payload](TSharedPtr<IPixelStreamingStreamer> Streamer)
+            {
+                if (Streamer.IsValid())
+                {
+                    Streamer->SendPlayerMessage(ResponseTypeId, Payload);
+                }
+            });
+        }
+    }
+#endif
+}
+
 void AAwsTutorial_PlayerController::SendOpenURLToBrowser(const FString& URL)
 {
     // FIX 2: ActivePixelStreamingInput removed вЂ” use single cached PixelStreamingInput.
@@ -1889,6 +1917,205 @@ void AAwsTutorial_PlayerController::SelectComponent(UPrimitiveComponent* Compone
 UPrimitiveComponent* AAwsTutorial_PlayerController::GetSelectedComponent() const
 {
     return SelectedComponent.Get();
+}
+
+FVector AAwsTutorial_PlayerController::FindNonOverlappingPlannerSpot(UWorld* World, AActor* IgnoreActor, const FVector& BaseLocation)
+{
+	if (!World) return BaseLocation;
+
+	const float CapsuleRadius = 45.0f;
+	const float CapsuleHalfHeight = 92.0f;
+	FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(CapsuleRadius, CapsuleHalfHeight);
+
+	FCollisionObjectQueryParams ObjectQueryParams;
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_Pawn);
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldStatic);
+
+	FCollisionQueryParams QueryParams(TEXT("PlannerSpawnOverlapCheck"), false, IgnoreActor);
+	if (IgnoreActor)
+	{
+		QueryParams.AddIgnoredActor(IgnoreActor);
+	}
+
+	auto IsLocationFree = [&](const FVector& TestPos) -> bool
+	{
+		FVector CenterPos = TestPos + FVector(0.0f, 0.0f, CapsuleHalfHeight);
+		TArray<FOverlapResult> Overlaps;
+		bool bHit = World->OverlapMultiByObjectType(Overlaps, CenterPos, FQuat::Identity, ObjectQueryParams, CapsuleShape, QueryParams);
+		if (!bHit)
+		{
+			return true;
+		}
+
+		for (const FOverlapResult& Res : Overlaps)
+		{
+			AActor* HitActor = Res.GetActor();
+			if (HitActor && HitActor != IgnoreActor)
+			{
+				return false;
+			}
+		}
+		return true;
+	};
+
+	// 1. Check if BaseLocation itself is free
+	if (IsLocationFree(BaseLocation))
+	{
+		return BaseLocation;
+	}
+
+	// 2. Search outward in concentric rings around BaseLocation
+	const float Radii[] = { 120.0f, 200.0f, 300.0f, 400.0f, 550.0f, 700.0f };
+	const int32 NumAnglesPerRing = 12;
+
+	for (float Radius : Radii)
+	{
+		for (int32 i = 0; i < NumAnglesPerRing; ++i)
+		{
+			float AngleRad = FMath::DegreesToRadians(i * (360.0f / NumAnglesPerRing));
+			FVector CandidateLoc = BaseLocation + FVector(FMath::Cos(AngleRad) * Radius, FMath::Sin(AngleRad) * Radius, 0.0f);
+
+			if (IsLocationFree(CandidateLoc))
+			{
+				return CandidateLoc;
+			}
+		}
+	}
+
+	return BaseLocation;
+}
+
+void AAwsTutorial_PlayerController::Server_EnterRoomPlanner_Implementation(FVector RelocationLocation)
+{
+	// 1. Ensure ARoomPlannerManager exists on the server with authority
+	ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+
+	// 2. Authoritatively teleport character pawn on the server to a non-overlapping spot
+	if (APawn* CurrentPawn = GetPawn())
+	{
+		FVector SafeLocation = FindNonOverlappingPlannerSpot(GetWorld(), CurrentPawn, RelocationLocation);
+
+		if (ACharacter* Char = Cast<ACharacter>(CurrentPawn))
+		{
+			if (UCharacterMovementComponent* MoveComp = Char->GetCharacterMovement())
+			{
+				MoveComp->StopMovementImmediately();
+				MoveComp->SetMovementMode(EMovementMode::MOVE_Walking);
+			}
+		}
+		CurrentPawn->TeleportTo(SafeLocation, FRotator::ZeroRotator, false, true);
+	}
+}
+
+bool AAwsTutorial_PlayerController::Server_EnterRoomPlanner_Validate(FVector RelocationLocation)
+{
+	return true;
+}
+
+void AAwsTutorial_PlayerController::Server_ExitRoomPlanner_Implementation(FVector TargetLocation, FRotator TargetRotation)
+{
+	if (APawn* CurrentPawn = GetPawn())
+	{
+		CurrentPawn->TeleportTo(TargetLocation, TargetRotation, false, true);
+		if (ACharacter* Char = Cast<ACharacter>(CurrentPawn))
+		{
+			if (UCharacterMovementComponent* MoveComp = Char->GetCharacterMovement())
+			{
+				MoveComp->SetMovementMode(EMovementMode::MOVE_Walking);
+				MoveComp->StopMovementImmediately();
+			}
+		}
+	}
+}
+
+bool AAwsTutorial_PlayerController::Server_ExitRoomPlanner_Validate(FVector TargetLocation, FRotator TargetRotation)
+{
+	return true;
+}
+
+void AAwsTutorial_PlayerController::SetRoomPlannerCamera2D(bool bIn2D, FVector CenterLocation)
+{
+	if (!IsLocalController()) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	if (bIn2D)
+	{
+		SavedControlRotation = GetControlRotation();
+		SetControlRotation(FRotator(0.f, 0.f, 0.f));
+		SetIgnoreLookInput(true);
+
+		if (!RoomPlannerTopDownCamera)
+		{
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.Owner = this;
+			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			FVector CamLoc(CenterLocation.X, CenterLocation.Y, 1600.f);
+			FRotator CamRot(-90.f, 0.f, 0.f);
+			RoomPlannerTopDownCamera = World->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), CamLoc, CamRot, SpawnParams);
+			if (RoomPlannerTopDownCamera)
+			{
+				if (UCameraComponent* CamComp = RoomPlannerTopDownCamera->GetCameraComponent())
+				{
+					CamComp->bConstrainAspectRatio = false;
+					CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
+					CamComp->OrthoWidth = 2500.f;
+					CamComp->OrthoNearClipPlane = -5000.f;
+					CamComp->OrthoFarClipPlane = 20000.f;
+				}
+			}
+		}
+
+		if (RoomPlannerTopDownCamera)
+		{
+			FVector CamLoc(CenterLocation.X, CenterLocation.Y, 1600.f);
+			RoomPlannerTopDownCamera->SetActorLocation(CamLoc);
+			RoomPlannerTopDownCamera->SetActorRotation(FRotator(-90.f, 0.f, 0.f));
+			SetViewTargetWithBlend(RoomPlannerTopDownCamera, 0.3f);
+		}
+
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(InputMode);
+		bShowMouseCursor = true;
+	}
+	else
+	{
+		SetIgnoreLookInput(false);
+		SetControlRotation(SavedControlRotation);
+		if (APawn* ControlledPawn = GetPawn())
+		{
+			SetViewTargetWithBlend(ControlledPawn, 0.3f);
+		}
+
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(true);
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(InputMode);
+	}
+}
+
+void AAwsTutorial_PlayerController::RestorePlayerCamera()
+{
+	if (!IsLocalController()) return;
+
+	ResetIgnoreInputFlags();
+	SetIgnoreLookInput(false);
+	SetIgnoreMoveInput(false);
+	SetControlRotation(SavedControlRotation);
+	if (APawn* ControlledPawn = GetPawn())
+	{
+		SetViewTargetWithBlend(ControlledPawn, 0.0f);
+	}
+
+	if (RoomPlannerTopDownCamera)
+	{
+		RoomPlannerTopDownCamera->Destroy();
+		RoomPlannerTopDownCamera = nullptr;
+	}
 }
 
 void AAwsTutorial_PlayerController::Server_CommitWall_Implementation(FVector2D StartPos, FVector2D EndPos, float Thickness, float Height)

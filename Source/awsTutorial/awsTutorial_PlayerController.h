@@ -51,6 +51,21 @@ public:
 	void Kick();
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_EnterRoomPlanner(FVector RelocationLocation);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_ExitRoomPlanner(FVector TargetLocation, FRotator TargetRotation);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
+	void SetRoomPlannerCamera2D(bool bIn2D, FVector CenterLocation = FVector(-10000.f, 0.f, 0.f));
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
+	void RestorePlayerCamera();
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	static FVector FindNonOverlappingPlannerSpot(UWorld* World, AActor* IgnoreActor, const FVector& BaseLocation);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_CommitWall(FVector2D StartPos, FVector2D EndPos, float Thickness = 20.f, float Height = 280.f);
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
@@ -210,6 +225,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleRoomPlannerUI(bool bOpen);
 
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | PixelStreaming")
+    void SendPixelStreamingResponse(const FString& Payload);
+
     /** Starts a smooth 60 FPS cinematic studio auto-tour around the target booth. */
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
     void StartCinematicTour(AShowroomBooth* TargetBooth = nullptr);
@@ -259,6 +277,9 @@ protected:
 private:
     UPROPERTY()
     TObjectPtr<AFurniturePreviewActor> ActivePreviewActor;
+
+    UPROPERTY()
+    TObjectPtr<ACameraActor> RoomPlannerTopDownCamera;
 
     FRotator SavedControlRotation;
     FTransform CachedOriginalBoothTransform;
