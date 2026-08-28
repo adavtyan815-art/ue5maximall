@@ -9,6 +9,8 @@
 #include "Components/TextBlock.h"
 #include "Components/EditableTextBox.h"
 #include "Components/Image.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Kismet/GameplayStatics.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 
@@ -189,6 +191,7 @@ FReply URoomPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, 
 					{
 						bIsWidgetDrawingWall = true;
 						PlannerManager->StartInteractiveWallDraw(GroundPos);
+						UpdateMouseCursorPosition();
 						return FReply::Handled().CaptureMouse(TakeWidget());
 					}
 					else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Select)
@@ -232,6 +235,7 @@ FReply URoomPlannerWidget::NativeOnMouseMove(const FGeometry& InGeometry, const 
 					if (bIsWidgetDrawingWall && PlannerManager->ActiveToolMode == EPlannerToolMode::DrawWall)
 					{
 						PlannerManager->UpdateInteractiveWallDraw(GroundPos);
+						UpdateMouseCursorPosition();
 						return FReply::Handled();
 					}
 					else if (!bIsWidgetDrawingWall && PlannerManager->ActiveToolMode == EPlannerToolMode::DrawWall)
@@ -271,6 +275,11 @@ FReply URoomPlannerWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, co
 void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (bIsWidgetDrawingWall)
+	{
+		UpdateMouseCursorPosition();
+	}
 
 	if (!PlannerManager && GetWorld())
 	{
@@ -856,7 +865,10 @@ void URoomPlannerWidget::UpdateMouseCursorPosition()
 	{
 		mouse_cursor->SetVisibility(ESlateVisibility::HitTestInvisible);
 
-		if (APlayerController* PC = GetOwningPlayer())
+		APlayerController* PC = GetPreviewController();
+		if (!PC) PC = GetOwningPlayer();
+
+		if (PC)
 		{
 			FVector EndPointWorld = PlannerManager->GetDragCurrentPoint();
 			FVector2D ScreenPos;
@@ -867,7 +879,16 @@ void URoomPlannerWidget::UpdateMouseCursorPosition()
 				{
 					ScreenPos /= DPIScale;
 				}
-				mouse_cursor->SetRenderTranslation(ScreenPos);
+
+				if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(mouse_cursor->Slot))
+				{
+					CanvasSlot->SetPosition(ScreenPos);
+					mouse_cursor->SetRenderTranslation(FVector2D::ZeroVector);
+				}
+				else
+				{
+					mouse_cursor->SetRenderTranslation(ScreenPos);
+				}
 			}
 		}
 	}
