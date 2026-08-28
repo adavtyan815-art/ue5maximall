@@ -17,6 +17,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -717,6 +718,93 @@ void AFurniturePreviewActor::LoadProductPreview(const FFurnitureProductRow& Prod
         CopyMaterials(SinkMesh.Get(), SourceBooth->SinkMesh.Get());
         CopyMaterials(FaucetMesh.Get(), SourceBooth->FaucetMesh.Get());
         CopyMaterials(MirrorMesh.Get(), SourceBooth->MirrorMesh.Get());
+    }
+
+    // ── 6. ViewMode-only mirror glass override (MirrorMesh only) ──────────
+    // Runs AFTER the booth material copy so it wins over catalog/custom-color
+    // materials, and re-applies automatically on every product reload.
+    ApplyStudioMirrorGlass();
+}
+
+void AFurniturePreviewActor::ApplyStudioMirrorGlass()
+{
+    // Studio ViewMode only; the booth in the configurator flow is never touched
+    // (this actor exists only between Btn_Viewmode and Btn_Back).
+    if (!bStudioStageMode || !IsValid(StudioMirrorGlassMaterial) ||
+        !IsValid(MirrorMesh) || !IsValid(MirrorMesh->GetStaticMesh()))
+    {
+        return;
+    }
+
+    const int32 NumSlots = MirrorMesh->GetNumMaterials();
+    if (NumSlots <= 0)
+    {
+        return;
+    }
+
+    // A single-slot mirror mesh IS its glass (frameless mirrors), regardless of
+    // how its material happens to be named.
+    if (NumSlots == 1)
+    {
+        MirrorMesh->SetMaterial(0, StudioMirrorGlassMaterial);
+        return;
+    }
+
+    auto NameMatchesKeyword = [this](const FString& Name) -> bool
+    {
+        for (const FString& Keyword : StudioMirrorGlassKeywords)
+        {
+            if (!Keyword.IsEmpty() && Name.Contains(Keyword)) // case-insensitive
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const TArray<FStaticMaterial>& StaticMats = MirrorMesh->GetStaticMesh()->GetStaticMaterials();
+    bool bSwappedAny = false;
+    for (int32 Slot = 0; Slot < NumSlots; ++Slot)
+    {
+        // 1. The mesh's authored material slot name.
+        bool bIsGlass = StaticMats.IsValidIndex(Slot) &&
+                        NameMatchesKeyword(StaticMats[Slot].MaterialSlotName.ToString());
+
+        // 2. The assigned material's name, walking up the instance parent chain
+        //    (a runtime custom-color MID matches through its 'zerkalo' parent).
+        for (UMaterialInterface* Mat = MirrorMesh->GetMaterial(Slot); !bIsGlass && Mat; )
+        {
+            if (NameMatchesKeyword(Mat->GetName()))
+            {
+                bIsGlass = true;
+                break;
+            }
+            UMaterialInstance* AsInstance = Cast<UMaterialInstance>(Mat);
+            Mat = AsInstance ? AsInstance->Parent.Get() : nullptr;
+        }
+
+        if (bIsGlass)
+        {
+            MirrorMesh->SetMaterial(Slot, StudioMirrorGlassMaterial);
+            bSwappedAny = true;
+        }
+    }
+
+    if (!bSwappedAny)
+    {
+        // Safe no-op: never guess on a multi-slot mesh. The log lists the names
+        // so a new product only needs a keyword added in BP_FurniturePreviewActor.
+        FString SlotDump;
+        for (int32 Slot = 0; Slot < NumSlots; ++Slot)
+        {
+            SlotDump += FString::Printf(TEXT("[%d] slot='%s' mat='%s' "),
+                Slot,
+                StaticMats.IsValidIndex(Slot) ? *StaticMats[Slot].MaterialSlotName.ToString() : TEXT("?"),
+                *GetNameSafe(MirrorMesh->GetMaterial(Slot)));
+        }
+        UE_LOG(LogTemp, Warning,
+            TEXT("[PreviewActor] Studio mirror glass: no slot matched the keywords on '%s' — nothing swapped. Slots: %s"),
+            *GetNameSafe(MirrorMesh->GetStaticMesh()), *SlotDump);
     }
 }
 

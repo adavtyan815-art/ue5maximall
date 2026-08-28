@@ -29,6 +29,7 @@
 class UStaticMeshComponent;
 class USpringArmComponent;
 class UCameraComponent;
+class UMaterialInterface;
 class ACharacter;
 class AShowroomBooth;
 class AStudioStageActor;
@@ -180,6 +181,33 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config",
               meta = (DisplayName = "Entry View Pitch (deg)", ClampMin = "-60.0", ClampMax = "10.0"))
     float EntryPitchDegrees = -15.f;
+
+    // ── Studio mirror glass override (ViewMode-only, MirrorMesh-only) ──────
+    // A perfect mirror magnifies the reflection cubemap's content (the capture
+    // panels appear as hard white rectangles). While ViewMode is open, the
+    // MIRROR's glass slot is swapped to this soft-roughness material so the
+    // reflection reads as blurred studio sheen with no recognizable shapes.
+    // The swap lives and dies with this preview actor: the booth shown in the
+    // configurator flow is never touched, and closing ViewMode destroys the
+    // actor — no restore step exists or is needed.
+
+    /** Assign MI_StudioMirrorGlass here. Empty = feature off (no swap). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Studio Mirror",
+              meta = (DisplayName = "Studio Mirror Glass Material"))
+    TObjectPtr<UMaterialInterface> StudioMirrorGlassMaterial;
+
+    /**
+     * Slot-detection keywords (case-insensitive substrings). A MirrorMesh slot
+     * is treated as the glass when any keyword matches the mesh's material slot
+     * name, the assigned material's name, or any parent in its material-instance
+     * chain (so runtime custom-color MIDs match through their parent). A mirror
+     * mesh with exactly ONE slot is always treated as all-glass. Multi-slot
+     * meshes with no keyword match are left untouched (a warning log lists the
+     * slot/material names, so new products only need a keyword added here).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview Config | Studio Mirror",
+              meta = (DisplayName = "Mirror Glass Name Keywords"))
+    TArray<FString> StudioMirrorGlassKeywords = { TEXT("zerkalo"), TEXT("mirror"), TEXT("glass") };
 
     // ── Per-Component Configuration ────────────────────────────────────────
     // Entry framing yaw and exposure nudge per component type, set in the
@@ -429,6 +457,11 @@ private:
     // ── Private helpers ────────────────────────────────────────────────────
     FVector WIP_GetFocusPivotWorld() const;
     void    ConfigureMesh(UStaticMeshComponent* Comp) const;
+
+    /** Swaps MirrorMesh's glass slot(s) to StudioMirrorGlassMaterial using the
+        layered detection above. Studio-only; runs at the end of every
+        LoadProductPreview (so product swaps re-apply it automatically). */
+    void ApplyStudioMirrorGlass();
 
     void ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,
                                         const FFurnitureComponentOptions& Options,
