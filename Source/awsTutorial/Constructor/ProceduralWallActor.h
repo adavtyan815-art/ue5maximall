@@ -1,4 +1,4 @@
-﻿// Copyright 2026 MaxiMall. All Rights Reserved.
+// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #pragma once
 
@@ -47,6 +47,18 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
 	TArray<TObjectPtr<UProceduralMeshComponent>> OpeningHighlightMeshes;
+
+	/** The normal base material for the wall (defaults to standard white surface material). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wall|Materials")
+	TObjectPtr<UMaterialInterface> BaseWallMaterial;
+
+	/** The material applied to the wall ONLY when selected (defaults to M_WallSelection). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wall|Materials")
+	TObjectPtr<UMaterialInterface> WallSelectionMaterial;
+
+	/** The material applied to the opening highlight box ONLY when selected (defaults to M_OpeningSelection). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wall|Materials")
+	TObjectPtr<UMaterialInterface> OpeningSelectionMaterial;
 
 	UFUNCTION(BlueprintCallable, Category = "Wall")
 	void SetOpeningSelectedHighlight(int32 OpeningIndex, bool bSelected, int32 StencilValue = 2);

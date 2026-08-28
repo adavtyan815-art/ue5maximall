@@ -42,6 +42,7 @@ class UCameraComponent;
 class URectLightComponent;
 class ACharacter;
 class AShowroomBooth;
+class AStudioStageActor;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-Component Preview Configuration
@@ -393,6 +394,102 @@ public:
               meta = (DisplayName = "Zoom Preview"))
     void ZoomPreview(float DeltaZoom);
 
+    // ─────────────────────────────────────────────────────────────────────
+    // STUDIO STAGE MODE — faithful port of the approved StudioViewerTest
+    // presentation/interaction. Set by AAwsTutorial_PlayerController right
+    // after spawn, BEFORE LoadProductPreview.
+    //
+    // In studio mode the preview renders on the neutral Studio Stage instead
+    // of the real room, and the CAMERA orbits (per-channel eased, with fling
+    // inertia, pan, multiplicative zoom-to-cursor and an idle turntable) while
+    // the mesh stays still. Room-dependent machinery is skipped: level-light
+    // measurement, the channel-1 fill rig, stencil dim/custom depth, vignette,
+    // clearance relocation and the zoom wall-clamp trace. Product assembly,
+    // focus isolation, the public Rotate/Zoom/Reset API (PS + cinematic tour)
+    // and AR export behave exactly as before.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /** Enables studio mode and remembers the stage supplying lighting/backdrop/
+        camera recipe. Also excludes preview meshes from reflection captures so
+        the stage's environment capture never photographs the subject itself. */
+    void SetStudioStageMode(AStudioStageActor* InStage);
+
+    bool IsStudioStageMode() const { return bStudioStageMode; }
+
+    // Raw drag/wheel input (pixel deltas, Y up-positive), called by the
+    // ViewmodeOverlayWidget input layer. Desktop and Pixel Streaming mouse
+    // input both arrive through that widget via Slate.
+    void StudioOrbitDrag(float DeltaXPixels, float DeltaYPixelsUp);
+    void StudioPanDrag(float DeltaXPixels, float DeltaYPixelsUp);
+    void StudioZoom(float WheelNotches);
+    void StudioSetOrbiting(bool bOrbiting);
+    void StudioSetPanning(bool bPanning);
+
+    /** Per-frame studio update: easing, inertia, idle turntable.
+        Pumped every frame by the Studio Stage actor's Tick — a plain C++ ticker
+        that is independent of the BP_FurniturePreviewActor subclass's settings. */
+    void StudioTickUpdate(float DeltaSeconds);
+
+    /** Combined bounds of the product mesh components only (ignores markers,
+        empty slots and non-mesh components). Used to size the Studio Stage. */
+    bool GetStudioProductBounds(FVector& OutOrigin, float& OutRadius) const;
+
+    // ── Studio interaction tuning (values from the approved StudioViewerTest) ──
+
+    /** Orbit speed in degrees per screen pixel of drag. */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "0.05", UIMax = "1.5"))
+    float StudioOrbitDegPerPixel = 0.35f;
+
+    /** Fraction of the current distance zoomed per wheel notch (multiplicative). */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "0.05", UIMax = "0.5"))
+    float StudioZoomPerNotch = 0.25f;
+
+    /** Pan speed as a fraction of the current distance per pixel. */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "0.0005", UIMax = "0.01"))
+    float StudioPanPerPixel = 0.00175f;
+
+    /** Orbit/pan easing (higher = snappier; 0 = instant). */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "0", UIMax = "30"))
+    float StudioOrbitSmoothing = 14.f;
+
+    /** Zoom easing, deliberately snappier than orbit. */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "0", UIMax = "40"))
+    float StudioZoomSmoothing = 25.f;
+
+    /** Carry orbit momentum after releasing the drag (fling). */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio")
+    bool bStudioOrbitInertia = true;
+
+    /** How fast the fling dies out (per-second exponential decay). */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "0.5", UIMax = "12"))
+    float StudioInertiaDamping = 4.f;
+
+    /** Pan is clamped to this many focus bounding-sphere radii from center. */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "0.1", UIMax = "3"))
+    float StudioPanRangeFactor = 1.f;
+
+    /** Wheel zoom homes in on the point under the cursor. */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio")
+    bool bStudioZoomToCursor = true;
+
+    /** Turntable auto-rotate after a few seconds without input; any interaction stops it. */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio")
+    bool bStudioAutoRotate = true;
+
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "0.5", UIMax = "30"))
+    float StudioAutoRotateDelay = 5.f;
+
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "1", UIMax = "60"))
+    float StudioAutoRotateSpeedDegPerSec = 10.f;
+
+    /** Narrow product-viewer FOV (the web viewer uses ~30 deg). */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "20", UIMax = "90"))
+    float StudioCameraFOV = 32.f;
+
+    /** Framing padding at the entry distance (the web viewer opens at ~105%). */
+    UPROPERTY(EditAnywhere, Category = "Preview Config | Studio", meta = (UIMin = "1.0", UIMax = "2.5"))
+    float StudioFramingMargin = 1.1f;
+
 private:
 
     // ── Active zoom limits (set from the focused component's FPreviewComponentConfig) ──
@@ -424,6 +521,51 @@ private:
 
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> CurrentFocusedComponent;
+
+    // ── Studio mode state ─────────────────────────────────────────────────
+    bool bStudioStageMode = false;
+    TWeakObjectPtr<AStudioStageActor> StudioStage;
+
+    // Orbit targets (input writes these; the camera eases toward them).
+    float   StudioYaw = 0.f;
+    float   StudioPitch = 0.f;
+    float   StudioDist = 180.f;
+    FVector StudioPan = FVector::ZeroVector;
+
+    // Smoothed values actually applied to the SpringArm (per-channel easing).
+    float   StudioCurYaw = 0.f;
+    float   StudioCurPitch = 0.f;
+    float   StudioCurDist = 180.f;
+    FVector StudioCurPan = FVector::ZeroVector;
+
+    // Fling state (deg/s), fed while dragging, consumed after release.
+    float StudioYawVel = 0.f;
+    float StudioPitchVel = 0.f;
+    float StudioFrameYaw = 0.f;
+    float StudioFramePitch = 0.f;
+
+    float StudioIdleSeconds = 0.f;
+    float StudioFitDistance = 180.f;
+    float StudioMinDist = 30.f;
+    float StudioMaxDist = 400.f;
+    bool  bStudioOrbiting = false;
+    bool  bStudioPanning = false;
+
+    // NOTE: the orbit/pan pivot indicator is no longer a spawned 3D actor — the
+    // ViewmodeOverlayWidget shows its own Img_PivotMarker (screen center, where
+    // the pivot always projects) while RMB/MMB panning.
+
+    float ComputeStudioFitDistance() const;
+    void  ApplyStudioCameraTransform(bool bInstant);
+    void  ClampStudioPan();
+    void  SetupStudioFraming();
+    void  StudioNotifyInteraction() { StudioIdleSeconds = 0.f; }
+
+    // [StudioDiag] throttling counters — diagnostics only, no behavior.
+    int32 StudioDiagTickCount = 0;
+    int32 StudioDiagRotateCalls = 0;
+    int32 StudioDiagZoomCalls = 0;
+    int32 StudioDiagZoomPreviewCalls = 0;
 
     /** WorldInPlace pivot reference state for exact mesh-centered rotation. */
     FVector WIP_MeshPivotWorld      = FVector::ZeroVector;

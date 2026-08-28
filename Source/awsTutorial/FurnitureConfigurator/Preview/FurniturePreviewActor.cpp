@@ -2,7 +2,15 @@
 // FurniturePreviewActor.cpp
 
 #include "FurnitureConfigurator/Preview/FurniturePreviewActor.h"
+#include "FurnitureConfigurator/Preview/StudioStageActor.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
+
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "Engine/GameViewportClient.h"
+#include "UnrealClient.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
@@ -35,7 +43,9 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     // CRITICAL: Never replicate. Client-local only.
     bReplicates                   = false;
     bAlwaysRelevant               = false;
-    PrimaryActorTick.bCanEverTick = false; // Fully event-driven; nothing per-frame.
+    // Fully event-driven; nothing per-frame here. The Studio Stage actor ticks
+    // and pumps StudioTickUpdate for the studio camera orbit.
+    PrimaryActorTick.bCanEverTick = false;
 
     // ── Per-component zoom defaults ────────────────────────────────────────
     // These are the recommended starting values — designers override in the BP
@@ -167,6 +177,404 @@ void AFurniturePreviewActor::BeginPlay()
     {
         SpringArm->TargetArmLength = CurrentZoomLength;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STUDIO STAGE MODE — camera-orbit interaction ported from StudioViewerTest
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AFurniturePreviewActor::SetStudioStageMode(AStudioStageActor* InStage)
+{
+    bStudioStageMode = IsValid(InStage);
+    StudioStage = InStage;
+
+    if (!bStudioStageMode)
+    {
+        return;
+    }
+
+    // The stage ticks and pumps our per-frame studio update.
+    InStage->SetDrivenPreview(this);
+
+    // The stage's environment capture is taken from inside the product bounds;
+    // the subject must not photograph itself into its own environment.
+    UStaticMeshComponent* AllMeshes[] =
+    {
+        CabinetMesh.Get(), DoorMeshSlot0.Get(), DoorMeshSlot1.Get(),
+        CountertopMesh.Get(), SinkMesh.Get(), FaucetMesh.Get(), MirrorMesh.Get(),
+        ClosetMesh.Get(), ClosetDoorMeshSlot0.Get(), ClosetDoorMeshSlot1.Get()
+    };
+    for (UStaticMeshComponent* Comp : AllMeshes)
+    {
+        if (IsValid(Comp))
+        {
+            Comp->bVisibleInReflectionCaptures = false;
+            Comp->MarkRenderStateDirty();
+        }
+    }
+
+    // NOTE: no 3D pivot marker is spawned anymore — the ViewmodeOverlayWidget
+    // shows its Img_PivotMarker UI image (screen center) while panning.
+}
+
+bool AFurniturePreviewActor::GetStudioProductBounds(FVector& OutOrigin, float& OutRadius) const
+{
+    // Product mesh components only — GetActorBounds would also count markers and
+    // any other registered primitive, inflating the stage size.
+    const UStaticMeshComponent* AllMeshes[] =
+    {
+        CabinetMesh.Get(), DoorMeshSlot0.Get(), DoorMeshSlot1.Get(),
+        CountertopMesh.Get(), SinkMesh.Get(), FaucetMesh.Get(), MirrorMesh.Get(),
+        ClosetMesh.Get(), ClosetDoorMeshSlot0.Get(), ClosetDoorMeshSlot1.Get()
+    };
+
+    FBox Combined(ForceInit);
+    for (const UStaticMeshComponent* Comp : AllMeshes)
+    {
+        if (IsValid(Comp) && IsValid(Comp->GetStaticMesh()))
+        {
+            Combined += Comp->Bounds.GetBox();
+        }
+    }
+
+    if (!Combined.IsValid)
+    {
+        OutOrigin = GetActorLocation();
+        OutRadius = 100.f;
+        return false;
+    }
+
+    OutOrigin = Combined.GetCenter();
+    OutRadius = FMath::Max(static_cast<float>(Combined.GetExtent().Size()), 25.f);
+    return true;
+}
+
+float AFurniturePreviewActor::ComputeStudioFitDistance() const
+{
+    // Box-based, aspect-aware fit (ported): the focused mesh's worst-case
+    // horizontal footprint (any yaw) and its height must both fit the frustum.
+    FVector BoxExtent(100.f);
+    if (IsValid(CurrentFocusedComponent) && CurrentFocusedComponent->GetStaticMesh())
+    {
+        BoxExtent = CurrentFocusedComponent->Bounds.BoxExtent;
+    }
+    else
+    {
+        FVector Origin, Extent;
+        GetActorBounds(/*bOnlyCollidingComponents=*/false, Origin, Extent, /*bIncludeFromChildActors=*/false);
+        BoxExtent = Extent;
+    }
+
+    const float HalfHFOVRad = FMath::DegreesToRadians(FMath::Clamp(StudioCameraFOV, 5.f, 170.f) * 0.5f);
+
+    float Aspect = 16.f / 9.f;
+    // THIS world's viewport — in multi-client PIE, GEngine->GameViewport would
+    // be a different instance's window.
+    UGameViewportClient* ViewportClient = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+    if (ViewportClient && ViewportClient->Viewport)
+    {
+        const FIntPoint Size = ViewportClient->Viewport->GetSizeXY();
+        if (Size.X > 0 && Size.Y > 0)
+        {
+            Aspect = static_cast<float>(Size.X) / static_cast<float>(Size.Y);
+        }
+    }
+    // UE's FieldOfView is horizontal.
+    const float HalfVFOVRad = FMath::Atan(FMath::Tan(HalfHFOVRad) / FMath::Max(Aspect, 0.1f));
+
+    const float ExtX = static_cast<float>(BoxExtent.X);
+    const float ExtY = static_cast<float>(BoxExtent.Y);
+    const float HorizRadius = FMath::Max(FMath::Sqrt(ExtX * ExtX + ExtY * ExtY), 1.f);
+    const float VertRadius  = FMath::Max(static_cast<float>(BoxExtent.Z), 1.f);
+
+    const float DistH = HorizRadius / FMath::Max(FMath::Tan(HalfHFOVRad), 0.01f);
+    const float DistV = VertRadius  / FMath::Max(FMath::Tan(HalfVFOVRad), 0.01f);
+
+    return (FMath::Max(DistH, DistV) + 0.5f * HorizRadius) * FMath::Max(StudioFramingMargin, 1.f);
+}
+
+void AFurniturePreviewActor::SetupStudioFraming()
+{
+    StudioFitDistance = ComputeStudioFitDistance();
+    // Zoom range exactly as in StudioViewerTest: multiples of the auto-fit
+    // distance (MinZoomFactor 0.35, MaxZoomFactor 3.0) — NOT the legacy
+    // per-component cm limits, which are tuned for the WorldInPlace camera.
+    StudioMinDist = StudioFitDistance * 0.35f;
+    StudioMaxDist = StudioFitDistance * 3.0f;
+
+    StudioYaw   = WIP_InitialOrbitRot.Yaw;   // booth-relative entry view + per-component offset
+    StudioPitch = WIP_InitialOrbitRot.Pitch; // classic three-quarter tilt
+    StudioDist  = StudioFitDistance;
+    StudioPan   = FVector::ZeroVector;
+
+    StudioYawVel = StudioPitchVel = StudioFrameYaw = StudioFramePitch = 0.f;
+    StudioIdleSeconds = 0.f;
+
+    // The studio camera must sit EXACTLY on the arm boresight looking at the
+    // pivot, like the test's bare camera. Legacy/BP compositions may configure
+    // arm socket/target offsets or a camera-relative offset — a constant
+    // sideways offset is invisible on a cabinet at 4 m but pushes a faucet at
+    // 60 cm completely off-screen. Zero them all in studio mode (the preview
+    // actor is destroyed on close, legacy sessions are unaffected).
+    if (IsValid(SpringArm))
+    {
+        SpringArm->SocketOffset = FVector::ZeroVector;
+        SpringArm->TargetOffset = FVector::ZeroVector;
+        SpringArm->bEnableCameraLag = false;
+        SpringArm->bEnableCameraRotationLag = false;
+        SpringArm->bDoCollisionTest = false;
+        SpringArm->bUsePawnControlRotation = false;
+    }
+    if (IsValid(Camera))
+    {
+        Camera->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+        Camera->SetFieldOfView(StudioCameraFOV);
+    }
+
+    ApplyStudioCameraTransform(/*bInstant=*/true);
+    if (IsValid(SpringArm))
+    {
+        SpringArm->UpdateChildTransforms(); // camera lands on the boresight this frame
+    }
+
+    // [StudioDiag] full framing state dump: proves pivot, bounds source, fit
+    // math inputs, arm/camera transforms and any leftover offsets.
+    {
+        FVector DiagExtent(0.f);
+        FString DiagBoundsSource = TEXT("actorBounds");
+        if (IsValid(CurrentFocusedComponent) && CurrentFocusedComponent->GetStaticMesh())
+        {
+            DiagExtent = CurrentFocusedComponent->Bounds.BoxExtent;
+            DiagBoundsSource = CurrentFocusedComponent->GetName();
+        }
+        else
+        {
+            FVector DiagOrigin;
+            GetActorBounds(false, DiagOrigin, DiagExtent, false);
+        }
+
+        FIntPoint DiagViewport(0, 0);
+        UGameViewportClient* DiagVC = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+        if (DiagVC && DiagVC->Viewport)
+        {
+            DiagViewport = DiagVC->Viewport->GetSizeXY();
+        }
+
+        UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] Framing: pivot=%s boundsSrc=%s extent=%s fit=%.1f zoom=[%.1f..%.1f] entryYawPitch=(%.1f, %.1f) viewport=%dx%d fov=%.1f"),
+            *WIP_FocusPivotWorld.ToCompactString(), *DiagBoundsSource, *DiagExtent.ToCompactString(),
+            StudioFitDistance, StudioMinDist, StudioMaxDist, StudioYaw, StudioPitch,
+            DiagViewport.X, DiagViewport.Y, IsValid(Camera) ? Camera->FieldOfView : -1.f);
+
+        if (IsValid(SpringArm) && IsValid(Camera))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] Framing: armLoc=%s armRot=%s armLen=%.1f sockOff=%s targOff=%s camWorld=%s camRel=%s camRelRot=%s"),
+                *SpringArm->GetComponentLocation().ToCompactString(),
+                *SpringArm->GetComponentRotation().ToCompactString(),
+                SpringArm->TargetArmLength,
+                *SpringArm->SocketOffset.ToCompactString(),
+                *SpringArm->TargetOffset.ToCompactString(),
+                *Camera->GetComponentLocation().ToCompactString(),
+                *Camera->GetRelativeLocation().ToCompactString(),
+                *Camera->GetRelativeRotation().ToCompactString());
+        }
+    }
+}
+
+void AFurniturePreviewActor::ApplyStudioCameraTransform(bool bInstant)
+{
+    if (!IsValid(SpringArm))
+    {
+        return;
+    }
+
+    if (bInstant || StudioOrbitSmoothing <= 0.f)
+    {
+        StudioCurYaw = StudioYaw;
+        StudioCurPitch = StudioPitch;
+        StudioCurDist = StudioDist;
+        StudioCurPan = StudioPan;
+    }
+    else
+    {
+        const float Dt = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
+        // Orbit/pan share one easing; zoom gets its own, snappier one.
+        StudioCurYaw   = FMath::FInterpTo(StudioCurYaw, StudioYaw, Dt, StudioOrbitSmoothing);
+        StudioCurPitch = FMath::FInterpTo(StudioCurPitch, StudioPitch, Dt, StudioOrbitSmoothing);
+        StudioCurPan   = FMath::VInterpTo(StudioCurPan, StudioPan, Dt, StudioOrbitSmoothing);
+        StudioCurDist  = FMath::FInterpTo(StudioCurDist, StudioDist, Dt,
+            StudioZoomSmoothing > 0.f ? StudioZoomSmoothing : StudioOrbitSmoothing);
+    }
+
+    SpringArm->SetWorldLocation(WIP_FocusPivotWorld + StudioCurPan);
+    SpringArm->SetWorldRotation(FRotator(StudioCurPitch, StudioCurYaw, 0.f));
+    SpringArm->TargetArmLength = StudioCurDist;
+}
+
+void AFurniturePreviewActor::ClampStudioPan()
+{
+    StudioPan = StudioPan.GetClampedToMaxSize(WIP_MeshBoundsRadius * FMath::Max(StudioPanRangeFactor, 0.f));
+}
+
+void AFurniturePreviewActor::StudioTickUpdate(float DeltaSeconds)
+{
+    if (!bStudioStageMode || DeltaSeconds <= 0.f)
+    {
+        return;
+    }
+
+    // [StudioDiag] proves the tick pump runs and where the rendered view really is.
+    ++StudioDiagTickCount;
+    if (StudioDiagTickCount <= 2 || StudioDiagTickCount == 120)
+    {
+        APlayerController* DiagPC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+        const FVector DiagPCMLoc = (DiagPC && DiagPC->PlayerCameraManager) ? DiagPC->PlayerCameraManager->GetCameraLocation() : FVector::ZeroVector;
+        const float DiagStageDist = StudioStage.IsValid() && IsValid(Camera)
+            ? static_cast<float>(FVector::Dist(Camera->GetComponentLocation(), StudioStage->GetActorLocation())) : -1.f;
+        UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] Tick#%d dt=%.3f dist=%.1f/%.1f yaw=%.1f/%.1f pan=%s armLen=%.1f camLoc=%s pcmLoc=%s viewTarget=%s stageDist=%.1f"),
+            StudioDiagTickCount, DeltaSeconds, StudioCurDist, StudioDist, StudioCurYaw, StudioYaw,
+            *StudioCurPan.ToCompactString(),
+            IsValid(SpringArm) ? SpringArm->TargetArmLength : -1.f,
+            IsValid(Camera) ? *Camera->GetComponentLocation().ToCompactString() : TEXT("null"),
+            *DiagPCMLoc.ToCompactString(),
+            DiagPC ? *GetNameSafe(DiagPC->GetViewTarget()) : TEXT("noPC"),
+            DiagStageDist);
+    }
+
+    // ── Fling: estimate angular velocity while dragging, coast after release ──
+    if (bStudioOrbiting)
+    {
+        if (DeltaSeconds > KINDA_SMALL_NUMBER)
+        {
+            // Smoothed over the last frames so a pause before release kills the fling.
+            const float Alpha = FMath::Clamp(DeltaSeconds * 20.f, 0.f, 1.f);
+            StudioYawVel   = FMath::Lerp(StudioYawVel, StudioFrameYaw / DeltaSeconds, Alpha);
+            StudioPitchVel = FMath::Lerp(StudioPitchVel, StudioFramePitch / DeltaSeconds, Alpha);
+        }
+    }
+    else if (bStudioOrbitInertia && (FMath::Abs(StudioYawVel) > 0.5f || FMath::Abs(StudioPitchVel) > 0.5f))
+    {
+        StudioYaw += StudioYawVel * DeltaSeconds;
+        StudioPitch = FMath::Clamp(StudioPitch + StudioPitchVel * DeltaSeconds, -85.f, 85.f);
+        if (FMath::Abs(StudioPitch) >= 85.f)
+        {
+            StudioPitchVel = 0.f;
+        }
+        const float Decay = FMath::Exp(-StudioInertiaDamping * DeltaSeconds);
+        StudioYawVel *= Decay;
+        StudioPitchVel *= Decay;
+        StudioIdleSeconds = 0.f; // a live fling holds off the turntable
+    }
+    else
+    {
+        StudioYawVel = 0.f;
+        StudioPitchVel = 0.f;
+    }
+    StudioFrameYaw = 0.f;
+    StudioFramePitch = 0.f;
+
+    // ── Idle turntable: starts after StudioAutoRotateDelay, any input stops it ──
+    StudioIdleSeconds += DeltaSeconds;
+    if (bStudioAutoRotate && !bStudioOrbiting && !bStudioPanning && StudioIdleSeconds > StudioAutoRotateDelay)
+    {
+        StudioYaw += StudioAutoRotateSpeedDegPerSec * DeltaSeconds;
+    }
+
+    ApplyStudioCameraTransform(/*bInstant=*/false);
+}
+
+void AFurniturePreviewActor::StudioOrbitDrag(float DeltaXPixels, float DeltaYPixelsUp)
+{
+    if (!bStudioStageMode)
+    {
+        return;
+    }
+    const float DYaw = DeltaXPixels * StudioOrbitDegPerPixel;
+    const float DPitch = DeltaYPixelsUp * StudioOrbitDegPerPixel;
+    StudioYaw += DYaw;
+    StudioPitch = FMath::Clamp(StudioPitch + DPitch, -85.f, 85.f);
+    StudioFrameYaw += DYaw;
+    StudioFramePitch += DPitch;
+    StudioNotifyInteraction();
+}
+
+void AFurniturePreviewActor::StudioPanDrag(float DeltaXPixels, float DeltaYPixelsUp)
+{
+    if (!bStudioStageMode || !IsValid(Camera))
+    {
+        return;
+    }
+    const float Scale = StudioPanPerPixel * FMath::Max(StudioCurDist, 1.f);
+    StudioPan -= Camera->GetRightVector() * (DeltaXPixels * Scale);
+    StudioPan -= Camera->GetUpVector() * (DeltaYPixelsUp * Scale);
+    ClampStudioPan();
+    StudioNotifyInteraction();
+}
+
+void AFurniturePreviewActor::StudioZoom(float WheelNotches)
+{
+    if (!bStudioStageMode || FMath::IsNearlyZero(WheelNotches))
+    {
+        return;
+    }
+    StudioNotifyInteraction();
+
+    // Multiplicative zoom feels linear on screen, like the web viewer.
+    const float OldDist = StudioDist;
+    StudioDist = FMath::Clamp(StudioDist * FMath::Exp(-WheelNotches * StudioZoomPerNotch),
+                              StudioMinDist, StudioMaxDist);
+
+    if (++StudioDiagZoomCalls <= 6)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] Zoom#%d notches=%.2f dist %.1f -> %.1f (clamp %.1f..%.1f) cur=%.1f"),
+            StudioDiagZoomCalls, WheelNotches, OldDist, StudioDist, StudioMinDist, StudioMaxDist, StudioCurDist);
+    }
+
+    // Zoom toward the cursor: keep the point under the cursor (projected onto the
+    // focal plane through the focus point) fixed on screen as distance changes.
+    if (bStudioZoomToCursor && IsValid(Camera))
+    {
+        APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+        FVector RayOrigin, RayDir;
+        if (PC && PC->DeprojectMousePositionToWorld(RayOrigin, RayDir))
+        {
+            const FVector CamFwd = Camera->GetForwardVector();
+            const FVector Focus = WIP_FocusPivotWorld + StudioPan;
+            const float Denom = static_cast<float>(FVector::DotProduct(RayDir, CamFwd));
+            if (Denom > KINDA_SMALL_NUMBER)
+            {
+                const float T = static_cast<float>(FVector::DotProduct(Focus - RayOrigin, CamFwd)) / Denom;
+                const FVector CursorPoint = RayOrigin + RayDir * T;
+                const float Shrink = StudioDist / FMath::Max(OldDist, 1.f);
+                StudioPan += (CursorPoint - Focus) * (1.f - Shrink);
+                ClampStudioPan();
+            }
+        }
+    }
+}
+
+void AFurniturePreviewActor::StudioSetOrbiting(bool bOrbiting)
+{
+    if (!bStudioStageMode)
+    {
+        return;
+    }
+    bStudioOrbiting = bOrbiting;
+    if (bOrbiting)
+    {
+        StudioYawVel = 0.f;   // grabbing the model stops any running fling
+        StudioPitchVel = 0.f;
+    }
+    StudioNotifyInteraction();
+}
+
+void AFurniturePreviewActor::StudioSetPanning(bool bPanning)
+{
+    if (!bStudioStageMode)
+    {
+        return;
+    }
+    bStudioPanning = bPanning;
+    StudioNotifyInteraction();
 }
 
 void AFurniturePreviewActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -854,7 +1262,10 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     SetDepth(ClosetDoorMeshSlot0.Get(),  false);
     SetDepth(ClosetDoorMeshSlot1.Get(),  false);
 
-    if (IsValid(TargetComp))
+    // Studio Stage: no stencil dim is used (the backdrop IS the background), so
+    // skip custom-depth rendering entirely — the pass costs GPU and the stencil
+    // would otherwise interact with stencil-keyed level materials.
+    if (IsValid(TargetComp) && !bStudioStageMode)
     {
         SetDepth(TargetComp, true, 250);
 
@@ -899,7 +1310,9 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // the booth and, when pitched, the floor below. Relocate the pivot to the
     // nearest free spot instead of hiding the room - the room must stay intact
     // because it is what Lumen reflections and GI on the subject come from.
-    const FVector ClearPivot = ResolveClearPivot(FocusPivot, MeshRadius);
+    // Studio Stage: the stage void has no geometry to clip against — keep the
+    // pivot exactly at the product (no sweeps, no geometry-hide fallback).
+    const FVector ClearPivot = bStudioStageMode ? FocusPivot : ResolveClearPivot(FocusPivot, MeshRadius);
     if (!ClearPivot.Equals(FocusPivot, 0.1f) && IsValid(MeshRoot))
     {
         MeshRoot->AddWorldOffset(ClearPivot - FocusPivot);
@@ -936,7 +1349,9 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // a wall is by zooming out. One entry-time trace fixes that permanently:
     // never auto-adjust distance afterwards (stable-viewing-distance requirement).
     ActiveMaxZoom = FMath::Max(ActiveMaxZoom, ActiveMinZoom + 10.f);
-    if (UWorld* World = GetWorld())
+    // Studio Stage: no walls exist behind the camera (the backdrop sphere is far
+    // larger than any zoom limit and has no collision) — skip the clamp trace.
+    if (UWorld* World = bStudioStageMode ? nullptr : GetWorld())
     {
         const FVector TowardCamera = -WIP_InitialOrbitRot.Vector(); // pivot -> camera
         FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(PreviewZoomClamp), /*bTraceComplex*/ false);
@@ -992,7 +1407,15 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // rotation is fixed during mesh rotation, so the rig is screen-stable: the
     // subject is lit identically at every rotation angle. Shadows are always off
     // (evenness requirement), so nearby walls cannot block or shadow the rig.
-    if (IsValid(PreviewKeyLight) && IsValid(PreviewFillLight))
+    // Studio Stage: the stage's calibrated softbox rig lights the subject; the
+    // level-match measurement is meaningless there (the room's light is not the
+    // reference) and the channel-1 fill rig must stay dark.
+    if (bStudioStageMode)
+    {
+        if (IsValid(PreviewKeyLight))  { PreviewKeyLight->SetIntensity(0.f);  PreviewKeyLight->SetVisibility(false); }
+        if (IsValid(PreviewFillLight)) { PreviewFillLight->SetIntensity(0.f); PreviewFillLight->SetVisibility(false); }
+    }
+    else if (IsValid(PreviewKeyLight) && IsValid(PreviewFillLight))
     {
         const float FillMult       = Config ? Config->FillRimMultiplier          : 0.4f;
         const FLinearColor Tint    = Config ? Config->LightColor                 : FLinearColor::White;
@@ -1091,7 +1514,9 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     // ── 11. Per-component camera exposure compensation ────────────────────
     // Non-destructive brightness control: uses existing Lumen GI, preserves
     // AO and normal map depth. Preferred over Rect Lights for most meshes.
-    if (IsValid(Camera))
+    // (Studio Stage: skipped — the stage recipe below owns exposure and folds
+    // the per-component ExposureCompensation into its fixed manual bias.)
+    if (IsValid(Camera) && !bStudioStageMode)
     {
         const float ExpComp = Config ? Config->ExposureCompensation : 0.f;
         FPostProcessSettings& PP = Camera->PostProcessSettings;
@@ -1108,8 +1533,23 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
         }
     }
 
-    // ── 12. Stencil isolation post-process material ───────────────────────
-    WIP_ApplyStencilIsolation();
+    // ── 12. Background treatment + studio camera/framing ──────────────────
+    if (bStudioStageMode)
+    {
+        // Studio Stage: the neutral backdrop IS the background — no stencil dim,
+        // no vignette. Apply the stage's calibrated camera recipe (exposure,
+        // neutral tone, pure IBL) with this component's exposure nudge, then the
+        // studio framing: FOV 32, box-aware ~105% fit, entry view, eased orbit.
+        if (AStudioStageActor* Stage = StudioStage.Get())
+        {
+            Stage->ApplyCameraRecipe(Camera, Config ? Config->ExposureCompensation : 0.f);
+        }
+        SetupStudioFraming();
+    }
+    else
+    {
+        WIP_ApplyStencilIsolation();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1118,6 +1558,30 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
 
 void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 {
+    // Studio Stage: same public API (Pixel Streaming, cinematic tour, BP callers),
+    // but it drives the eased camera orbit instead of rotating the mesh. Sign
+    // mapping preserves the legacy visual direction (mesh -yaw == camera +yaw).
+    // Any call also counts as activity, so the idle turntable stays off while
+    // e.g. the cinematic tour is driving the view.
+    if (bStudioStageMode)
+    {
+        // Same zero-guard as ZoomPreview: a per-frame (0,0) poll from the legacy
+        // BP graph must not count as interaction (it would suppress the turntable).
+        if (FMath::Abs(DeltaYaw) <= KINDA_SMALL_NUMBER && FMath::Abs(DeltaPitch) <= KINDA_SMALL_NUMBER)
+        {
+            return;
+        }
+        if (++StudioDiagRotateCalls <= 3)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] RotatePreview(studio)#%d dYaw=%.2f dPitch=%.2f (external caller: tour/BP/PS)"),
+                StudioDiagRotateCalls, DeltaYaw, DeltaPitch);
+        }
+        StudioYaw += DeltaYaw;
+        StudioPitch = FMath::Clamp(StudioPitch - DeltaPitch, -85.f, 85.f);
+        StudioNotifyInteraction();
+        return;
+    }
+
     if (!IsValid(MeshRoot) || !IsValid(Camera)) { return; }
 
     WorldInPlaceYaw   -= DeltaYaw;
@@ -1148,6 +1612,22 @@ void AFurniturePreviewActor::RotatePreview(float DeltaYaw, float DeltaPitch)
 
 void AFurniturePreviewActor::ResetRotation()
 {
+    // Studio Stage: reset = recompute the box-aware fit (the viewport aspect may
+    // have changed) and glide back to the entry framing; velocities cleared.
+    if (bStudioStageMode)
+    {
+        StudioFitDistance = ComputeStudioFitDistance();
+        StudioMinDist = StudioFitDistance * 0.35f;
+        StudioMaxDist = StudioFitDistance * 3.0f;
+        StudioYaw = WIP_InitialOrbitRot.Yaw;
+        StudioPitch = WIP_InitialOrbitRot.Pitch;
+        StudioDist = StudioFitDistance;
+        StudioPan = FVector::ZeroVector;
+        StudioYawVel = StudioPitchVel = 0.f;
+        StudioNotifyInteraction();
+        return;
+    }
+
     WorldInPlaceYaw     = 0.f;
     WorldInPlacePitch   = 0.f;
     WIP_CurrentViewDist = WIP_InitialViewDist;
@@ -1170,6 +1650,28 @@ void AFurniturePreviewActor::ResetRotation()
 
 void AFurniturePreviewActor::ZoomPreview(float DeltaZoom)
 {
+    // Studio Stage: legacy callers pass an additive cm delta (positive = out);
+    // map its sign onto one multiplicative wheel notch of the studio zoom.
+    //
+    // CRITICAL ZERO-GUARD: the legacy BP input graph POLLS this every frame with
+    // delta = 0.0 (a no-op for the old additive zoom). Without the guard, 0.0
+    // classified as "zoom in" — one forced notch per frame, which pinned the
+    // camera to min distance, dragged the pan toward the idle cursor and reset
+    // the idle turntable timer forever (proven by the [StudioDiag] log).
+    if (bStudioStageMode)
+    {
+        if (FMath::Abs(DeltaZoom) > KINDA_SMALL_NUMBER)
+        {
+            if (++StudioDiagZoomPreviewCalls <= 3)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] ZoomPreview(studio)#%d delta=%.2f (external BP/PS caller)"),
+                    StudioDiagZoomPreviewCalls, DeltaZoom);
+            }
+            StudioZoom(DeltaZoom > 0.f ? -1.f : 1.f);
+        }
+        return;
+    }
+
     if (!IsValid(SpringArm)) { return; }
 
     // Clamp against the ACTIVE component's configured limits.

@@ -69,6 +69,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void SetCeilingVisibility(bool bVisible);
 
+	/** Default base material applied to walls when unselected (clean white / surface material). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Materials")
+	TObjectPtr<UMaterialInterface> DefaultWallMaterial;
+
+	/** Material applied to wall ONLY when selected (M_WallSelection). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Materials")
+	TObjectPtr<UMaterialInterface> WallSelectionMaterial;
+
+	/** Material applied to opening highlight box ONLY when selected (M_OpeningSelection). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Materials")
+	TObjectPtr<UMaterialInterface> OpeningSelectionMaterial;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	EPlannerToolMode ActiveToolMode = EPlannerToolMode::DrawWall;
 

@@ -353,6 +353,10 @@ void URoomPlannerWidget::SetToolMode(EPlannerToolMode NewToolMode)
 	{
 		PlannerManager->SetToolMode(NewToolMode);
 	}
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		PC->UpdateRoomPlannerCameraToolMode(NewToolMode);
+	}
 	UpdateToolModeButtonStyles();
 	UpdateGuidanceHintText();
 }
@@ -606,6 +610,14 @@ void URoomPlannerWidget::OnCloseClicked()
 
 void URoomPlannerWidget::OnWallSelected(int32 SegmentID, float LengthMeters)
 {
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		if (SegmentID != -1)
+		{
+			PC->UpdateRoomPlannerCameraToolMode(EPlannerToolMode::Select);
+		}
+	}
+
 	UpdateDynamicPropertiesPanel();
 	UpdateGuidanceHintText();
 

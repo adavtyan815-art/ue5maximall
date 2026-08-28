@@ -1,4 +1,4 @@
-﻿// Copyright 2026 MaxiMall. All Rights Reserved.
+// Copyright 2026 MaxiMall. All Rights Reserved.
 
 #include "ProceduralWallActor.h"
 #include "Materials/Material.h"
@@ -36,25 +36,65 @@ void AProceduralWallActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		WallProceduralMesh->ClearAllMeshSections();
 		WallProceduralMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
+	BaseWallMaterial = nullptr;
+	WallSelectionMaterial = nullptr;
+	OpeningSelectionMaterial = nullptr;
 	Super::EndPlay(EndPlayReason);
 }
 
 void AProceduralWallActor::SetWallMaterial(UMaterialInterface* NewMaterial)
 {
-	if (WallProceduralMesh && NewMaterial)
+	BaseWallMaterial = NewMaterial;
+	if (WallProceduralMesh && BaseWallMaterial)
 	{
-		WallProceduralMesh->SetMaterial(0, NewMaterial);
+		WallProceduralMesh->SetMaterial(0, BaseWallMaterial);
 	}
 }
 
 void AProceduralWallActor::SetSelectedHighlight(bool bSelected, int32 StencilValue)
 {
-	if (WallProceduralMesh)
+	if (!WallProceduralMesh)
 	{
-		WallProceduralMesh->SetRenderCustomDepth(bSelected);
-		if (bSelected)
+		return;
+	}
+
+	// Disable Custom Depth Stencil pass
+	WallProceduralMesh->SetRenderCustomDepth(false);
+
+	if (bSelected)
+	{
+		// Apply M_WallSelection ONLY on selection
+		UMaterialInterface* SelMat = WallSelectionMaterial ? WallSelectionMaterial.Get() : nullptr;
+		if (!SelMat)
 		{
-			WallProceduralMesh->SetCustomDepthStencilValue(StencilValue);
+			SelMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_WallSelection.M_WallSelection"));
+		}
+		if (!SelMat)
+		{
+			SelMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_WallSelection.M_WallSelection"));
+		}
+
+		if (SelMat)
+		{
+			WallProceduralMesh->SetMaterial(0, SelMat);
+		}
+	}
+	else
+	{
+		// Restore normal default wall material (clean white / default texture)
+		UMaterialInterface* NormalMat = BaseWallMaterial ? BaseWallMaterial.Get() : nullptr;
+		if (!NormalMat)
+		{
+			NormalMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+		}
+		if (!NormalMat)
+		{
+			NormalMat = UMaterial::GetDefaultMaterial(MD_Surface);
+		}
+
+		if (NormalMat)
+		{
+			WallProceduralMesh->SetMaterial(0, NormalMat);
 		}
 	}
 }
@@ -63,6 +103,7 @@ void AProceduralWallActor::SetOpeningSelectedHighlight(int32 OpeningIndex, bool 
 {
 	if (OpeningHighlightMeshes.IsValidIndex(OpeningIndex) && OpeningHighlightMeshes[OpeningIndex])
 	{
+		OpeningHighlightMeshes[OpeningIndex]->SetRenderCustomDepth(false);
 		OpeningHighlightMeshes[OpeningIndex]->SetVisibility(bSelected);
 	}
 }
@@ -285,7 +326,11 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	}
 
 	// Generate 3D red translucent selection boxes with guaranteed 1-to-1 index match to WallData.Openings
-	UMaterialInterface* OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
+	UMaterialInterface* OpeningMat = OpeningSelectionMaterial ? OpeningSelectionMaterial.Get() : nullptr;
+	if (!OpeningMat)
+	{
+		OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
+	}
 	if (!OpeningMat)
 	{
 		OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
@@ -414,16 +459,19 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 
 	WallProceduralMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, TArray<FColor>(), Tangents, bCreateCollision);
 
-	if (WallProceduralMesh->GetMaterial(0) == nullptr)
+	// Apply normal unselected base material upon wall creation (clean default white)
+	UMaterialInterface* NormalMat = BaseWallMaterial ? BaseWallMaterial.Get() : nullptr;
+	if (!NormalMat)
 	{
-		UMaterialInterface* BasicMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-		if (BasicMat)
-		{
-			WallProceduralMesh->SetMaterial(0, BasicMat);
-		}
-		else
-		{
-			WallProceduralMesh->SetMaterial(0, UMaterial::GetDefaultMaterial(MD_Surface));
-		}
+		NormalMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	}
+	if (!NormalMat)
+	{
+		NormalMat = UMaterial::GetDefaultMaterial(MD_Surface);
+	}
+
+	if (NormalMat)
+	{
+		WallProceduralMesh->SetMaterial(0, NormalMat);
 	}
 }

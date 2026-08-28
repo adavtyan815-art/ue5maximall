@@ -7,10 +7,12 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "FurnitureConfigurator/Data/FurnitureTypes.h"
+#include "Constructor/RoomPlannerTypes.h"
 #include "awsTutorial_PlayerController.generated.h"
 
 class AShowroomBooth;
 class AFurniturePreviewActor;
+class AStudioStageActor;
 class UUserWidget;
 class UPrimitiveComponent;
 class ACameraActor;
@@ -58,6 +60,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
 	void SetRoomPlannerCamera2D(bool bIn2D, FVector CenterLocation = FVector(-10000.f, 0.f, 0.f));
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
+	void UpdateRoomPlannerCameraToolMode(EPlannerToolMode ToolMode);
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
 	void RestorePlayerCamera();
@@ -185,6 +190,27 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Actor Class"))
     TSubclassOf<AFurniturePreviewActor> PreviewActorClass;
 
+    /**
+     * View Mode presentation: true = neutral Studio Stage (web-viewer-calibrated
+     * backdrop/lighting/exposure + the ported StudioViewerTest camera-orbit
+     * interaction; see AStudioStageActor). In studio mode the booth is NEVER
+     * relocated — the preview spawns directly at StudioPreviewLocation and only
+     * reads the booth's data. false = the previous WorldInPlace presentation,
+     * byte-identical to before this option existed (instant fallback).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Use Studio Stage"))
+    bool bUseStudioStage = true;
+
+    /** Optional BP subclass of AStudioStageActor with retuned stage calibration. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Studio Stage Class"))
+    TSubclassOf<AStudioStageActor> StudioStageClass;
+
+    /** Isolated spot where the studio preview lives — far above the map so no
+        level/planner geometry (e.g. the -10000 planner area) can leak into the
+        enclosed studio or its environment capture. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Studio Preview Location"))
+    FVector StudioPreviewLocation = FVector(0.f, 0.f, 50000.f);
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Orbit Sensitivity", ClampMin = "0.1", ClampMax = "10.0"))
     float OrbitSensitivity = 1.f;
 
@@ -277,6 +303,31 @@ protected:
 private:
     UPROPERTY()
     TObjectPtr<AFurniturePreviewActor> ActivePreviewActor;
+
+    /** The Studio Stage environment around the active preview (studio mode only). */
+    UPROPERTY()
+    TObjectPtr<AStudioStageActor> ActiveStudioStage;
+
+    /** (Re)builds ActiveStudioStage sized to the loaded product and applies the
+        stage camera recipe. Called on open and after live product reloads. */
+    void RebuildStudioStageForActivePreview();
+
+    // Cursor state saved while the studio grab-hand cursor is active.
+    bool bStudioCursorOverridden = false;
+    int32 SavedStudioMouseCursor = 0;        // EMouseCursor::Type, raw
+    int32 SavedStudioDefaultMouseCursor = 0; // EMouseCursor::Type, raw
+
+    /**
+     * While the studio is open, client->server camera position updates are
+     * suppressed so the server keeps computing net relevancy from the PAWN
+     * (which never leaves the room). Otherwise the reported studio camera at
+     * Z=50000 makes distant pawns net-irrelevant, the server tears them down
+     * on this client, and they visibly pop back in ~0.1-1 s after closing.
+     * Purely client-local and session-scoped: no actor's replication settings
+     * change and other players/the server see zero difference.
+     */
+    bool bStudioCameraUpdatesSuppressed = false;
+    bool bSavedUseClientSideCameraUpdates = true;
 
     UPROPERTY()
     TObjectPtr<ACameraActor> RoomPlannerTopDownCamera;

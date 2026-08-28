@@ -45,10 +45,22 @@ ARoomPlannerManager::ARoomPlannerManager()
 
 	BaseboardProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("BaseboardProceduralMesh"));
 	BaseboardProceduralMesh->SetupAttachment(SceneRoot);
-	BaseboardProceduralMesh->bUseAsyncCooking = false;
-	BaseboardProceduralMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	BaseboardProceduralMesh->SetCastShadow(true);
+	BaseboardProceduralMesh->bUseAsyncCooking = true;
+	BaseboardProceduralMesh->bUseComplexAsSimpleCollision = false;
+	BaseboardProceduralMesh->SetCastShadow(false);
 	BaseboardProceduralMesh->SetAbsolute(true, true, true);
+
+	WallSelectionMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_WallSelection.M_WallSelection"));
+	if (!WallSelectionMaterial)
+	{
+		WallSelectionMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_WallSelection.M_WallSelection"));
+	}
+
+	OpeningSelectionMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
+	if (!OpeningSelectionMaterial)
+	{
+		OpeningSelectionMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
+	}
 
 	bCeilingVisible = true;
 }
@@ -331,6 +343,9 @@ int32 ARoomPlannerManager::SplitWallSegment(int32 SegmentID, const FVector2D& Sp
 		if (WallActor2)
 		{
 			WallActor2->WallData = Seg2;
+			WallActor2->BaseWallMaterial = DefaultWallMaterial;
+			WallActor2->WallSelectionMaterial = WallSelectionMaterial;
+			WallActor2->OpeningSelectionMaterial = OpeningSelectionMaterial;
 			WallActors.Add(Seg2ID, WallActor2);
 		}
 	}
@@ -380,6 +395,9 @@ int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thi
 		if (WallActor)
 		{
 			WallActor->WallData = Segment;
+			WallActor->BaseWallMaterial = DefaultWallMaterial;
+			WallActor->WallSelectionMaterial = WallSelectionMaterial;
+			WallActor->OpeningSelectionMaterial = OpeningSelectionMaterial;
 			WallActors.Add(SegID, WallActor);
 		}
 	}
@@ -1532,6 +1550,9 @@ void ARoomPlannerManager::StartInteractiveWallDraw(const FVector& WorldPos)
 		if (PreviewWallActor)
 		{
 			PreviewWallActor->SetActorEnableCollision(false);
+			PreviewWallActor->BaseWallMaterial = DefaultWallMaterial;
+			PreviewWallActor->WallSelectionMaterial = WallSelectionMaterial;
+			PreviewWallActor->OpeningSelectionMaterial = OpeningSelectionMaterial;
 			if (PreviewWallActor->WallProceduralMesh)
 			{
 				PreviewWallActor->WallProceduralMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
