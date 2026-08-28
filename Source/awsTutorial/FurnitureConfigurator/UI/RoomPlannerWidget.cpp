@@ -10,6 +10,7 @@
 #include "Components/EditableTextBox.h"
 #include "Components/Image.h"
 #include "Kismet/GameplayStatics.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
 
 void URoomPlannerWidget::NativeConstruct()
 {
@@ -843,7 +844,9 @@ void URoomPlannerWidget::OnOpeningSillHeightCommitted(const FText& Text, ETextCo
 		if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 		{
 			PC->Server_UpdateOpeningDimensions(SegID, OpIdx, CurWidthM, CurHeightM, NewSillMeters);
-#include "Blueprint/WidgetLayoutLibrary.h"
+		}
+	}
+}
 
 void URoomPlannerWidget::UpdateMouseCursorPosition()
 {
