@@ -859,9 +859,17 @@ void URoomPlannerWidget::OnOpeningSillHeightCommitted(const FText& Text, ETextCo
 
 void URoomPlannerWidget::UpdateMouseCursorPosition()
 {
-	if (!mouse_cursor) return;
+	if (!mouse_cursor)
+	{
+		mouse_cursor = Cast<UImage>(GetWidgetFromName(TEXT("mouse_cursor")));
+	}
+	if (!mouse_cursor)
+	{
+		return;
+	}
 
-	if (bIsWidgetDrawingWall && PlannerManager)
+	bool bIsDrawing = (bIsWidgetDrawingWall || (PlannerManager && PlannerManager->IsWallDrawingActive()));
+	if (bIsDrawing && PlannerManager)
 	{
 		mouse_cursor->SetVisibility(ESlateVisibility::HitTestInvisible);
 
