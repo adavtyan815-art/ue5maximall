@@ -12,7 +12,7 @@
 //
 // The stage also TICKS the studio interaction: every frame it pumps
 // AFurniturePreviewActor::StudioTickUpdate on the driven preview (easing,
-// inertia, idle turntable, pivot marker). Driving the per-frame update from
+// inertia, idle turntable). Driving the per-frame update from
 // this plain C++ actor keeps it independent of whatever tick settings the
 // BP_FurniturePreviewActor subclass carries.
 //
@@ -32,6 +32,7 @@
 #include "StudioStageActor.generated.h"
 
 class AFurniturePreviewActor;
+class URectLightComponent;
 class USkyLightComponent;
 class UCameraComponent;
 class UMaterialInstanceDynamic;
@@ -64,15 +65,38 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|Exposure", meta = (UIMin = "-4", UIMax = "6"))
     float LockedEV100 = -0.23f;
 
-    /** 0 = fully neutral (linear->sRGB, color-true like the web viewer), 1 = UE filmic. */
+    /** 1 = UE's standard filmic tonemapper — the SAME response the normal level
+        view renders with, so materials keep the exact tonal character the user
+        already sees in the room (proper highlight shoulder, midtone contrast,
+        no washed-out whites). 0 = web-viewer-neutral linear->sRGB, which
+        measures color-true but reads visibly flatter and paler than the level. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|Exposure", meta = (ClampMin = "0", ClampMax = "1"))
-    float ToneCurveAmount = 0.0f;
+    float ToneCurveAmount = 1.0f;
+
+    /** ONE global multiplier on the whole studio lighting: scales every softbox
+        (key/fill/rim/top keep their exact ratios) AND their emissive panels in
+        the captured IBL, so direct light, ambient and reflections all move
+        together — material fidelity and light balance are preserved, only the
+        overall strength changes. 1 = the calibrated white-point budget; stay
+        roughly within 0.5..1.5 or whites will clip / the scene will dim. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|Lighting", meta = (DisplayName = "Light Intensity Scale (Global)", ClampMin = "0.1", ClampMax = "4", UIMin = "0.25", UIMax = "2"))
+    float StudioLightIntensityScale = 1.0f;
 
     /** Illuminance the key softbox delivers at the subject; fills/rim are ratios.
-        The stage runs at unit exposure (1 scene unit ~ display white), so useful
-        values are single digits: ~4 puts a key-lit white diffuse near full white. */
+        CALIBRATION (universal white-point budget — material-agnostic): the stage
+        runs at locked exposure M = 2^LockedEV100, and the subject is lit TWICE —
+        directly by the rect lights AND by their emissive panel images in the
+        captured IBL. A white Lambert surface shows on screen at roughly
+            M * albedo * (E_direct/pi + L_ibl)
+        where E_direct ~ 1.7x this value for an upward-facing surface (worst
+        case: key + top + fills + rim cosines) and L_ibl ~ 0.3 at the default
+        panel brightness. The default 1.7 lands peak white at ~0.95-1.0 before
+        the tonemapper — just under display white, so ANY white material keeps
+        visible form instead of compressing into the filmic shoulder. Raising
+        this above ~2.5 blows whites out again for every product. (The old 4.0
+        overexposed the subject ~2x — the proven washed-out/flat cause.) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|Lighting", meta = (UIMin = "0.1", UIMax = "20"))
-    float KeyIlluminanceLux = 4.0f;
+    float KeyIlluminanceLux = 1.7f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|Lighting", meta = (ClampMin = "0", ClampMax = "2"))
     float FillLeftRatio = 0.45f;
@@ -95,18 +119,31 @@ public:
     float LightDistanceFactor = 2.6f;
 
     /** Emissive luminance of the key softbox panel as seen in reflections
-        (others scale by their light ratio). */
+        (others scale by their light ratio). Part of the white-point budget on
+        KeyIlluminanceLux: the panels light the subject a second time through
+        the captured IBL, and metals multiply this value directly — 1.3 puts a
+        mirror-metal highlight just above display white (bright but detailed,
+        hue preserved), while the old 3.0 clipped metal reflections to pale,
+        desaturated white on every metallic material. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|Lighting", meta = (UIMin = "0", UIMax = "10"))
-    float SoftboxPanelBrightness = 3.0f;
+    float SoftboxPanelBrightness = 1.3f;
 
     /** Soft self-shadowing from the key & overhead softboxes — form and depth on
         diffuse materials (wood/fabric); disable for a fully shadowless match. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|Lighting")
     bool bKeyLightShadows = true;
 
-    /** Screen-space ambient occlusion amount applied by the camera recipe. */
+    /** Screen-space ambient occlusion amount applied by the camera recipe.
+        Kept mild: the web reference has none at all, and strong SSAO darkens
+        crevices beyond what the authored materials intend. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|Lighting", meta = (ClampMin = "0", ClampMax = "1"))
-    float AmbientOcclusionAmount = 0.5f;
+    float AmbientOcclusionAmount = 0.3f;
+
+    /** Faint product-shot vignette applied by the camera recipe (0 = none, the
+        exact web-viewer look). Presentation only — it does not touch material
+        response, so keep it subtle or off for maximum color fidelity. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|Camera", meta = (ClampMin = "0", ClampMax = "1"))
+    float StudioVignetteIntensity = 0.15f;
 
     /** Bottom-center Russian controls hint (code-only Slate, no widget assets). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Studio Stage|UI")
@@ -126,8 +163,18 @@ public:
     /** The preview whose studio interaction this stage pumps every frame. */
     void SetDrivenPreview(AFurniturePreviewActor* InPreview);
 
+    /** Per-component subject light scale (applied on focus): multiplies every
+        rig light's baked intensity and the stage SkyLight's intensity — direct
+        light, IBL ambient and reflections all scale together, backdrop and
+        exposure untouched. A few SetIntensity calls; NO sky recapture. */
+    void SetSubjectLightScale(float Scale);
+
     /** Destroys every stage actor. Also runs on EndPlay/Destroy. */
     void TearDownStage();
+
+    /** Permanently disables (and removes, if shown) the code-Slate hint overlay
+        for this stage — called when the WBP overlay renders the hint itself. */
+    void DisableHintOverlay();
 
     virtual void Tick(float DeltaSeconds) override;
 
@@ -142,16 +189,12 @@ private:
     void ShowHintOverlay();
     void HideHintOverlay();
 
-    /** [StudioDiag] one-shot visibility/render-state dump proving why (or whether)
-        the backdrop reaches the renderer. Scheduled at +1 s and +3 s after build. */
-    void DumpStageVisibilityDiagnostics();
-
     // ── Whole-level view isolation ────────────────────────────────────────
     // The studio must never show ANY level content, no matter what the level
     // contains now or later. While the stage exists, every level actor with
     // renderable primitives is added to the local PlayerController's per-view
-    // HiddenActors list (whitelist: the stage, the preview product, the pivot
-    // marker), and a world OnActorSpawned hook hides anything that appears
+    // HiddenActors list (whitelist: the stage and the preview product),
+    // and a world OnActorSpawned hook hides anything that appears
     // mid-session. Per-player only (multiplayer/Pixel Streaming safe), no
     // level state touched; removed exactly on teardown.
     void ApplyWorldIsolation();
@@ -166,6 +209,11 @@ private:
     UPROPERTY()
     TArray<TObjectPtr<AActor>> StageActors;
 
+    /** Rig rect lights + their baked base intensities (global scale included),
+        so SetSubjectLightScale can rescale without respawning or recapturing. */
+    TArray<TWeakObjectPtr<URectLightComponent>> RigLightComponents;
+    TArray<float> RigLightBaseIntensities;
+
     /**
      * Level atmosphere actors (ExponentialHeightFog / VolumetricCloud /
      * SkyAtmosphere) hidden for the duration of the stage and restored on
@@ -174,8 +222,7 @@ private:
      * backdrop into the level's light blue-gray inscattering color (the
      * standalone test level had no fog, which is why it looked correct there).
      * Hiding is client-world-local and invisible to the user (the room cannot
-     * be seen from inside the studio); legacy WorldInPlace mode never builds a
-     * stage and is unaffected.
+     * be seen from inside the studio).
      */
     TArray<TWeakObjectPtr<AActor>> SuspendedEnvironmentActors;
 
@@ -194,7 +241,5 @@ private:
     TSharedPtr<SWidget> HintWidget;
 
     FTimerHandle PanelHideTimerHandle;
-    FTimerHandle DiagDumpTimerHandle;
-    int32 DiagDumpCount = 0;
     float ActiveSubjectRadius = 100.0f;
 };

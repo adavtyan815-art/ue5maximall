@@ -1,4 +1,4 @@
-#include "awsTutorial_PlayerController.h"
+﻿#include "awsTutorial_PlayerController.h"
 #include "UObject/UObjectIterator.h"
 
 #include <Net/Core/Connection/NetCloseResult.h>
@@ -476,9 +476,6 @@ void AAwsTutorial_PlayerController::SetupInputComponent()
     {
         InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AAwsTutorial_PlayerController::OnLeftMouseButtonDown);
         InputComponent->BindKey(EKeys::LeftMouseButton, IE_Released, this, &AAwsTutorial_PlayerController::OnLeftMouseButtonReleased);
-
-        InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AAwsTutorial_PlayerController::OnRightMouseButtonDown);
-        InputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &AAwsTutorial_PlayerController::OnRightMouseButtonReleased);
     }
 }
 
@@ -502,33 +499,6 @@ void AAwsTutorial_PlayerController::OnLeftMouseButtonReleased()
     if (HeldDuration <= 0.25f && DragDistance <= 8.f)
     {
         OnLeftMouseButtonClicked();
-    }
-}
-
-void AAwsTutorial_PlayerController::OnRightMouseButtonDown()
-{
-    RMBPressTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
-    if (FSlateApplication::IsInitialized())
-    {
-        RMBPressMousePos = FSlateApplication::Get().GetCursorPos();
-    }
-}
-
-void AAwsTutorial_PlayerController::OnRightMouseButtonReleased()
-{
-    float CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
-    float HeldDuration = CurrentTime - RMBPressTime;
-
-    FVector2D CurrentMousePos = FSlateApplication::IsInitialized() ? FSlateApplication::Get().GetCursorPos() : FVector2D::ZeroVector;
-    float DragDistance = FVector2D::Distance(CurrentMousePos, RMBPressMousePos);
-
-    // Strictly inside View Mode: RMB click toggles the 🎬 Cinematic Auto-Tour on/off
-    if (::IsValid(ActivePreviewActor))
-    {
-        if (HeldDuration <= 0.35f && DragDistance <= 10.f)
-        {
-            ToggleCinematicTour(CurrentTargetBooth.Get());
-        }
     }
 }
 
@@ -764,24 +734,9 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
 
     CloseFurniturePreview();
 
-    // ── RELOCATE SHOWROOM BOOTH (LEGACY WorldInPlace ONLY) ───────────────────
-    // The Studio Stage path never touches the booth: LoadProductPreview reads
-    // only relative component transforms, materials and data, so the preview can
-    // live at the isolated studio spot while the booth stays exactly where every
-    // player sees it. Legacy mode keeps the proven relocation behavior.
-    if (!bUseStudioStage)
-    {
-        CachedOriginalBoothTransform = TargetBooth->GetActorTransform();
-        bHasCachedBoothTransform = true;
-
-        TargetBooth->SetActorLocationAndRotation(
-            ViewModeRelocationLocation,
-            ViewModeRelocationRotation,
-            false,
-            nullptr,
-            ETeleportType::TeleportPhysics
-        );
-    }
+    // NOTE: the booth is never touched — LoadProductPreview reads only relative
+    // component transforms, materials and data; the preview lives at the
+    // isolated studio spot while the booth stays where every player sees it.
 
     FFurnitureProductRow ProductSnapshot;
     if (!TargetBooth->GetActiveProductData(ProductSnapshot))
@@ -789,24 +744,12 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
         UE_LOG(LogTemp, Warning,
             TEXT("[PreviewController] Booth '%s' has no valid active product. Cannot open preview."),
             *TargetBooth->GetName());
-
-        // Restore booth transform on failure
-        if (bHasCachedBoothTransform)
-        {
-            TargetBooth->SetActorTransform(CachedOriginalBoothTransform, false, nullptr, ETeleportType::TeleportPhysics);
-            bHasCachedBoothTransform = false;
-        }
         return;
     }
 
     UWorld* World = GetWorld();
     if (!World)
     {
-        if (bHasCachedBoothTransform)
-        {
-            TargetBooth->SetActorTransform(CachedOriginalBoothTransform, false, nullptr, ETeleportType::TeleportPhysics);
-            bHasCachedBoothTransform = false;
-        }
         return;
     }
 
@@ -822,28 +765,12 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
 
     UE_LOG(LogTemp, Log, TEXT("[PreviewController] OpenFurniturePreview spawning class: %s"), *SpawnClass->GetName());
 
-    // Legacy: spawn at the relocated booth location for WorldInPlace orbit.
-    // Studio: spawn at the isolated studio spot (the booth is never moved); the
-    // spawn yaw matches the legacy relocation yaw so the per-component entry
-    // view offsets calibrated for it stay valid.
+    // Spawn at the isolated studio spot (the booth is never moved). The spawn
+    // yaw defines the booth-relative entry-view axis the per-component
+    // EntryYawOffset values are calibrated against.
     FRotator SpawnRotation = FRotator::ZeroRotator;
-    FVector TargetSpawnLocation = FVector::ZeroVector;
-    if (bUseStudioStage)
-    {
-        SpawnRotation.Yaw = ViewModeRelocationRotation.Yaw;
-        TargetSpawnLocation = StudioPreviewLocation;
-    }
-    else if (TargetBooth)
-    {
-        SpawnRotation.Yaw = TargetBooth->GetActorRotation().Yaw;
-        TargetSpawnLocation = TargetBooth->GetActorLocation();
-    }
-
-    // NOTE: the level's PostProcessVolumes are deliberately left ENABLED during
-    // View Mode. Exposure, bloom and grading on the previewed mesh must match the
-    // level (this is most of what makes shiny materials read the same), and the
-    // preview camera's own stencil-isolation blendable handles the outline/dim
-    // without needing the world volume switched off.
+    SpawnRotation.Yaw = ViewModeRelocationRotation.Yaw;
+    FVector TargetSpawnLocation = StudioPreviewLocation;
 
     ActivePreviewActor = Cast<AFurniturePreviewActor>(World->SpawnActor(
         SpawnClass,
@@ -854,40 +781,23 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
     if (!ActivePreviewActor)
     {
         UE_LOG(LogTemp, Error, TEXT("[PreviewController] Failed to spawn AFurniturePreviewActor."));
-        if (bHasCachedBoothTransform)
-        {
-            TargetBooth->SetActorTransform(CachedOriginalBoothTransform, false, nullptr, ETeleportType::TeleportPhysics);
-            bHasCachedBoothTransform = false;
-        }
         return;
     }
 
     // ── STUDIO STAGE ─────────────────────────────────────────────────────────
     // Spawn the stage BEFORE LoadProductPreview so the preview enters studio
-    // mode from the start (capture flags, skipped room machinery, tick). The
-    // environment itself is built after loading, sized to the product bounds.
-    if (bUseStudioStage)
+    // mode from the start (capture flags, tick pump). The environment itself is
+    // built after loading, sized to the product bounds.
+    UClass* StageClass = StudioStageClass ? static_cast<UClass*>(StudioStageClass) : AStudioStageActor::StaticClass();
+    ActiveStudioStage = World->SpawnActor<AStudioStageActor>(StageClass, TargetSpawnLocation, FRotator::ZeroRotator, SpawnParams);
+    if (ActiveStudioStage)
     {
-        UClass* StageClass = StudioStageClass ? static_cast<UClass*>(StudioStageClass) : AStudioStageActor::StaticClass();
-        ActiveStudioStage = World->SpawnActor<AStudioStageActor>(StageClass, TargetSpawnLocation, FRotator::ZeroRotator, SpawnParams);
-        if (ActiveStudioStage)
-        {
-            ActivePreviewActor->SetStudioStageMode(ActiveStudioStage);
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[PreviewController] Failed to spawn Studio Stage — preview falls back to WorldInPlace presentation."));
-        }
+        ActivePreviewActor->SetStudioStageMode(ActiveStudioStage);
     }
-
-    // [StudioDiag] build stamp proves WHICH binary is running (a stale DLL from a
-    // Live-Coding-blocked build would silently ignore every fix).
-    UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] Open: build=%hs bUseStudioStage=%d stage=%s spawnLoc=%s previewClass=%s"),
-        __DATE__ " " __TIME__,
-        bUseStudioStage ? 1 : 0,
-        ActiveStudioStage ? *ActiveStudioStage->GetName() : TEXT("NULL"),
-        *TargetSpawnLocation.ToCompactString(),
-        *SpawnClass->GetName());
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("[PreviewController] Failed to spawn Studio Stage — preview will be static."));
+    }
 
     ActivePreviewActor->LoadProductPreview(ProductSnapshot, TargetBooth->ActiveState, TargetBooth);
 
@@ -917,6 +827,13 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
             // Studio: the overlay is also the mouse input surface for the
             // ported viewer interaction. Legacy: leaves BP input untouched.
             Overlay->ConfigureForStudioInput(ActiveStudioStage != nullptr);
+
+            // If the WBP renders the controls hint itself, retire the stage's
+            // code-Slate fallback bar (also across later stage rebuilds).
+            if (ActiveStudioStage && Overlay->HandlesControlsHint())
+            {
+                ActiveStudioStage->DisableHintOverlay();
+            }
         }
         if (!ViewmodeOverlayInstance->IsInViewport())
         {
@@ -956,14 +873,6 @@ void AAwsTutorial_PlayerController::OpenFurniturePreview(AShowroomBooth* TargetB
     }
 
     OnPreviewOpened();
-
-    // Legacy: auto-enable the 🎬 Cinematic Auto-Tour on entry. Studio mode uses
-    // the ported idle turntable instead (starts after 5 s of inactivity, any
-    // interaction stops it); the tour stays available via an RMB click.
-    if (!ActiveStudioStage)
-    {
-        StartCinematicTour(TargetBooth);
-    }
 }
 
 void AAwsTutorial_PlayerController::CloseFurniturePreview()
@@ -973,8 +882,6 @@ void AAwsTutorial_PlayerController::CloseFurniturePreview()
         return;
     }
 
-    StopCinematicTour();
-
     HiddenActors.Empty();
 
     AShowroomBooth* PreviousBooth = CurrentTargetBooth;
@@ -983,15 +890,9 @@ void AAwsTutorial_PlayerController::CloseFurniturePreview()
         CurrentTargetBooth->OnProductChanged.RemoveAll(this);
     }
 
-    // Restore ShowroomBooth back to its original world transform
-    if (bHasCachedBoothTransform && PreviousBooth)
-    {
-        PreviousBooth->SetActorTransform(CachedOriginalBoothTransform, false, nullptr, ETeleportType::TeleportPhysics);
-        bHasCachedBoothTransform = false;
-    }
-
     // Studio: restore the cursor and tear down the stage (this also removes the
     // hint overlay and restores the level's sky light).
+    const bool bWasStudioSession = bStudioCursorOverridden;
     if (bStudioCursorOverridden)
     {
         CurrentMouseCursor = static_cast<EMouseCursor::Type>(SavedStudioMouseCursor);
@@ -1029,6 +930,14 @@ void AAwsTutorial_PlayerController::CloseFurniturePreview()
     }
 
     SetViewTargetWithBlend(GetPawn(), 0.0f);
+
+    // Studio: mask the hard cut back to the level with a short fade-in. The
+    // teardown itself stays instant (no added close latency).
+    if (bWasStudioSession && PlayerCameraManager)
+    {
+        PlayerCameraManager->StartCameraFade(1.f, 0.f, 0.3f, FLinearColor::Black,
+                                             /*bShouldFadeAudio=*/false, /*bHoldWhenFinished=*/false);
+    }
 
     SetControlRotation(SavedControlRotation);
 
@@ -1116,17 +1025,24 @@ void AAwsTutorial_PlayerController::RebuildStudioStageForActivePreview()
     // other registered primitives must not inflate the stage).
     FVector BoundsOrigin = ActivePreviewActor->GetActorLocation();
     float SubjectRadius = 100.f;
-    const bool bBoundsValid = ActivePreviewActor->GetStudioProductBounds(BoundsOrigin, SubjectRadius);
-
-    UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] StageRebuild: boundsValid=%d origin=%s radius=%.1f previewLoc=%s"),
-        bBoundsValid ? 1 : 0, *BoundsOrigin.ToCompactString(), SubjectRadius,
-        *ActivePreviewActor->GetActorLocation().ToCompactString());
+    ActivePreviewActor->GetStudioProductBounds(BoundsOrigin, SubjectRadius);
 
     ActiveStudioStage->BuildStage(BoundsOrigin, SubjectRadius);
 
     // Baseline recipe so the camera is correct even when no component focus
     // follows (SetFocusComponent re-applies it with the per-component exposure).
     ActiveStudioStage->ApplyCameraRecipe(ActivePreviewActor->Camera, 0.f);
+
+    // Fade in over the stage's setup window: the sky capture runs one tick
+    // after the build and the emissive panels hide ~0.3 s later — without the
+    // fade, the first frames show floating bright rectangles and unsettled
+    // ambient. Covers both preview open and in-preview product swaps. Pure
+    // post fade: no latency, no extra cost, Pixel Streaming safe.
+    if (PlayerCameraManager)
+    {
+        PlayerCameraManager->StartCameraFade(1.f, 0.f, 0.6f, FLinearColor::Black,
+                                             /*bShouldFadeAudio=*/false, /*bHoldWhenFinished=*/false);
+    }
 }
 
 void AAwsTutorial_PlayerController::HandlePreviewOrbitInput(float DeltaYaw, float DeltaPitch)
@@ -1575,135 +1491,6 @@ void AAwsTutorial_PlayerController::ToggleConfiguratorUI(AShowroomBooth* Booth, 
             }
         });
     }
-}
-
-void AAwsTutorial_PlayerController::ToggleRoomPlannerUI(bool bOpen)
-{
-    if (!IsLocalController())
-    {
-        return;
-    }
-
-    if (bOpen)
-    {
-        if (!RoomPlannerInstance && RoomPlannerClass)
-        {
-            RoomPlannerInstance = CreateWidget<UUserWidget>(this, RoomPlannerClass);
-        }
-
-        if (RoomPlannerInstance)
-        {
-            if (URoomPlannerWidget* PlannerWidget = Cast<URoomPlannerWidget>(RoomPlannerInstance))
-            {
-                PlannerWidget->PlannerRelocationLocation = RoomPlannerRelocationLocation;
-            }
-
-            if (!RoomPlannerInstance->IsInViewport())
-            {
-                RoomPlannerInstance->AddToViewport(10);
-            }
-        }
-    }
-    else
-    {
-        if (RoomPlannerInstance)
-        {
-            if (URoomPlannerWidget* PlannerWidget = Cast<URoomPlannerWidget>(RoomPlannerInstance))
-            {
-                PlannerWidget->ClosePlanner();
-            }
-            else
-            {
-                RoomPlannerInstance->RemoveFromParent();
-            }
-            RoomPlannerInstance = nullptr;
-        }
-    }
-}
-
-void AAwsTutorial_PlayerController::ToggleCinematicTour(AShowroomBooth* TargetBooth)
-{
-    if (!::IsValid(ActivePreviewActor))
-    {
-        StopCinematicTour();
-        return;
-    }
-
-    if (bIsCinematicTourActive)
-    {
-        StopCinematicTour();
-    }
-    else
-    {
-        StartCinematicTour(TargetBooth);
-    }
-}
-
-void AAwsTutorial_PlayerController::StartCinematicTour(AShowroomBooth* TargetBooth)
-{
-    if (!::IsValid(ActivePreviewActor) || !GetWorld())
-    {
-        return;
-    }
-
-    AShowroomBooth* EffectiveBooth = TargetBooth ? TargetBooth : CurrentTargetBooth.Get();
-    CinematicTourTargetBooth = EffectiveBooth;
-    CinematicTourElapsedTime = 0.0f;
-    bIsCinematicTourActive = true;
-
-    // Clear any previous timer before setting a fresh one
-    GetWorld()->GetTimerManager().ClearTimer(CinematicTourTimerHandle);
-
-    // 60 FPS lightweight timer (0.016s) — only active during tour
-    GetWorld()->GetTimerManager().SetTimer(
-        CinematicTourTimerHandle,
-        this,
-        &AAwsTutorial_PlayerController::UpdateCinematicTourStep,
-        0.016f,
-        true
-    );
-
-    if (MainWidgetInstance)
-    {
-        if (UConfiguratorMainWidget* ConfigWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance))
-        {
-            ConfigWidget->UpdateCinematicTourButtonStyle();
-        }
-    }
-}
-
-void AAwsTutorial_PlayerController::StopCinematicTour()
-{
-    bIsCinematicTourActive = false;
-
-    if (GetWorld())
-    {
-        GetWorld()->GetTimerManager().ClearTimer(CinematicTourTimerHandle);
-    }
-
-    if (MainWidgetInstance)
-    {
-        if (UConfiguratorMainWidget* ConfigWidget = Cast<UConfiguratorMainWidget>(MainWidgetInstance))
-        {
-            ConfigWidget->UpdateCinematicTourButtonStyle();
-        }
-    }
-}
-
-void AAwsTutorial_PlayerController::UpdateCinematicTourStep()
-{
-    if (!bIsCinematicTourActive || !::IsValid(ActivePreviewActor))
-    {
-        StopCinematicTour();
-        return;
-    }
-
-    const float DeltaTime = 0.016f;
-    CinematicTourElapsedTime += DeltaTime;
-
-    const float YawDelta = CinematicTourOrbitSpeed * DeltaTime;
-    const float PitchDelta = FMath::Sin(CinematicTourElapsedTime * 0.6f) * 0.10f;
-    ActivePreviewActor->RotatePreview(YawDelta, PitchDelta);
 }
 
 bool AAwsTutorial_PlayerController::GetActiveComponentMetadata(EFurnitureComponentType ComponentType, FText& OutProductName, FString& OutSKU, FString& OutURL) const

@@ -70,12 +70,6 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UButton> Btn_ColorCatalog;
 
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UButton> Btn_CinematicTour;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UButton> BtnCinematicTour;
-
     // ── AR export UI (Выбрано / Посмотреть в AR / Вся сцена в AR) ──────────
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> Txt_SelectedMeshName;
@@ -122,9 +116,6 @@ protected:
     void OnColorCatalogClicked();
 
     UFUNCTION()
-    void OnCinematicTourButtonClicked();
-
-    UFUNCTION()
     void OnARSelectedClicked();
 
     UFUNCTION()
@@ -143,10 +134,6 @@ protected:
     void OnURLButtonClicked();
 
 public:
-    /** Updates the styling of the Cinematic Tour button. */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
-    void UpdateCinematicTourButtonStyle();
-
     /** Initialize and dynamically populate the widget. */
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void SetupWidget(AAwsTutorial_PlayerController* InPC, AShowroomBooth* InBooth, EFurnitureComponentType InComponent);

@@ -190,18 +190,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Actor Class"))
     TSubclassOf<AFurniturePreviewActor> PreviewActorClass;
 
-    /**
-     * View Mode presentation: true = neutral Studio Stage (web-viewer-calibrated
-     * backdrop/lighting/exposure + the ported StudioViewerTest camera-orbit
-     * interaction; see AStudioStageActor). In studio mode the booth is NEVER
-     * relocated — the preview spawns directly at StudioPreviewLocation and only
-     * reads the booth's data. false = the previous WorldInPlace presentation,
-     * byte-identical to before this option existed (instant fallback).
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Use Studio Stage"))
-    bool bUseStudioStage = true;
-
-    /** Optional BP subclass of AStudioStageActor with retuned stage calibration. */
+    /** Optional BP subclass of AStudioStageActor with retuned stage calibration
+        (lighting, backdrop, exposure — all studio visual tuning). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Studio Stage Class"))
     TSubclassOf<AStudioStageActor> StudioStageClass;
 
@@ -224,59 +214,24 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
     TSubclassOf<UUserWidget> ViewmodeOverlayClass;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
-    TSubclassOf<UUserWidget> RoomPlannerClass;
-
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> MainWidgetInstance;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI")
-    TObjectPtr<UUserWidget> RoomPlannerInstance;
 
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> ViewmodeOverlayInstance;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | RoomPlanner Config", meta = (DisplayName = "Planner Relocation Location"))
-    FVector RoomPlannerRelocationLocation = FVector(-10000.f, 0.f, 0.f);
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | ViewMode Config", meta = (DisplayName = "View Mode Relocation Location"))
-    FVector ViewModeRelocationLocation = FVector(-10000.f, 0.f, 0.f);
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | ViewMode Config", meta = (DisplayName = "View Mode Relocation Rotation"))
+    /** Base rotation for the studio preview spawn: the Yaw defines the
+        booth-relative entry-view axis the per-component EntryYawOffset values
+        are calibrated against. (Kept under its historical property name so
+        saved Blueprint values carry over.) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Entry Base Rotation"))
     FRotator ViewModeRelocationRotation = FRotator(0.f, 90.f, 0.f);
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
 
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
-    void ToggleRoomPlannerUI(bool bOpen);
-
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | PixelStreaming")
     void SendPixelStreamingResponse(const FString& Payload);
-
-    /** Starts a smooth 60 FPS cinematic studio auto-tour around the target booth. */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
-    void StartCinematicTour(AShowroomBooth* TargetBooth = nullptr);
-
-    /** Stops the active cinematic tour and returns camera control seamlessly to the player. */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
-    void StopCinematicTour();
-
-    /** Toggles the cinematic tour on/off. */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
-    void ToggleCinematicTour(AShowroomBooth* TargetBooth = nullptr);
-
-    /** True if Cinematic Tour is currently active and animating. */
-    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Cinematic Tour")
-    bool bIsCinematicTourActive = false;
-
-    /** Orbit speed in degrees per second. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Cinematic Tour Config")
-    float CinematicTourOrbitSpeed = 20.0f;
-
-    /** Base distance from booth focal center for fallback frontal arc. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Cinematic Tour Config")
-    float CinematicTourBaseRadius = 180.0f;
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | PixelStreaming", meta = (DisplayName = "Send Open URL to Browser"))
     void SendOpenURLToBrowser(const FString& URL);
@@ -333,8 +288,6 @@ private:
     TObjectPtr<ACameraActor> RoomPlannerTopDownCamera;
 
     FRotator SavedControlRotation;
-    FTransform CachedOriginalBoothTransform;
-    bool bHasCachedBoothTransform = false;
 
     UFUNCTION()
     void OnTargetBoothProductChanged(AShowroomBooth* Booth, FName NewProductID);
@@ -354,14 +307,8 @@ private:
     void OnLeftMouseButtonReleased();
     void OnLeftMouseButtonClicked();
 
-    void OnRightMouseButtonDown();
-    void OnRightMouseButtonReleased();
-
     float LMBPressTime = 0.f;
     FVector2D LMBPressMousePos = FVector2D::ZeroVector;
-
-    float RMBPressTime = 0.f;
-    FVector2D RMBPressMousePos = FVector2D::ZeroVector;
 
     /** True while the camera is being rotated with RMB held.
      *  Set by AddYawInput/AddPitchInput; reset on RMB release. */
@@ -381,13 +328,6 @@ private:
     FString LastKnownClipboardContent;
     float ClipboardCheckInterval = 0.2f;
     float ClipboardCheckTimer = 0.0f;
-
-    // ── Cinematic Tour Private State ──────────────────────────────────────
-    FTimerHandle CinematicTourTimerHandle;
-    float CinematicTourElapsedTime = 0.0f;
-    TWeakObjectPtr<AShowroomBooth> CinematicTourTargetBooth;
-
-    void UpdateCinematicTourStep();
 
     UFUNCTION()
     void OnPixelStreamingInput(const FString& Descriptor);

@@ -1,4 +1,4 @@
-// Copyright MaxiMall Project. All Rights Reserved.
+﻿// Copyright MaxiMall Project. All Rights Reserved.
 // StudioStageActor.cpp — neutral Studio Stage environment for View Mode.
 // A faithful port of the proven StudioViewerTest environment (actor-spawned
 // backdrop / softboxes / panels / sky light). See StudioStageActor.h.
@@ -70,7 +70,6 @@ void AStudioStageActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
     if (UWorld* World = GetWorld())
     {
         World->GetTimerManager().ClearTimer(PanelHideTimerHandle);
-        World->GetTimerManager().ClearTimer(DiagDumpTimerHandle);
     }
     TearDownStage();
     Super::EndPlay(EndPlayReason);
@@ -127,9 +126,15 @@ void AStudioStageActor::SpawnSoftbox(const FVector& FocusPoint, float SubjectRad
             // soft area shadows for form on diffuse materials (bKeyLightShadows).
             Comp->SetCastShadows(bCastShadows);
             Comp->SetIntensityUnits(ELightUnits::Candelas);
-            // I[cd] = E[lux] * d[m]^2 -> the requested illuminance lands on the subject.
+            // I[cd] = E[lux] * d[m]^2 -> the requested illuminance lands on the
+            // subject. The global StudioLightIntensityScale multiplies every
+            // light identically (ratios preserved).
             const float DistanceMeters = Distance * 0.01f;
-            Comp->SetIntensity(Lux * DistanceMeters * DistanceMeters);
+            const float BaseIntensity = Lux * FMath::Max(StudioLightIntensityScale, 0.f) * DistanceMeters * DistanceMeters;
+            Comp->SetIntensity(BaseIntensity);
+            // Registered so SetSubjectLightScale can rescale per focused component.
+            RigLightComponents.Add(Comp);
+            RigLightBaseIntensities.Add(BaseIntensity);
             Comp->SetLightColor(FLinearColor::White);
             Comp->SetAttenuationRadius(Distance * 4.0f);
             // Subject-only: the preview meshes are on channel 1; the level (channel
@@ -159,12 +164,24 @@ void AStudioStageActor::SpawnSoftbox(const FVector& FocusPoint, float SubjectRad
             PanelComp->SetCastShadow(false);
             PanelComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
             PanelComp->bAffectDynamicIndirectLighting = false; // never feed the level's GI
-            // Panel brightness tracks its light's share so reflections stay consistent.
-            const float PanelLuminance = SoftboxPanelBrightness *
+            // Panel brightness tracks its light's share so reflections stay
+            // consistent; the global scale applies here too, so the IBL's
+            // ambient/specular follows the rect lights exactly.
+            const float PanelLuminance = SoftboxPanelBrightness * FMath::Max(StudioLightIntensityScale, 0.f) *
                 FMath::Clamp(Lux / FMath::Max(KeyIlluminanceLux, KINDA_SMALL_NUMBER), 0.05f, 1.0f);
             if (UMaterialInstanceDynamic* PanelMID = MakeUnlitColorMID(FLinearColor::White * PanelLuminance))
             {
                 PanelComp->SetMaterial(0, PanelMID);
+            }
+            // NO-FLASH: hide the panel from the PLAYER'S view from frame one via
+            // per-view hiding — the SkyLight capture builds its own views and
+            // ignores this list, so the panel is still photographed into the
+            // IBL. Without this, the bright fill panel (camera-right) was
+            // visible through the opening fade until the post-capture hide —
+            // the "flash on the right" when entering ViewMode.
+            if (APlayerController* PC = World->GetFirstPlayerController())
+            {
+                PC->HiddenActors.Add(Panel);
             }
             StageActors.Add(Panel);
             PanelActors.Add(Panel);
@@ -185,6 +202,8 @@ void AStudioStageActor::BuildStage(const FVector& FocusPoint, float SubjectRadiu
     bBuildingStage = true;
     World->GetTimerManager().ClearTimer(PanelHideTimerHandle);
     TearDownStage();
+    RigLightComponents.Reset();
+    RigLightBaseIntensities.Reset();
 
     SetActorLocation(FocusPoint);
     ActiveSubjectRadius = FMath::Clamp(SubjectRadius, 25.0f, 2000.0f);
@@ -212,7 +231,7 @@ void AStudioStageActor::BuildStage(const FVector& FocusPoint, float SubjectRadiu
             ++SuspendedCount;
         }
     }
-    UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] Suspended %d atmosphere actor(s) (fog/clouds/sky) for the studio session."), SuspendedCount);
+    UE_LOG(LogTemp, Log, TEXT("[StudioStage] Suspended %d atmosphere actor(s) for the studio session."), SuspendedCount);
 
     // ── 1. Backdrop: enclosing box of six inward-facing unlit gray planes ────
     // The original StudioViewerTest used a negative-X-scaled "inside-out" sphere.
@@ -232,8 +251,12 @@ void AStudioStageActor::BuildStage(const FVector& FocusPoint, float SubjectRadiu
 
         // Compensate the emissive by the inverse exposure so the backdrop lands
         // on-screen at exactly BackdropColorSRGB. It stays in the captured
-        // environment: metals reflect a gray surround plus the bright panels,
-        // like the web viewer's neutral HDRI.
+        // environment AT THE COMPENSATED radiance — and that is the physically
+        // consistent choice, not an artifact: captured radiance x exposure ==
+        // on-screen backdrop, so a white diffuse surface lit by the IBL alone
+        // reads exactly as environment gray (the model-viewer neutral-HDRI
+        // behavior). Do not "fix" the capture to the uncompensated color; that
+        // would dim the ambient below the environment the user actually sees.
         FLinearColor BackdropLinear = FLinearColor::FromSRGBColor(BackdropColorSRGB);
         const float ExposureMultiplier = ComputeExposureMultiplier();
         if (bCompensateBackdropExposure && ExposureMultiplier > KINDA_SMALL_NUMBER)
@@ -275,21 +298,26 @@ void AStudioStageActor::BuildStage(const FVector& FocusPoint, float SubjectRadiu
             StageActors.Add(Face);
             ++SpawnedFaces;
         }
-
-        UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] Backdrop box: %d/6 faces at halfSize=%.1f midOK=%d emissive=%s"),
-            SpawnedFaces, BackdropHalfSize, BackdropMID ? 1 : 0, *BackdropLinear.ToString());
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] Backdrop: engine Plane mesh NOT loaded"));
+        UE_LOG(LogTemp, Warning, TEXT("[StudioStage] Backdrop: engine Plane mesh could not be loaded."));
     }
 
     // ── 2. Softbox rig (calibrated against the approved StudioViewerTest) ────
-    SpawnSoftbox(FocusPoint, Radius,  35.0f, -40.0f, KeyIlluminanceLux, bKeyLightShadows);            // key, high camera-left
-    SpawnSoftbox(FocusPoint, Radius, -55.0f, -15.0f, KeyIlluminanceLux * FillLeftRatio,  false);      // fill, camera-right
-    SpawnSoftbox(FocusPoint, Radius, 140.0f, -20.0f, KeyIlluminanceLux * FillRightRatio, false);      // back-left wrap
-    SpawnSoftbox(FocusPoint, Radius, 200.0f, -35.0f, KeyIlluminanceLux * RimRatio,       false);      // rim, behind
-    SpawnSoftbox(FocusPoint, Radius,   0.0f, -89.0f, KeyIlluminanceLux * TopRatio, bKeyLightShadows); // overhead soft top
+    struct FSoftboxSpec { float Yaw; float Pitch; float Lux; bool bShadows; };
+    const FSoftboxSpec Rig[] =
+    {
+        { 35.0f, -40.0f, KeyIlluminanceLux,                  bKeyLightShadows }, // key, high camera-left
+        {-55.0f, -15.0f, KeyIlluminanceLux * FillLeftRatio,  false            }, // fill, camera-right
+        {140.0f, -20.0f, KeyIlluminanceLux * FillRightRatio, false            }, // back-left wrap
+        {200.0f, -35.0f, KeyIlluminanceLux * RimRatio,       false            }, // rim, behind
+        {  0.0f, -89.0f, KeyIlluminanceLux * TopRatio,       bKeyLightShadows }, // overhead soft top
+    };
+    for (const FSoftboxSpec& Box : Rig)
+    {
+        SpawnSoftbox(FocusPoint, Radius, Box.Yaw, Box.Pitch, Box.Lux, Box.bShadows);
+    }
 
     // ── 3. SkyLight: the stage IBL (ambient + the only reflection source) ────
     // NOTE: sky lights are scene-global (no lighting channels); while this one is
@@ -308,7 +336,10 @@ void AStudioStageActor::BuildStage(const FVector& FocusPoint, float SubjectRadiu
             SkyComp->SkyDistanceThreshold = 1.0f;
             // The web HDRI lights from below too; a black lower hemisphere kills it.
             SkyComp->bLowerHemisphereIsBlack = false;
-            SkyComp->CubemapResolution = 512; // crisp panel shapes in glossy metal
+            // 1024: sharp panel shapes in chrome/faucet/mirror reflections. The
+            // capture runs once per stage build (not per frame), so the only
+            // recurring cost is cubemap memory — safe for Pixel Streaming.
+            SkyComp->CubemapResolution = 1024;
             SkyComp->SetIntensity(1.0f);
             StageSkyComp = SkyComp;
         }
@@ -317,11 +348,6 @@ void AStudioStageActor::BuildStage(const FVector& FocusPoint, float SubjectRadiu
 
     // Capture one tick later so the whole studio exists before it is photographed.
     World->GetTimerManager().SetTimerForNextTick(this, &AStudioStageActor::DeferredEnvironmentCapture);
-
-    // [StudioDiag] prove the render state of every stage actor once the frame has
-    // settled (again at +3 s so post-capture state is also covered).
-    DiagDumpCount = 0;
-    World->GetTimerManager().SetTimer(DiagDumpTimerHandle, this, &AStudioStageActor::DumpStageVisibilityDiagnostics, 1.0f, false);
 
     bBuildingStage = false;
 
@@ -394,8 +420,7 @@ void AStudioStageActor::ApplyWorldIsolation()
             FOnActorSpawned::FDelegate::CreateUObject(this, &AStudioStageActor::OnWorldActorSpawned));
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] World isolation: view-hid %d level actor(s) for the local player (total tracked %d)."),
-        NewlyHidden, HiddenWorldActors.Num());
+    UE_LOG(LogTemp, Log, TEXT("[StudioStage] World isolation: view-hid %d level actor(s) for the local player."), NewlyHidden);
 }
 
 void AStudioStageActor::OnWorldActorSpawned(AActor* SpawnedActor)
@@ -437,171 +462,8 @@ void AStudioStageActor::RemoveWorldIsolation()
     HiddenWorldActors.Reset();
 }
 
-void AStudioStageActor::DumpStageVisibilityDiagnostics()
-{
-    UWorld* World = GetWorld();
-    if (!World)
-    {
-        return;
-    }
-    ++DiagDumpCount;
-
-    APlayerController* PC = World->GetFirstPlayerController();
-    FVector CamLoc = FVector::ZeroVector;
-    FRotator CamRot = FRotator::ZeroRotator;
-    float CamFOV = -1.f;
-    if (PC && PC->PlayerCameraManager)
-    {
-        CamLoc = PC->PlayerCameraManager->GetCameraLocation();
-        CamRot = PC->PlayerCameraManager->GetCameraRotation();
-        CamFOV = PC->PlayerCameraManager->GetFOVAngle();
-    }
-    const float Now = World->GetTimeSeconds();
-
-    UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] ===== VIS DUMP #%d t=%.2f camLoc=%s camRot=%s fov=%.1f viewTarget=%s stageLoc=%s ====="),
-        DiagDumpCount, Now, *CamLoc.ToCompactString(), *CamRot.ToCompactString(), CamFOV,
-        PC ? *GetNameSafe(PC->GetViewTarget()) : TEXT("noPC"),
-        *GetActorLocation().ToCompactString());
-
-    // Per-player view hiding (the project empties PC->HiddenActors on preview
-    // close, so something fills it during the preview — are WE in it?).
-    if (PC)
-    {
-        int32 StageActorsHiddenByPC = 0;
-        for (AActor* Hidden : PC->HiddenActors)
-        {
-            if (Hidden && StageActors.Contains(Hidden))
-            {
-                ++StageActorsHiddenByPC;
-            }
-        }
-        int32 StageCompsHiddenByPC = 0;
-        for (const TWeakObjectPtr<UPrimitiveComponent>& HiddenComp : PC->HiddenPrimitiveComponents)
-        {
-            if (HiddenComp.IsValid() && StageActors.Contains(HiddenComp->GetOwner()))
-            {
-                ++StageCompsHiddenByPC;
-            }
-        }
-        UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] PC hides: HiddenActors=%d (stage among them: %d) HiddenPrimitiveComponents=%d (stage among them: %d)"),
-            PC->HiddenActors.Num(), StageActorsHiddenByPC,
-            PC->HiddenPrimitiveComponents.Num(), StageCompsHiddenByPC);
-    }
-
-    // Preview camera post-process truth (what the rendered view actually carries).
-    if (AFurniturePreviewActor* Preview = DrivenPreview.Get())
-    {
-        if (UCameraComponent* Cam = Preview->Camera)
-        {
-            const FPostProcessSettings& PP = Cam->PostProcessSettings;
-            UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] previewCam loc=%s fov=%.1f ppWeight=%.2f expOvr=%d expMethod=%d biasOvr=%d bias=%.2f giOvr=%d reflOvr=%d blendables=%d"),
-                *Cam->GetComponentLocation().ToCompactString(), Cam->FieldOfView, Cam->PostProcessBlendWeight,
-                PP.bOverride_AutoExposureMethod ? 1 : 0, static_cast<int32>(PP.AutoExposureMethod),
-                PP.bOverride_AutoExposureBias ? 1 : 0, PP.AutoExposureBias,
-                PP.bOverride_DynamicGlobalIlluminationMethod ? 1 : 0,
-                PP.bOverride_ReflectionMethod ? 1 : 0,
-                PP.WeightedBlendables.Array.Num());
-        }
-    }
-
-    // Every stage actor: is it registered, does it have a live scene proxy, and
-    // has the renderer actually drawn it on screen recently?
-    for (AActor* StageActor : StageActors)
-    {
-        if (!IsValid(StageActor))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[StudioDiag]  stage: STALE/DESTROYED entry"));
-            continue;
-        }
-        UStaticMeshComponent* SMC = nullptr;
-        if (AStaticMeshActor* SMA = Cast<AStaticMeshActor>(StageActor))
-        {
-            SMC = SMA->GetStaticMeshComponent();
-        }
-        if (SMC)
-        {
-            const float LastOnScreen = SMC->GetLastRenderTimeOnScreen();
-            UE_LOG(LogTemp, Warning, TEXT("[StudioDiag]  stage: %s loc=%s distCam=%.0f actorHidden=%d visFlag=%d reg=%d proxy=%d lastOnScreen=%+.2fs mesh=%s mat0=%s scale=%s maxDraw=%.0f"),
-                *StageActor->GetName(), *StageActor->GetActorLocation().ToCompactString(),
-                static_cast<float>(FVector::Dist(StageActor->GetActorLocation(), CamLoc)),
-                StageActor->IsHidden() ? 1 : 0,
-                SMC->GetVisibleFlag() ? 1 : 0,
-                SMC->IsRegistered() ? 1 : 0,
-                SMC->SceneProxy ? 1 : 0,
-                LastOnScreen - Now,
-                *GetNameSafe(SMC->GetStaticMesh()),
-                *GetNameSafe(SMC->GetMaterial(0)),
-                *SMC->GetComponentScale().ToCompactString(),
-                SMC->CachedMaxDrawDistance);
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[StudioDiag]  stage: %s (%s) loc=%s actorHidden=%d"),
-                *StageActor->GetName(), *StageActor->GetClass()->GetName(),
-                *StageActor->GetActorLocation().ToCompactString(), StageActor->IsHidden() ? 1 : 0);
-        }
-    }
-
-    // Everything else actually RENDERED near the studio in the last second —
-    // this names any mystery geometry (product meshes included, marked below).
-    for (TActorIterator<AActor> It(World); It; ++It)
-    {
-        AActor* NearActor = *It;
-        if (!IsValid(NearActor) || StageActors.Contains(NearActor))
-        {
-            continue;
-        }
-        TArray<UPrimitiveComponent*> Prims;
-        NearActor->GetComponents<UPrimitiveComponent>(Prims);
-        for (UPrimitiveComponent* Prim : Prims)
-        {
-            if (!Prim || !Prim->SceneProxy || !Prim->WasRecentlyRendered(1.0f))
-            {
-                continue;
-            }
-            const FVector PrimOrigin = Prim->Bounds.Origin;
-            if (FVector::Dist(PrimOrigin, GetActorLocation()) > 12000.0f)
-            {
-                continue;
-            }
-            const UStaticMeshComponent* PrimSMC = Cast<UStaticMeshComponent>(Prim);
-            const bool bIsPreview = DrivenPreview.IsValid() && NearActor == DrivenPreview.Get();
-            UE_LOG(LogTemp, Warning, TEXT("[StudioDiag]  nearby%s: %s.%s (%s) origin=%s boundsR=%.0f mesh=%s mat0=%s"),
-                bIsPreview ? TEXT("[PRODUCT]") : TEXT(""),
-                *NearActor->GetName(), *Prim->GetName(), *NearActor->GetClass()->GetName(),
-                *PrimOrigin.ToCompactString(), static_cast<float>(Prim->Bounds.SphereRadius),
-                PrimSMC ? *GetNameSafe(PrimSMC->GetStaticMesh()) : TEXT("-"),
-                *GetNameSafe(Prim->GetMaterial(0)));
-        }
-    }
-
-    // Sky / fog / post-process context of the level.
-    for (TActorIterator<AActor> It(World); It; ++It)
-    {
-        const FString ClassName = It->GetClass()->GetName();
-        if (ClassName.Contains(TEXT("SkyAtmosphere")) || ClassName.Contains(TEXT("VolumetricCloud")) ||
-            ClassName.Contains(TEXT("ExponentialHeightFog")) || ClassName.Contains(TEXT("SkyLight")))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[StudioDiag]  world: %s (%s) loc=%s hidden=%d"),
-                *It->GetName(), *ClassName, *It->GetActorLocation().ToCompactString(), It->IsHidden() ? 1 : 0);
-        }
-        else if (APostProcessVolume* PPV = Cast<APostProcessVolume>(*It))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[StudioDiag]  world: PPV %s enabled=%d unbound=%d prio=%.1f weight=%.2f blendables=%d"),
-                *PPV->GetName(), PPV->bEnabled ? 1 : 0, PPV->bUnbound ? 1 : 0,
-                PPV->Priority, PPV->BlendWeight, PPV->Settings.WeightedBlendables.Array.Num());
-        }
-    }
-
-    if (DiagDumpCount == 1)
-    {
-        World->GetTimerManager().SetTimer(DiagDumpTimerHandle, this, &AStudioStageActor::DumpStageVisibilityDiagnostics, 2.0f, false);
-    }
-}
-
 void AStudioStageActor::DeferredEnvironmentCapture()
 {
-    UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] DeferredEnvironmentCapture: sky=%d"), StageSkyComp.IsValid() ? 1 : 0);
     if (USkyLightComponent* SkyComp = StageSkyComp.Get())
     {
         SkyComp->RecaptureSky();
@@ -618,12 +480,17 @@ void AStudioStageActor::DeferredEnvironmentCapture()
 
 void AStudioStageActor::HideEnvironmentPanels()
 {
-    UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] HideEnvironmentPanels: %d panel(s)"), PanelActors.Num());
+    APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
     for (const TWeakObjectPtr<AActor>& Panel : PanelActors)
     {
         if (AActor* PanelActor = Panel.Get())
         {
             PanelActor->SetActorHiddenInGame(true);
+            // Drop the per-view entry now that the actor is scene-hidden.
+            if (PC)
+            {
+                PC->HiddenActors.Remove(PanelActor);
+            }
         }
     }
     PanelActors.Reset();
@@ -635,9 +502,6 @@ void AStudioStageActor::ApplyCameraRecipe(UCameraComponent* Camera, float ExtraE
     {
         return;
     }
-
-    UE_LOG(LogTemp, Warning, TEXT("[StudioDiag] Recipe: camera=%s owner=%s bias=%.2f"),
-        *Camera->GetName(), *GetNameSafe(Camera->GetOwner()), LockedEV100 + ExtraExposureEV);
 
     Camera->PostProcessBlendWeight = 1.0f;
     FPostProcessSettings& PP = Camera->PostProcessSettings;
@@ -660,16 +524,19 @@ void AStudioStageActor::ApplyCameraRecipe(UCameraComponent* Camera, float ExtraE
     PP.bOverride_ReflectionMethod = true;
     PP.ReflectionMethod = EReflectionMethod::None;
 
-    // Neutral tone response: 0 = linear->sRGB (color-true, like the viewer's
-    // Neutral mode) instead of UE's filmic look.
+    // TONAL PARITY WITH THE LEVEL VIEW: the default 1.0 runs UE's standard
+    // filmic curve — the same response the normal level view uses — so the
+    // authored materials keep the tonal character (highlight shoulder, midtone
+    // contrast) the user sees in the room. ExpandGamut / BlueCorrection / Bloom
+    // are deliberately NOT overridden: the level's PostProcessVolumes stay
+    // enabled during ViewMode, so those inherit exactly what the level view
+    // renders with. (ToneCurveAmount 0 = web-neutral linear->sRGB, kept as an
+    // opt-in knob.)
     PP.bOverride_ToneCurveAmount = true;      PP.ToneCurveAmount = ToneCurveAmount;
-    PP.bOverride_ExpandGamut = true;          PP.ExpandGamut = 0.0f;
-    PP.bOverride_BlueCorrection = true;       PP.BlueCorrection = 0.0f;
 
-    // No camera/lens effects — the web viewer has none. Vignette 0 also overrides
-    // both the preview's own vignette and the level volumes'.
-    PP.bOverride_BloomIntensity = true;             PP.BloomIntensity = 0.0f;
-    PP.bOverride_VignetteIntensity = true;          PP.VignetteIntensity = 0.0f;
+    // Lens effects that would differ from a product shot stay off; vignette is
+    // the one optional presentation knob.
+    PP.bOverride_VignetteIntensity = true;          PP.VignetteIntensity = FMath::Clamp(StudioVignetteIntensity, 0.0f, 1.0f);
     PP.bOverride_SceneFringeIntensity = true;       PP.SceneFringeIntensity = 0.0f;
     PP.bOverride_FilmGrainIntensity = true;         PP.FilmGrainIntensity = 0.0f;
     PP.bOverride_MotionBlurAmount = true;           PP.MotionBlurAmount = 0.0f;
@@ -731,6 +598,35 @@ void AStudioStageActor::HideHintOverlay()
         }
     }
     HintWidget.Reset();
+}
+
+void AStudioStageActor::DisableHintOverlay()
+{
+    // The WBP overlay renders the controls hint itself — the code-Slate fallback
+    // must neither show now nor reappear on a stage rebuild.
+    bShowHintOverlay = false;
+    HideHintOverlay();
+}
+
+void AStudioStageActor::SetSubjectLightScale(float Scale)
+{
+    const float S = FMath::Clamp(Scale, 0.05f, 8.0f);
+    for (int32 Index = 0; Index < RigLightComponents.Num(); ++Index)
+    {
+        if (URectLightComponent* Light = RigLightComponents[Index].Get())
+        {
+            if (RigLightBaseIntensities.IsValidIndex(Index))
+            {
+                Light->SetIntensity(RigLightBaseIntensities[Index] * S);
+            }
+        }
+    }
+    // The SkyLight scales the captured IBL (ambient + reflections) without any
+    // recapture, so the whole subject lighting moves as one.
+    if (USkyLightComponent* Sky = StageSkyComp.Get())
+    {
+        Sky->SetIntensity(S);
+    }
 }
 
 void AStudioStageActor::TearDownStage()

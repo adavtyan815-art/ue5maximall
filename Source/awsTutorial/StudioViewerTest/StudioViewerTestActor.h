@@ -2,6 +2,13 @@
 //
 // STANDALONE STUDIO VIEWER TEST — isolated proof-of-concept, safe to delete.
 //
+// ⚠ FROZEN REFERENCE — DO NOT UPDATE. The production Studio ViewMode
+// (StudioStageActor + FurniturePreviewActor studio path + ViewmodeOverlayWidget)
+// has superseded this sandbox and deliberately diverges from it (fixed-pivot
+// pan, UI pivot marker, UI reset button, fades, touch). Kept only because
+// BP_StudioViewerTest references the class; do not port changes in either
+// direction or use it to judge current production behavior.
+//
 // Goal: prove that UE can reproduce the neutral product-presentation look AND the
 // interaction model of the web viewer (viewer_test.html / model-viewer): flat dark
 // gray background, shadowless soft studio lighting, neutral tone response, fixed
