@@ -191,6 +191,11 @@ public:
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UWidget> SnapIndicator;
 
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UImage> mouse_cursor;
+
+	void UpdateMouseCursorPosition();
+
 	// --- Dynamic Properties Panel ---
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UEditableTextBox> EditableTxtProp1; // Wall Length OR Opening Width

@@ -249,6 +249,7 @@ FReply URoomPlannerWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, co
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && bIsWidgetDrawingWall)
 	{
 		bIsWidgetDrawingWall = false;
+		UpdateMouseCursorPosition();
 		AAwsTutorial_PlayerController* PC = GetPreviewController();
 		if (PlannerManager)
 		{
@@ -842,17 +843,44 @@ void URoomPlannerWidget::OnOpeningSillHeightCommitted(const FText& Text, ETextCo
 		if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 		{
 			PC->Server_UpdateOpeningDimensions(SegID, OpIdx, CurWidthM, CurHeightM, NewSillMeters);
+#include "Blueprint/WidgetLayoutLibrary.h"
+
+void URoomPlannerWidget::UpdateMouseCursorPosition()
+{
+	if (!mouse_cursor) return;
+
+	if (bIsWidgetDrawingWall && PlannerManager)
+	{
+		mouse_cursor->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+		if (APlayerController* PC = GetOwningPlayer())
+		{
+			FVector EndPointWorld = PlannerManager->GetDragCurrentPoint();
+			FVector2D ScreenPos;
+			if (PC->ProjectWorldLocationToScreen(EndPointWorld, ScreenPos))
+			{
+				float DPIScale = UWidgetLayoutLibrary::GetViewportScale(this);
+				if (DPIScale > 0.001f)
+				{
+					ScreenPos /= DPIScale;
+				}
+				mouse_cursor->SetRenderTranslation(ScreenPos);
+			}
 		}
 	}
+	else
+	{
+		mouse_cursor->SetVisibility(ESlateVisibility::Collapsed);
+	}
 }
-
-#include "Blueprint/WidgetLayoutLibrary.h"
 
 void URoomPlannerWidget::HandleWallDragProgress(float LengthMeters, FVector MidpointWorld, float AngleDeg, bool bIsSnapped)
 {
 	CurrentDragLengthMeters = LengthMeters;
 	CurrentDragMidpointWorld = MidpointWorld;
 	bIsAngleSnapped = bIsSnapped;
+
+	UpdateMouseCursorPosition();
 
 	if (TxtLiveLength)
 	{
