@@ -1,4 +1,4 @@
-﻿#include "awsTutorial_PlayerController.h"
+#include "awsTutorial_PlayerController.h"
 #include "UObject/UObjectIterator.h"
 
 #include <Net/Core/Connection/NetCloseResult.h>
@@ -1983,7 +1983,7 @@ void AAwsTutorial_PlayerController::SetRoomPlannerCamera2D(bool bIn2D, FVector C
 		SetControlRotation(FRotator(0.f, 0.f, 0.f));
 		SetIgnoreLookInput(true);
 
-		FVector CamLoc(CenterLocation.X, CenterLocation.Y, 1600.f);
+		FVector CamLoc(CenterLocation.X, CenterLocation.Y, PlannerCameraZ);
 		if (APawn* MyPawn = GetPawn())
 		{
 			CamLoc.X = MyPawn->GetActorLocation().X;
@@ -2001,9 +2001,10 @@ void AAwsTutorial_PlayerController::SetRoomPlannerCamera2D(bool bIn2D, FVector C
 			{
 				if (UCameraComponent* CamComp = RoomPlannerTopDownCamera->GetCameraComponent())
 				{
-					CamComp->bConstrainAspectRatio = false;
+					CamComp->bConstrainAspectRatio = bPlannerConstrainAspectRatio;
+					CamComp->AspectRatio = PlannerAspectRatio;
 					CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
-					CamComp->OrthoWidth = 2500.f;
+					CamComp->OrthoWidth = PlannerOrthoWidth;
 					CamComp->OrthoNearClipPlane = -5000.f;
 					CamComp->OrthoFarClipPlane = 20000.f;
 				}
@@ -2014,7 +2015,7 @@ void AAwsTutorial_PlayerController::SetRoomPlannerCamera2D(bool bIn2D, FVector C
 		{
 			RoomPlannerTopDownCamera->SetActorLocation(CamLoc);
 			RoomPlannerTopDownCamera->SetActorRotation(FRotator(-90.f, 0.f, 0.f));
-			SetViewTargetWithBlend(RoomPlannerTopDownCamera, 0.3f);
+			SetViewTargetWithBlend(RoomPlannerTopDownCamera, PlannerCameraBlendTime);
 		}
 
 		FInputModeGameAndUI InputMode;
@@ -2045,10 +2046,12 @@ void AAwsTutorial_PlayerController::UpdateRoomPlannerCameraToolMode(EPlannerTool
 
 	if (UCameraComponent* CamComp = RoomPlannerTopDownCamera->GetCameraComponent())
 	{
+		CamComp->bConstrainAspectRatio = bPlannerConstrainAspectRatio;
+		CamComp->AspectRatio = PlannerAspectRatio;
 		if (ToolMode == EPlannerToolMode::DrawWall)
 		{
 			CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
-			CamComp->OrthoWidth = 2500.f;
+			CamComp->OrthoWidth = PlannerOrthoWidth;
 			CamComp->OrthoNearClipPlane = -5000.f;
 			CamComp->OrthoFarClipPlane = 20000.f;
 			RoomPlannerTopDownCamera->SetActorRotation(FRotator(-90.f, 0.f, 0.f));
@@ -2056,7 +2059,7 @@ void AAwsTutorial_PlayerController::UpdateRoomPlannerCameraToolMode(EPlannerTool
 		else
 		{
 			CamComp->ProjectionMode = ECameraProjectionMode::Perspective;
-			CamComp->FieldOfView = 80.f;
+			CamComp->FieldOfView = PlannerPerspectiveFOV;
 			RoomPlannerTopDownCamera->SetActorRotation(FRotator(-90.f, 0.f, 0.f));
 		}
 	}

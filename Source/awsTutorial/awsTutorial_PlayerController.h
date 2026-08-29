@@ -227,6 +227,25 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Entry Base Rotation"))
     FRotator ViewModeRelocationRotation = FRotator(0.f, 90.f, 0.f);
 
+    // ── ROOM PLANNER CAMERA CONFIG ──────────────────────────────────────────────
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "2D Camera Height (Z)"))
+    float PlannerCameraZ = 1600.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "2D Ortho Width"))
+    float PlannerOrthoWidth = 2500.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "Constrain Aspect Ratio"))
+    bool bPlannerConstrainAspectRatio = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "Aspect Ratio", EditCondition = "bPlannerConstrainAspectRatio"))
+    float PlannerAspectRatio = 1.777778f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "Perspective Field of View"))
+    float PlannerPerspectiveFOV = 80.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "Camera Blend Time"))
+    float PlannerCameraBlendTime = 0.3f;
+
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
 
