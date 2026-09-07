@@ -75,7 +75,7 @@ AFurniturePreviewActor::AFurniturePreviewActor()
     ClosetDoorMeshSlot1 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ClosetDoorSlot1"));
     ClosetDoorMeshSlot1->SetupAttachment(ClosetMesh);
 
-    // Configure every mesh: movable, no collision, lighting channel 0 only.
+    // Configure every mesh: movable, no collision, lighting channel 1 only.
     ConfigureMesh(CabinetMesh.Get());
     ConfigureMesh(DoorMeshSlot0.Get());
     ConfigureMesh(DoorMeshSlot1.Get());
@@ -127,8 +127,12 @@ void AFurniturePreviewActor::SetStudioStageMode(AStudioStageActor* InStage)
     // The stage ticks and pumps our per-frame studio update.
     InStage->SetDrivenPreview(this);
 
-    // The stage's environment capture is taken from inside the product bounds;
-    // the subject must not photograph itself into its own environment.
+    // Studio meshes: keep the subject out of any reflection capture, and turn
+    // shadow casting ON — the stage's key RectLight drops a real soft area
+    // shadow onto the stage floor (the grounding element a web viewer fakes).
+    // Everything on the stage lives on lighting channel 1, so these shadows
+    // can never interact with level lighting. (ConfigureMesh disables shadows
+    // for the legacy path; studio mode deliberately re-enables them.)
     UStaticMeshComponent* AllMeshes[] =
     {
         CabinetMesh.Get(), DoorMeshSlot0.Get(), DoorMeshSlot1.Get(),
@@ -140,6 +144,8 @@ void AFurniturePreviewActor::SetStudioStageMode(AStudioStageActor* InStage)
         if (IsValid(Comp))
         {
             Comp->bVisibleInReflectionCaptures = false;
+            Comp->SetCastShadow(true);
+            Comp->SetCastHiddenShadow(false);
             Comp->MarkRenderStateDirty();
         }
     }
@@ -983,6 +989,14 @@ void AFurniturePreviewActor::SetFocusComponent(EFurnitureComponentType TargetTyp
     if (AStudioStageActor* Stage = StudioStage.Get())
     {
         Stage->SetSubjectLightScale(Config ? Config->StudioLightScale : 1.f);
+
+        // ── 10. Contact shadow follows the focused group ────────────────────
+        // (visible-only box after isolation = the focused component's footprint)
+        FBox VisibleBox(ForceInit);
+        if (GetStudioProductBox(VisibleBox))
+        {
+            Stage->UpdateContactShadow(VisibleBox);
+        }
     }
 }
 
