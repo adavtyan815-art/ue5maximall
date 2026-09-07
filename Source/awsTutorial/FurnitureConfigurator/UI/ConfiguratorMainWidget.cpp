@@ -9,6 +9,7 @@
 #include "Engine/Texture2D.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "awsTutorial_PlayerController.h"
+#include "ARExport/UI/ARExportModalWidget.h"
 #include "Engine/Engine.h"
 #include "Components/ScrollBox.h"
 #include "Components/UniformGridPanel.h"
@@ -68,15 +69,15 @@ void UConfiguratorMainWidget::NativeConstruct()
         Btn_ColorCatalog->OnClicked.RemoveAll(this);
         Btn_ColorCatalog->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnColorCatalogClicked);
     }
-    if (Btn_CinematicTour)
+    if (Btn_ARSelected)
     {
-        Btn_CinematicTour->OnClicked.RemoveAll(this);
-        Btn_CinematicTour->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnCinematicTourButtonClicked);
+        Btn_ARSelected->OnClicked.RemoveAll(this);
+        Btn_ARSelected->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnARSelectedClicked);
     }
-    if (BtnCinematicTour)
+    if (Btn_ARFullScene)
     {
-        BtnCinematicTour->OnClicked.RemoveAll(this);
-        BtnCinematicTour->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnCinematicTourButtonClicked);
+        Btn_ARFullScene->OnClicked.RemoveAll(this);
+        Btn_ARFullScene->OnClicked.AddDynamic(this, &UConfiguratorMainWidget::OnARFullSceneClicked);
     }
 }
 
@@ -91,6 +92,8 @@ void UConfiguratorMainWidget::SetupWidget(AAwsTutorial_PlayerController* InPC, A
 
 void UConfiguratorMainWidget::RefreshSelections()
 {
+    UpdateSelectedObjectNameUI();
+
     AShowroomBooth* Booth = TargetBooth.Get();
     if (!Booth)
     {
@@ -120,9 +123,6 @@ void UConfiguratorMainWidget::RefreshSelections()
                 ActiveColorCatalogInstance = nullptr;
             }
         }
-
-        // Update Cinematic Tour button styling
-        UpdateCinematicTourButtonStyle();
 
         // Clear option listeners when regenerating layout
         OptionListeners.Empty();
@@ -872,29 +872,122 @@ bool UConfiguratorMainWidget::IsComponentMeshValid(AShowroomBooth* Booth, EFurni
     return false;
 }
 
-void UConfiguratorMainWidget::OnCinematicTourButtonClicked()
+namespace
 {
-    if (OwningPC)
+    /** Clean Russian logical name for the selected component category. */
+    FText GetComponentDisplayNameRu(EFurnitureComponentType Type)
     {
-        OwningPC->ToggleCinematicTour(TargetBooth.Get());
-        UpdateCinematicTourButtonStyle();
+        switch (Type)
+        {
+            case EFurnitureComponentType::Closet:     return FText::FromString(TEXT("Шкаф"));
+            case EFurnitureComponentType::Cabinet:    return FText::FromString(TEXT("Тумба"));
+            case EFurnitureComponentType::Doors:      return FText::FromString(TEXT("Тумба"));
+            case EFurnitureComponentType::Countertop: return FText::FromString(TEXT("Столешница"));
+            case EFurnitureComponentType::Faucet:     return FText::FromString(TEXT("Смеситель"));
+            case EFurnitureComponentType::Sink:       return FText::FromString(TEXT("Раковина"));
+            case EFurnitureComponentType::Mirror:     return FText::FromString(TEXT("Зеркало"));
+            default:                                  return FText::GetEmpty();
+        }
+    }
+
+    /** Booth components that make up the selected category (same grouping the recolor flow uses). */
+    void GetComponentsForType(AShowroomBooth* Booth, EFurnitureComponentType Type, TArray<UStaticMeshComponent*>& OutComponents)
+    {
+        switch (Type)
+        {
+        case EFurnitureComponentType::Cabinet:
+        case EFurnitureComponentType::Doors:
+            OutComponents.Add(Booth->MainCabinet);
+            OutComponents.Add(Booth->DoorMeshSlot0);
+            OutComponents.Add(Booth->DoorMeshSlot1);
+            break;
+        case EFurnitureComponentType::Closet:
+            OutComponents.Add(Booth->ClosetMesh);
+            OutComponents.Add(Booth->ClosetDoorMeshSlot0);
+            OutComponents.Add(Booth->ClosetDoorMeshSlot1);
+            break;
+        case EFurnitureComponentType::Countertop: OutComponents.Add(Booth->CountertopMesh); break;
+        case EFurnitureComponentType::Sink:       OutComponents.Add(Booth->SinkMesh); break;
+        case EFurnitureComponentType::Faucet:     OutComponents.Add(Booth->FaucetMesh); break;
+        case EFurnitureComponentType::Mirror:     OutComponents.Add(Booth->MirrorMesh); break;
+        default: break;
+        }
+        OutComponents.Remove(nullptr);
     }
 }
 
-void UConfiguratorMainWidget::UpdateCinematicTourButtonStyle()
+UARExportModalWidget* UConfiguratorMainWidget::OpenARExportModal()
 {
-    bool bActive = OwningPC && OwningPC->bIsCinematicTourActive;
-
-    FLinearColor ActiveColor(0.95f, 0.6f, 0.1f, 1.0f); // Warm gold/amber accent for tour
-    FLinearColor InactiveColor(0.1f, 0.14f, 0.2f, 1.0f);
-
-    if (Btn_CinematicTour)
+    if (!OwningPC)
     {
-        Btn_CinematicTour->SetBackgroundColor(bActive ? ActiveColor : InactiveColor);
+        return nullptr;
     }
-    if (BtnCinematicTour)
+
+    // The designed WBP must always be used: property first, then the known asset,
+    // and only as a last resort the bare C++ class (undesigned).
+    UClass* ModalClass = ARExportModalClass ? ARExportModalClass.Get() : nullptr;
+    if (!ModalClass)
     {
-        BtnCinematicTour->SetBackgroundColor(bActive ? ActiveColor : InactiveColor);
+        ModalClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/FurnitureConfigurator/UI/WBP_ARExportModal.WBP_ARExportModal_C"));
+    }
+    if (!ModalClass)
+    {
+        ModalClass = UARExportModalWidget::StaticClass();
+    }
+
+    UARExportModalWidget* Modal = CreateWidget<UARExportModalWidget>(OwningPC, ModalClass);
+    if (Modal)
+    {
+        Modal->AddToViewport(100);
+    }
+    return Modal;
+}
+
+void UConfiguratorMainWidget::UpdateSelectedObjectNameUI()
+{
+    const FText DisplayName = GetComponentDisplayNameRu(ActiveComponent);
+    if (Txt_SelectedMeshName)
+    {
+        Txt_SelectedMeshName->SetText(DisplayName);
+    }
+    if (Txt_ARSelectedMeshName)
+    {
+        Txt_ARSelectedMeshName->SetText(DisplayName);
+    }
+}
+
+void UConfiguratorMainWidget::OnARSelectedClicked()
+{
+    AShowroomBooth* Booth = TargetBooth.Get();
+    if (!Booth || !OwningPC)
+    {
+        return;
+    }
+
+    TArray<UStaticMeshComponent*> SelectedComponents;
+    GetComponentsForType(Booth, ActiveComponent, SelectedComponents);
+    if (SelectedComponents.Num() == 0)
+    {
+        return;
+    }
+
+    if (UARExportModalWidget* Modal = OpenARExportModal())
+    {
+        Modal->StartExportForComponents(Booth, SelectedComponents);
+    }
+}
+
+void UConfiguratorMainWidget::OnARFullSceneClicked()
+{
+    AShowroomBooth* Booth = TargetBooth.Get();
+    if (!Booth || !OwningPC)
+    {
+        return;
+    }
+
+    if (UARExportModalWidget* Modal = OpenARExportModal())
+    {
+        Modal->StartExportForActor(Booth);
     }
 }
 

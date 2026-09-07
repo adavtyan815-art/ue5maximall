@@ -7,10 +7,12 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "FurnitureConfigurator/Data/FurnitureTypes.h"
+#include "Constructor/RoomPlannerTypes.h"
 #include "awsTutorial_PlayerController.generated.h"
 
 class AShowroomBooth;
 class AFurniturePreviewActor;
+class AStudioStageActor;
 class UUserWidget;
 class UPrimitiveComponent;
 class ACameraActor;
@@ -49,6 +51,24 @@ public:
 
 	UFUNCTION(BlueprintCallable, Server, Reliable, Category="MaxiMall")
 	void Kick();
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_EnterRoomPlanner(FVector RelocationLocation);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_ExitRoomPlanner(FVector TargetLocation, FRotator TargetRotation);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
+	void SetRoomPlannerCamera2D(bool bIn2D, FVector CenterLocation = FVector(-10000.f, 0.f, 0.f));
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
+	void UpdateRoomPlannerCameraToolMode(EPlannerToolMode ToolMode);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
+	void RestorePlayerCamera();
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	static FVector FindNonOverlappingPlannerSpot(UWorld* World, AActor* IgnoreActor, const FVector& BaseLocation);
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_CommitWall(FVector2D StartPos, FVector2D EndPos, float Thickness = 20.f, float Height = 280.f);
@@ -116,6 +136,12 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Preview")
     TObjectPtr<AShowroomBooth> CurrentTargetBooth;
 
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MaxiMall | Preview", meta = (DisplayName = "Get Current Target Booth"))
+    AShowroomBooth* GetCurrentTargetBooth() const { return CurrentTargetBooth.Get(); }
+
+    /** The ViewMode preview actor currently displayed (null when not in ViewMode). */
+    AFurniturePreviewActor* GetActivePreviewActor() const { return ActivePreviewActor.Get(); }
+
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Preview")
     EFurnitureComponentType CurrentTargetComponent;
 
@@ -164,6 +190,17 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Actor Class"))
     TSubclassOf<AFurniturePreviewActor> PreviewActorClass;
 
+    /** Optional BP subclass of AStudioStageActor with retuned stage calibration
+        (lighting, backdrop, exposure — all studio visual tuning). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Studio Stage Class"))
+    TSubclassOf<AStudioStageActor> StudioStageClass;
+
+    /** Isolated spot where the studio preview lives — far above the map so no
+        level/planner geometry (e.g. the -10000 planner area) can leak into the
+        enclosed studio or its environment capture. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Studio Preview Location"))
+    FVector StudioPreviewLocation = FVector(0.f, 0.f, 50000.f);
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Orbit Sensitivity", ClampMin = "0.1", ClampMax = "10.0"))
     float OrbitSensitivity = 1.f;
 
@@ -177,56 +214,43 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnComponentSelectedDelegate, UPrimi
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
     TSubclassOf<UUserWidget> ViewmodeOverlayClass;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Config")
-    TSubclassOf<UUserWidget> RoomPlannerClass;
-
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> MainWidgetInstance;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI")
-    TObjectPtr<UUserWidget> RoomPlannerInstance;
 
     UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | UI")
     TObjectPtr<UUserWidget> ViewmodeOverlayInstance;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | RoomPlanner Config", meta = (DisplayName = "Planner Relocation Location"))
-    FVector RoomPlannerRelocationLocation = FVector(-10000.f, 0.f, 0.f);
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | ViewMode Config", meta = (DisplayName = "View Mode Relocation Location"))
-    FVector ViewModeRelocationLocation = FVector(-10000.f, 0.f, 0.f);
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | ViewMode Config", meta = (DisplayName = "View Mode Relocation Rotation"))
+    /** Base rotation for the studio preview spawn: the Yaw defines the
+        booth-relative entry-view axis the per-component EntryYawOffset values
+        are calibrated against. (Kept under its historical property name so
+        saved Blueprint values carry over.) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Preview Config", meta = (DisplayName = "Preview Entry Base Rotation"))
     FRotator ViewModeRelocationRotation = FRotator(0.f, 90.f, 0.f);
+
+    // ── ROOM PLANNER CAMERA CONFIG ──────────────────────────────────────────────
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "2D Camera Height (Z)"))
+    float PlannerCameraZ = 1600.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "2D Ortho Width"))
+    float PlannerOrthoWidth = 2500.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "Constrain Aspect Ratio"))
+    bool bPlannerConstrainAspectRatio = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "Aspect Ratio", EditCondition = "bPlannerConstrainAspectRatio"))
+    float PlannerAspectRatio = 1.777778f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "Perspective Field of View"))
+    float PlannerPerspectiveFOV = 80.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Planner Camera Config", meta = (DisplayName = "Camera Blend Time"))
+    float PlannerCameraBlendTime = 0.3f;
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
     void ToggleConfiguratorUI(AShowroomBooth* Booth, EFurnitureComponentType Component, bool bOpen);
 
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | UI")
-    void ToggleRoomPlannerUI(bool bOpen);
-
-    /** Starts a smooth 60 FPS cinematic studio auto-tour around the target booth. */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
-    void StartCinematicTour(AShowroomBooth* TargetBooth = nullptr);
-
-    /** Stops the active cinematic tour and returns camera control seamlessly to the player. */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
-    void StopCinematicTour();
-
-    /** Toggles the cinematic tour on/off. */
-    UFUNCTION(BlueprintCallable, Category = "MaxiMall | Cinematic Tour")
-    void ToggleCinematicTour(AShowroomBooth* TargetBooth = nullptr);
-
-    /** True if Cinematic Tour is currently active and animating. */
-    UPROPERTY(BlueprintReadOnly, Category = "MaxiMall | Cinematic Tour")
-    bool bIsCinematicTourActive = false;
-
-    /** Orbit speed in degrees per second. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Cinematic Tour Config")
-    float CinematicTourOrbitSpeed = 20.0f;
-
-    /** Base distance from booth focal center for fallback frontal arc. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | Cinematic Tour Config")
-    float CinematicTourBaseRadius = 180.0f;
+    UFUNCTION(BlueprintCallable, Category = "MaxiMall | PixelStreaming")
+    void SendPixelStreamingResponse(const FString& Payload);
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | PixelStreaming", meta = (DisplayName = "Send Open URL to Browser"))
     void SendOpenURLToBrowser(const FString& URL);
@@ -254,9 +278,35 @@ private:
     UPROPERTY()
     TObjectPtr<AFurniturePreviewActor> ActivePreviewActor;
 
+    /** The Studio Stage environment around the active preview (studio mode only). */
+    UPROPERTY()
+    TObjectPtr<AStudioStageActor> ActiveStudioStage;
+
+    /** (Re)builds ActiveStudioStage sized to the loaded product and applies the
+        stage camera recipe. Called on open and after live product reloads. */
+    void RebuildStudioStageForActivePreview();
+
+    // Cursor state saved while the studio grab-hand cursor is active.
+    bool bStudioCursorOverridden = false;
+    int32 SavedStudioMouseCursor = 0;        // EMouseCursor::Type, raw
+    int32 SavedStudioDefaultMouseCursor = 0; // EMouseCursor::Type, raw
+
+    /**
+     * While the studio is open, client->server camera position updates are
+     * suppressed so the server keeps computing net relevancy from the PAWN
+     * (which never leaves the room). Otherwise the reported studio camera at
+     * Z=50000 makes distant pawns net-irrelevant, the server tears them down
+     * on this client, and they visibly pop back in ~0.1-1 s after closing.
+     * Purely client-local and session-scoped: no actor's replication settings
+     * change and other players/the server see zero difference.
+     */
+    bool bStudioCameraUpdatesSuppressed = false;
+    bool bSavedUseClientSideCameraUpdates = true;
+
+    UPROPERTY()
+    TObjectPtr<ACameraActor> RoomPlannerTopDownCamera;
+
     FRotator SavedControlRotation;
-    FTransform CachedOriginalBoothTransform;
-    bool bHasCachedBoothTransform = false;
 
     UFUNCTION()
     void OnTargetBoothProductChanged(AShowroomBooth* Booth, FName NewProductID);
@@ -276,14 +326,8 @@ private:
     void OnLeftMouseButtonReleased();
     void OnLeftMouseButtonClicked();
 
-    void OnRightMouseButtonDown();
-    void OnRightMouseButtonReleased();
-
     float LMBPressTime = 0.f;
     FVector2D LMBPressMousePos = FVector2D::ZeroVector;
-
-    float RMBPressTime = 0.f;
-    FVector2D RMBPressMousePos = FVector2D::ZeroVector;
 
     /** True while the camera is being rotated with RMB held.
      *  Set by AddYawInput/AddPitchInput; reset on RMB release. */
@@ -303,13 +347,6 @@ private:
     FString LastKnownClipboardContent;
     float ClipboardCheckInterval = 0.2f;
     float ClipboardCheckTimer = 0.0f;
-
-    // ── Cinematic Tour Private State ──────────────────────────────────────
-    FTimerHandle CinematicTourTimerHandle;
-    float CinematicTourElapsedTime = 0.0f;
-    TWeakObjectPtr<AShowroomBooth> CinematicTourTargetBooth;
-
-    void UpdateCinematicTourStep();
 
     UFUNCTION()
     void OnPixelStreamingInput(const FString& Descriptor);

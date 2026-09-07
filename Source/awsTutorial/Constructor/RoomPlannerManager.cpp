@@ -22,6 +22,9 @@ ARoomPlannerManager::ARoomPlannerManager()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	bReplicates = true;
+	bAlwaysRelevant = true;
+	AActor::SetReplicateMovement(false);
+	NetCullDistanceSquared = 0.0f;
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
@@ -42,10 +45,22 @@ ARoomPlannerManager::ARoomPlannerManager()
 
 	BaseboardProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("BaseboardProceduralMesh"));
 	BaseboardProceduralMesh->SetupAttachment(SceneRoot);
-	BaseboardProceduralMesh->bUseAsyncCooking = false;
-	BaseboardProceduralMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	BaseboardProceduralMesh->SetCastShadow(true);
+	BaseboardProceduralMesh->bUseAsyncCooking = true;
+	BaseboardProceduralMesh->bUseComplexAsSimpleCollision = false;
+	BaseboardProceduralMesh->SetCastShadow(false);
 	BaseboardProceduralMesh->SetAbsolute(true, true, true);
+
+	WallSelectionMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_WallSelection.M_WallSelection"));
+	if (!WallSelectionMaterial)
+	{
+		WallSelectionMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_WallSelection.M_WallSelection"));
+	}
+
+	OpeningSelectionMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
+	if (!OpeningSelectionMaterial)
+	{
+		OpeningSelectionMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
+	}
 
 	bCeilingVisible = true;
 }
@@ -64,26 +79,10 @@ void ARoomPlannerManager::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (UWorld* World = GetWorld())
+	if (ActiveToolMode == EPlannerToolMode::Select)
 	{
-		if (APlayerController* PC = World->GetFirstPlayerController())
-		{
-			if (ActiveToolMode == EPlannerToolMode::Select)
-			{
-				// We no longer need to track drag state here since openings stay selected on click!
-				bWasDraggingOpening = false;
-			}
-
-			if (b2DViewMode && TopDownCameraActor)
-			{
-				if (APawn* Pawn = PC->GetPawn())
-				{
-					FVector PawnLoc = Pawn->GetActorLocation();
-					TopDownCameraActor->SetActorLocation(FVector(PawnLoc.X, PawnLoc.Y, 1500.f));
-					TopDownCameraActor->SetActorRotation(FRotator(-90.f, 0.f, 0.f));
-				}
-			}
-		}
+		// We no longer need to track drag state here since openings stay selected on click!
+		bWasDraggingOpening = false;
 	}
 
 	if (!BoundPSInput.IsValid())
@@ -344,6 +343,9 @@ int32 ARoomPlannerManager::SplitWallSegment(int32 SegmentID, const FVector2D& Sp
 		if (WallActor2)
 		{
 			WallActor2->WallData = Seg2;
+			WallActor2->BaseWallMaterial = DefaultWallMaterial;
+			WallActor2->WallSelectionMaterial = WallSelectionMaterial;
+			WallActor2->OpeningSelectionMaterial = OpeningSelectionMaterial;
 			WallActors.Add(Seg2ID, WallActor2);
 		}
 	}
@@ -393,6 +395,9 @@ int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thi
 		if (WallActor)
 		{
 			WallActor->WallData = Segment;
+			WallActor->BaseWallMaterial = DefaultWallMaterial;
+			WallActor->WallSelectionMaterial = WallSelectionMaterial;
+			WallActor->OpeningSelectionMaterial = OpeningSelectionMaterial;
 			WallActors.Add(SegID, WallActor);
 		}
 	}
@@ -1410,105 +1415,12 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 	if (!bIn2DMode)
 	{
 		bCeilingVisible = true;
+		ClearWallSelection();
 	}
 
 	if (CeilingProceduralMesh)
 	{
 		CeilingProceduralMesh->SetVisibility(bCeilingVisible && !bIn2DMode);
-	}
-
-	if (UWorld* World = GetWorld())
-	{
-		if (APlayerController* PC = World->GetFirstPlayerController())
-		{
-			APawn* Pawn = PC->GetPawn();
-
-			if (bIn2DMode)
-			{
-				SavedControlRotation = PC->GetControlRotation();
-				PC->SetControlRotation(FRotator(0.f, 0.f, 0.f));
-				PC->SetIgnoreLookInput(true);
-				if (!TopDownCameraActor)
-				{
-					FActorSpawnParameters SpawnParams;
-					SpawnParams.Owner = this;
-					SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-					FVector CamLoc(0.f, 0.f, 1600.f);
-					if (Pawn)
-					{
-						CamLoc.X = Pawn->GetActorLocation().X;
-						CamLoc.Y = Pawn->GetActorLocation().Y;
-					}
-					FRotator CamRot(-90.f, 0.f, 0.f);
-					TopDownCameraActor = World->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), CamLoc, CamRot, SpawnParams);
-					if (TopDownCameraActor)
-					{
-						if (UCameraComponent* CamComp = TopDownCameraActor->GetCameraComponent())
-						{
-							CamComp->bConstrainAspectRatio = false;
-							if (ActiveToolMode == EPlannerToolMode::DrawWall)
-							{
-								CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
-								CamComp->OrthoWidth = 2500.f;
-								CamComp->OrthoNearClipPlane = -5000.f;
-								CamComp->OrthoFarClipPlane = 20000.f;
-							}
-							else
-							{
-								CamComp->ProjectionMode = ECameraProjectionMode::Perspective;
-								CamComp->FieldOfView = 80.f;
-							}
-						}
-					}
-				}
-				else
-				{
-					if (UCameraComponent* CamComp = TopDownCameraActor->GetCameraComponent())
-					{
-						CamComp->bConstrainAspectRatio = false;
-						if (ActiveToolMode == EPlannerToolMode::DrawWall)
-						{
-							CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
-							CamComp->OrthoWidth = 2500.f;
-							CamComp->OrthoNearClipPlane = -5000.f;
-							CamComp->OrthoFarClipPlane = 20000.f;
-						}
-						else
-						{
-							CamComp->ProjectionMode = ECameraProjectionMode::Perspective;
-							CamComp->FieldOfView = 80.f;
-						}
-					}
-				}
-
-				if (TopDownCameraActor)
-				{
-					PC->SetViewTarget(TopDownCameraActor);
-				}
-
-				FInputModeGameAndUI InputMode;
-				InputMode.SetHideCursorDuringCapture(false);
-				InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-				PC->SetInputMode(InputMode);
-				PC->bShowMouseCursor = true;
-			}
-			else
-			{
-				ClearWallSelection();
-				if (ACharacter* CharPawn = Cast<ACharacter>(PC->GetPawn()))
-				{
-					PC->ResetIgnoreInputFlags();
-					PC->SetControlRotation(SavedControlRotation);
-					PC->SetIgnoreLookInput(false);
-					PC->SetViewTarget(CharPawn);
-					
-					FInputModeGameAndUI InputMode;
-					InputMode.SetHideCursorDuringCapture(true);
-					InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-					PC->SetInputMode(InputMode);
-				}
-			}
-		}
 	}
 }
 
@@ -1638,6 +1550,9 @@ void ARoomPlannerManager::StartInteractiveWallDraw(const FVector& WorldPos)
 		if (PreviewWallActor)
 		{
 			PreviewWallActor->SetActorEnableCollision(false);
+			PreviewWallActor->BaseWallMaterial = DefaultWallMaterial;
+			PreviewWallActor->WallSelectionMaterial = WallSelectionMaterial;
+			PreviewWallActor->OpeningSelectionMaterial = OpeningSelectionMaterial;
 			if (PreviewWallActor->WallProceduralMesh)
 			{
 				PreviewWallActor->WallProceduralMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -1785,25 +1700,6 @@ void ARoomPlannerManager::SetToolMode(EPlannerToolMode NewToolMode)
 	if (ActiveToolMode != EPlannerToolMode::Select)
 	{
 		ClearWallSelection();
-	}
-
-	if (b2DViewMode && TopDownCameraActor)
-	{
-		if (UCameraComponent* CamComp = TopDownCameraActor->GetCameraComponent())
-		{
-			if (ActiveToolMode == EPlannerToolMode::DrawWall)
-			{
-				CamComp->ProjectionMode = ECameraProjectionMode::Orthographic;
-				CamComp->OrthoWidth = 2500.f;
-				CamComp->OrthoNearClipPlane = -5000.f;
-				CamComp->OrthoFarClipPlane = 20000.f;
-			}
-			else
-			{
-				CamComp->ProjectionMode = ECameraProjectionMode::Perspective;
-				CamComp->FieldOfView = 80.f;
-			}
-		}
 	}
 }
 

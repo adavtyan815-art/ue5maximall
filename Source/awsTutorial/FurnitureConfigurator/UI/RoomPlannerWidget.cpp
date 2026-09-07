@@ -9,32 +9,51 @@
 #include "Components/TextBlock.h"
 #include "Components/EditableTextBox.h"
 #include "Components/Image.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Kismet/GameplayStatics.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
 
 void URoomPlannerWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// ── RELOCATE CHARACTER TO PLANNER AREA ────────────────────────────────
-	if (UWorld* World = GetWorld())
+	// ── RELOCATE CHARACTER TO PLANNER AREA VIA SERVER RPC ────────────────
+	AAwsTutorial_PlayerController* PC = GetPreviewController();
+	APawn* Pawn = nullptr;
+	if (PC)
 	{
-		ACharacter* CharPawn = UGameplayStatics::GetPlayerCharacter(World, 0);
-		AAwsTutorial_PlayerController* PC = GetPreviewController();
-		if (CharPawn)
+		Pawn = PC->GetPawn();
+	}
+	else
+	{
+		Pawn = GetOwningPlayerPawn();
+	}
+	ACharacter* CharPawn = Cast<ACharacter>(Pawn);
+
+	if (CharPawn)
+	{
+		CachedOriginalPlayerLocation = CharPawn->GetActorLocation();
+		CachedOriginalPlayerRotation = CharPawn->GetActorRotation();
+		CachedOriginalControlRotation = PC ? PC->GetControlRotation() : CharPawn->GetActorRotation();
+		bHasCachedPlayerTransform = true;
+
+		FVector SafeSpot = AAwsTutorial_PlayerController::FindNonOverlappingPlannerSpot(GetWorld(), CharPawn, PlannerRelocationLocation);
+
+		UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Requesting server relocation of player to: %s (Original was: %s)"),
+			*SafeSpot.ToString(), *CachedOriginalPlayerLocation.ToString());
+
+		// Immediate local client-side prediction
+		CharPawn->TeleportTo(SafeSpot, FRotator::ZeroRotator, false, true);
+		if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
 		{
-			CachedOriginalPlayerLocation = CharPawn->GetActorLocation();
-			CachedOriginalPlayerRotation = CharPawn->GetActorRotation();
-			CachedOriginalControlRotation = PC ? PC->GetControlRotation() : CharPawn->GetActorRotation();
-			bHasCachedPlayerTransform = true;
+			MoveComp->StopMovementImmediately();
+			MoveComp->SetMovementMode(EMovementMode::MOVE_Walking);
+		}
 
-			UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Relocating player to planner location: %s (Original was: %s)"),
-				*PlannerRelocationLocation.ToString(), *CachedOriginalPlayerLocation.ToString());
-
-			CharPawn->TeleportTo(PlannerRelocationLocation, FRotator::ZeroRotator, false, true);
-			if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
-			{
-				MoveComp->StopMovementImmediately();
-			}
+		if (PC)
+		{
+			PC->Server_EnterRoomPlanner(PlannerRelocationLocation);
 		}
 	}
 
@@ -74,6 +93,25 @@ void URoomPlannerWidget::NativeConstruct()
 	if (EditableTxtOpeningHeight) { EditableTxtOpeningHeight->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnOpeningHeightCommitted); }
 	if (EditableTxtOpeningSillHeight) { EditableTxtOpeningSillHeight->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnOpeningSillHeightCommitted); }
 
+	// UI Sanitization: Immediately collapse contextual/unselected buttons
+	if (BtnSelectTool) BtnSelectTool->SetVisibility(ESlateVisibility::Collapsed);
+	if (BtnAddDoor) BtnAddDoor->SetVisibility(ESlateVisibility::Collapsed);
+	if (BtnAddWindow) BtnAddWindow->SetVisibility(ESlateVisibility::Collapsed);
+	if (EditableTxtOpeningWidth) EditableTxtOpeningWidth->SetVisibility(ESlateVisibility::Collapsed);
+	if (EditableTxtOpeningHeight) EditableTxtOpeningHeight->SetVisibility(ESlateVisibility::Collapsed);
+	if (EditableTxtOpeningWidth_1) EditableTxtOpeningWidth_1->SetVisibility(ESlateVisibility::Collapsed);
+	if (EditableTxtOpeningHeight_1) EditableTxtOpeningHeight_1->SetVisibility(ESlateVisibility::Collapsed);
+	if (EditableTxtOpeningSillHeight) EditableTxtOpeningSillHeight->SetVisibility(ESlateVisibility::Collapsed);
+	if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Collapsed);
+	if (BtnDeleteTool) BtnDeleteTool->SetVisibility(ESlateVisibility::Collapsed);
+	if (Image_2) Image_2->SetVisibility(ESlateVisibility::Collapsed);
+	if (SnapIndicator) SnapIndicator->SetVisibility(ESlateVisibility::Collapsed);
+
+	if (TxtGuidanceHint)
+	{
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или выберите пресет 4х4 м")));
+	}
+
 	if (UWorld* World = GetWorld())
 	{
 		PlannerManager = ARoomPlannerManager::GetOrCreateInstance(World);
@@ -88,20 +126,25 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnApplyProperties) { BtnApplyProperties->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnApplyPropertiesClicked); }
 
 	// Automatically enter 2D Top-Down Drawing Mode on open
+	CurrentViewMode = ERoomPlannerViewMode::View3D;
 	SetViewMode(ERoomPlannerViewMode::View2D);
 	SetToolMode(EPlannerToolMode::DrawWall);
 
 	// Initialize UI state
 	UpdateViewModeButtonStyles();
 	UpdateDynamicPropertiesPanel();
-
 	UpdateSummaryStatsUI();
 	UpdateToolModeButtonStyles();
-	UpdateViewModeButtonStyles();
 }
 
 void URoomPlannerWidget::NativeDestruct()
 {
+	AAwsTutorial_PlayerController* PC = GetPreviewController();
+	if (PC)
+	{
+		PC->SendPixelStreamingResponse(TEXT("PlannerMode:Closed"));
+	}
+
 	if (PlannerManager)
 	{
 		PlannerManager->OnInteractiveWallDragProgress.RemoveAll(this);
@@ -111,36 +154,16 @@ void URoomPlannerWidget::NativeDestruct()
 		PlannerManager->SetViewMode(false);
 	}
 
-	// ── RESTORE CHARACTER TO ORIGINAL LOCATION AND ORIENTATION ─────────────
+	// ── RESTORE CHARACTER TO ORIGINAL LOCATION VIA SERVER RPC ─────────────
 	if (bHasCachedPlayerTransform)
 	{
-		if (UWorld* World = GetWorld())
+		if (PC)
 		{
-			ACharacter* CharPawn = UGameplayStatics::GetPlayerCharacter(World, 0);
-			AAwsTutorial_PlayerController* PC = GetPreviewController();
-			if (CharPawn)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Restoring player to original location: %s (Rot: %s)"),
-					*CachedOriginalPlayerLocation.ToString(), *CachedOriginalPlayerRotation.ToString());
+			UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Restoring player to original location: %s (Rot: %s)"),
+				*CachedOriginalPlayerLocation.ToString(), *CachedOriginalPlayerRotation.ToString());
 
-				CharPawn->TeleportTo(CachedOriginalPlayerLocation, CachedOriginalPlayerRotation, false, true);
-				if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
-				{
-					MoveComp->StopMovementImmediately();
-				}
-			}
-
-			if (PC)
-			{
-				PC->ResetIgnoreInputFlags();
-				PC->SetControlRotation(CachedOriginalControlRotation);
-				PC->SetIgnoreLookInput(false);
-				PC->SetIgnoreMoveInput(false);
-				if (CharPawn)
-				{
-					PC->SetViewTarget(CharPawn);
-				}
-			}
+			PC->Server_ExitRoomPlanner(CachedOriginalPlayerLocation, CachedOriginalPlayerRotation);
+			PC->RestorePlayerCamera();
 		}
 		bHasCachedPlayerTransform = false;
 	}
@@ -148,9 +171,115 @@ void URoomPlannerWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+FReply URoomPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (CurrentViewMode == ERoomPlannerViewMode::View2D && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		AAwsTutorial_PlayerController* PC = GetPreviewController();
+		if (PlannerManager && PC)
+		{
+			FVector WorldOrigin, WorldDirection;
+			if (PC->DeprojectMousePositionToWorld(WorldOrigin, WorldDirection) && !FMath::IsNearlyZero(WorldDirection.Z))
+			{
+				float t = -WorldOrigin.Z / WorldDirection.Z;
+				if (t >= 0.f)
+				{
+					FVector GroundPos = WorldOrigin + t * WorldDirection;
+					GroundPos.Z = 0.f;
+
+					if (PlannerManager->ActiveToolMode == EPlannerToolMode::DrawWall)
+					{
+						bIsWidgetDrawingWall = true;
+						PlannerManager->StartInteractiveWallDraw(GroundPos);
+						UpdateMouseCursorPosition();
+						return FReply::Handled().CaptureMouse(TakeWidget());
+					}
+					else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Select)
+					{
+						PlannerManager->SelectWallAtWorldPos(GroundPos);
+						UpdateDynamicPropertiesPanel();
+						return FReply::Handled();
+					}
+					else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Erase)
+					{
+						int32 TargetSeg = PlannerManager->SelectWallAtWorldPos(GroundPos);
+						if (TargetSeg != -1)
+						{
+							PC->Server_DeleteWall(TargetSeg);
+						}
+						return FReply::Handled();
+					}
+				}
+			}
+		}
+	}
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+FReply URoomPlannerWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (CurrentViewMode == ERoomPlannerViewMode::View2D)
+	{
+		AAwsTutorial_PlayerController* PC = GetPreviewController();
+		if (PlannerManager && PC)
+		{
+			FVector WorldOrigin, WorldDirection;
+			if (PC->DeprojectMousePositionToWorld(WorldOrigin, WorldDirection) && !FMath::IsNearlyZero(WorldDirection.Z))
+			{
+				float t = -WorldOrigin.Z / WorldDirection.Z;
+				if (t >= 0.f)
+				{
+					FVector GroundPos = WorldOrigin + t * WorldDirection;
+					GroundPos.Z = 0.f;
+
+					if (bIsWidgetDrawingWall && PlannerManager->ActiveToolMode == EPlannerToolMode::DrawWall)
+					{
+						PlannerManager->UpdateInteractiveWallDraw(GroundPos);
+						UpdateMouseCursorPosition();
+						return FReply::Handled();
+					}
+					else if (!bIsWidgetDrawingWall && PlannerManager->ActiveToolMode == EPlannerToolMode::DrawWall)
+					{
+						PlannerManager->CheckHoverSnapHint(GroundPos);
+					}
+				}
+			}
+		}
+	}
+	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
+}
+
+FReply URoomPlannerWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && bIsWidgetDrawingWall)
+	{
+		bIsWidgetDrawingWall = false;
+		UpdateMouseCursorPosition();
+		AAwsTutorial_PlayerController* PC = GetPreviewController();
+		if (PlannerManager)
+		{
+			FVector2D P1(PlannerManager->GetDragStartPoint().X, PlannerManager->GetDragStartPoint().Y);
+			FVector2D P2(PlannerManager->GetDragCurrentPoint().X, PlannerManager->GetDragCurrentPoint().Y);
+			PlannerManager->CommitInteractiveWallDraw();
+
+			if (FVector2D::Distance(P1, P2) >= 10.f && PC)
+			{
+				PC->Server_CommitWall(P1, P2);
+			}
+		}
+		return FReply::Handled().ReleaseMouseCapture();
+	}
+	return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
 void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (bIsWidgetDrawingWall)
+	{
+		UpdateMouseCursorPosition();
+	}
 
 	if (!PlannerManager && GetWorld())
 	{
@@ -160,9 +289,11 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 			PlannerManager->OnInteractiveWallDragProgress.AddUniqueDynamic(this, &URoomPlannerWidget::HandleWallDragProgress);
 			PlannerManager->OnWallSelected.AddUniqueDynamic(this, &URoomPlannerWidget::OnWallSelected);
 			PlannerManager->OnRoomPlannerUpdated.AddUniqueDynamic(this, &URoomPlannerWidget::HandleRoomPlannerUpdated);
+			PlannerManager->SetViewMode(CurrentViewMode == ERoomPlannerViewMode::View2D);
 			UpdateSummaryStatsUI();
 			UpdateViewModeButtonStyles();
 			UpdateDynamicPropertiesPanel();
+			UpdateToolModeButtonStyles();
 		}
 	}
 
@@ -212,9 +343,15 @@ void URoomPlannerWidget::SetViewMode(ERoomPlannerViewMode NewMode)
 {
 	if (CurrentViewMode == NewMode) return;
 	CurrentViewMode = NewMode;
+	AAwsTutorial_PlayerController* PC = GetPreviewController();
 	if (PlannerManager)
 	{
 		PlannerManager->SetViewMode(NewMode == ERoomPlannerViewMode::View2D);
+	}
+	if (PC)
+	{
+		PC->SetRoomPlannerCamera2D(NewMode == ERoomPlannerViewMode::View2D, PlannerRelocationLocation);
+		PC->SendPixelStreamingResponse(NewMode == ERoomPlannerViewMode::View2D ? TEXT("PlannerMode:2D") : TEXT("PlannerMode:3D"));
 	}
 	UpdateViewModeButtonStyles();
 	UpdateDynamicPropertiesPanel();
@@ -226,6 +363,10 @@ void URoomPlannerWidget::SetToolMode(EPlannerToolMode NewToolMode)
 	if (PlannerManager)
 	{
 		PlannerManager->SetToolMode(NewToolMode);
+	}
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		PC->UpdateRoomPlannerCameraToolMode(NewToolMode);
 	}
 	UpdateToolModeButtonStyles();
 	UpdateGuidanceHintText();
@@ -310,7 +451,7 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 
 	if (!PlannerManager)
 	{
-		TxtGuidanceHint->SetText(FText::FromString(TEXT("2D Режим: Зажмите и тяните ЛКМ для создания стены")));
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или выберите пресет 4х4 м")));
 		return;
 	}
 
@@ -458,33 +599,14 @@ void URoomPlannerWidget::ClosePlanner()
 {
 	if (bHasCachedPlayerTransform)
 	{
-		if (UWorld* World = GetWorld())
+		AAwsTutorial_PlayerController* PC = GetPreviewController();
+		if (PC)
 		{
-			ACharacter* CharPawn = UGameplayStatics::GetPlayerCharacter(World, 0);
-			AAwsTutorial_PlayerController* PC = GetPreviewController();
-			if (CharPawn)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Restoring player to original location: %s (Rot: %s)"),
-					*CachedOriginalPlayerLocation.ToString(), *CachedOriginalPlayerRotation.ToString());
+			UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Restoring player to original location: %s (Rot: %s)"),
+				*CachedOriginalPlayerLocation.ToString(), *CachedOriginalPlayerRotation.ToString());
 
-				CharPawn->TeleportTo(CachedOriginalPlayerLocation, CachedOriginalPlayerRotation, false, true);
-				if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
-				{
-					MoveComp->StopMovementImmediately();
-				}
-			}
-
-			if (PC)
-			{
-				PC->ResetIgnoreInputFlags();
-				PC->SetControlRotation(CachedOriginalControlRotation);
-				PC->SetIgnoreLookInput(false);
-				PC->SetIgnoreMoveInput(false);
-				if (CharPawn)
-				{
-					PC->SetViewTarget(CharPawn);
-				}
-			}
+			PC->Server_ExitRoomPlanner(CachedOriginalPlayerLocation, CachedOriginalPlayerRotation);
+			PC->RestorePlayerCamera();
 		}
 		bHasCachedPlayerTransform = false;
 	}
@@ -499,6 +621,14 @@ void URoomPlannerWidget::OnCloseClicked()
 
 void URoomPlannerWidget::OnWallSelected(int32 SegmentID, float LengthMeters)
 {
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		if (SegmentID != -1)
+		{
+			PC->UpdateRoomPlannerCameraToolMode(EPlannerToolMode::Select);
+		}
+	}
+
 	UpdateDynamicPropertiesPanel();
 	UpdateGuidanceHintText();
 
@@ -727,13 +857,62 @@ void URoomPlannerWidget::OnOpeningSillHeightCommitted(const FText& Text, ETextCo
 	}
 }
 
-#include "Blueprint/WidgetLayoutLibrary.h"
+void URoomPlannerWidget::UpdateMouseCursorPosition()
+{
+	if (!mouse_cursor)
+	{
+		mouse_cursor = Cast<UImage>(GetWidgetFromName(TEXT("mouse_cursor")));
+	}
+	if (!mouse_cursor)
+	{
+		return;
+	}
+
+	bool bIsDrawing = (bIsWidgetDrawingWall || (PlannerManager && PlannerManager->IsWallDrawingActive()));
+	if (bIsDrawing && PlannerManager)
+	{
+		mouse_cursor->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+		APlayerController* PC = GetPreviewController();
+		if (!PC) PC = GetOwningPlayer();
+
+		if (PC)
+		{
+			FVector EndPointWorld = PlannerManager->GetDragCurrentPoint();
+			FVector2D ScreenPos;
+			if (PC->ProjectWorldLocationToScreen(EndPointWorld, ScreenPos))
+			{
+				float DPIScale = UWidgetLayoutLibrary::GetViewportScale(this);
+				if (DPIScale > 0.001f)
+				{
+					ScreenPos /= DPIScale;
+				}
+
+				if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(mouse_cursor->Slot))
+				{
+					CanvasSlot->SetPosition(ScreenPos);
+					mouse_cursor->SetRenderTranslation(FVector2D::ZeroVector);
+				}
+				else
+				{
+					mouse_cursor->SetRenderTranslation(ScreenPos);
+				}
+			}
+		}
+	}
+	else
+	{
+		mouse_cursor->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
 
 void URoomPlannerWidget::HandleWallDragProgress(float LengthMeters, FVector MidpointWorld, float AngleDeg, bool bIsSnapped)
 {
 	CurrentDragLengthMeters = LengthMeters;
 	CurrentDragMidpointWorld = MidpointWorld;
 	bIsAngleSnapped = bIsSnapped;
+
+	UpdateMouseCursorPosition();
 
 	if (TxtLiveLength)
 	{

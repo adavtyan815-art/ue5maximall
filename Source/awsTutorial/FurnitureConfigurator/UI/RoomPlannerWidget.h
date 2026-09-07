@@ -30,6 +30,15 @@ public:
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
+protected:
+	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+
+	bool bIsWidgetDrawingWall = false;
+
+public:
+
 	/** Closes this room planner widget, restores 3D character view, and removes from parent. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void ClosePlanner();
@@ -181,6 +190,11 @@ public:
 
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UWidget> SnapIndicator;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UImage> mouse_cursor;
+
+	void UpdateMouseCursorPosition();
 
 	// --- Dynamic Properties Panel ---
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
