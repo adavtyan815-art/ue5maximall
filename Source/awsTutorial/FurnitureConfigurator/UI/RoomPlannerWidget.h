@@ -506,6 +506,9 @@ private:
 	UPROPERTY()
 	TObjectPtr<UColorCatalogWidget> ActivePlannerColorCatalog;
 
+	/** Visibility of this widget before the RAL/NCS catalog collapsed it; restored on close instead of forcing Visible. */
+	ESlateVisibility VisibilityBeforePaintCatalog = ESlateVisibility::Visible;
+
 	float OperationMessageClearTime = 0.f;
 	EPlannerSelectionKind LastNotifiedSelectionKind = EPlannerSelectionKind::None;
 	bool bManagerDelegatesBound = false;

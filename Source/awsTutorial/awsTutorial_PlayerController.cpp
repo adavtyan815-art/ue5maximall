@@ -2103,11 +2103,7 @@ void AAwsTutorial_PlayerController::SetRoomPlannerCamera2D(bool bIn2D, FVector C
 			SetViewTargetWithBlend(RoomPlannerTopDownCamera, PlannerCameraBlendTime);
 		}
 
-		FInputModeGameAndUI InputMode;
-		InputMode.SetHideCursorDuringCapture(false);
-		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-		SetInputMode(InputMode);
-		bShowMouseCursor = true;
+		ApplyRoomPlannerInputMode(true);
 	}
 	else
 	{
@@ -2118,6 +2114,27 @@ void AAwsTutorial_PlayerController::SetRoomPlannerCamera2D(bool bIn2D, FVector C
 			SetViewTargetWithBlend(ControlledPawn, 0.3f);
 		}
 
+		ApplyRoomPlannerInputMode(false);
+	}
+}
+
+void AAwsTutorial_PlayerController::ApplyRoomPlannerInputMode(bool bIn2D)
+{
+	if (!IsLocalController()) return;
+
+	if (bIn2D)
+	{
+		// Identical to the 2D branch of SetRoomPlannerCamera2D: the cursor must stay visible and free while
+		// LMB is held, otherwise the viewport captures the mouse and every cursor-driven drag freezes.
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(InputMode);
+		bShowMouseCursor = true;
+	}
+	else
+	{
+		// Identical to the 3D branch of SetRoomPlannerCamera2D.
 		FInputModeGameAndUI InputMode;
 		InputMode.SetHideCursorDuringCapture(true);
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
@@ -2319,6 +2336,16 @@ bool AAwsTutorial_PlayerController::Server_UpdateOpeningPosition_Validate(int32 
 // Every mutation ends with OnRep_ReplicatedRoomJSON() so the server rebuilds from the
 // same JSON the clients receive (established replication model, REQ-15).
 // ─────────────────────────────────────────────────────────────────────────────
+
+void AAwsTutorial_PlayerController::Server_SetWallDimensions_Implementation(int32 SegmentID, float HeightCm, float ThicknessCm)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetWallDimensions(SegmentID, HeightCm, ThicknessCm);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_SetWallDimensions_Validate(int32 SegmentID, float HeightCm, float ThicknessCm) { return true; }
 
 void AAwsTutorial_PlayerController::Server_MoveNode_Implementation(int32 NodeID, FVector2D NewPosition)
 {

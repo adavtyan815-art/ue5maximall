@@ -611,11 +611,173 @@ void ARoomPlannerManager::ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FV
                                                      TMap<int32, FVector2D>& OutEndLeftOffsets,
                                                      TMap<int32, FVector2D>& OutEndRightOffsets)
 {
-	// Centerline extension logic is handled in RebuildAllWalls to ensure clean corner closing.
+	// Centerline extension logic is handled in RebuildAllWalls / ComputeMitreCorner to ensure clean corner closing.
+}
+
+void ARoomPlannerManager::ComputeAllCornerJoints()
+{
+	CornerJoints.Reset();
+
+	struct FEntry
+	{
+		int32 SegID = -1;
+		FVector2D A = FVector2D::ZeroVector;     // outgoing direction from the node into the wall
+		FVector2D NLeft = FVector2D::ZeroVector; // the wall's own LEFT face normal (start->end terms, matches the mesh builder)
+		bool bCCWIsLeft = true;                  // true when the counter-clockwise face (w.r.t. A) is the wall's LEFT face
+		float Half = 10.f;
+		float Thickness = 20.f;
+		float Len = 0.f;
+		float Angle = 0.f;
+	};
+
+	auto Cross2 = [](const FVector2D& U, const FVector2D& V) { return U.X * V.Y - U.Y * V.X; };
+
+	for (const auto& NodePair : Nodes)
+	{
+		const int32 NodeID = NodePair.Key;
+		const FVector2D N = NodePair.Value.Position;
+
+		// Gather the walls leaving this node.
+		TArray<FEntry> Entries;
+		for (int32 SegID : NodePair.Value.ConnectedSegmentIDs)
+		{
+			const FWallSegment* Seg = WallSegments.Find(SegID);
+			if (!Seg || (Seg->StartNodeID != NodeID && Seg->EndNodeID != NodeID)) continue;
+			const FWallNode* S = Nodes.Find(Seg->StartNodeID);
+			const FWallNode* E = Nodes.Find(Seg->EndNodeID);
+			if (!S || !E) continue;
+			const float Len = FVector2D::Distance(S->Position, E->Position);
+			if (Len < 1.f) continue;
+
+			FEntry En;
+			En.SegID = SegID;
+			const FVector2D Dir = (E->Position - S->Position) / Len;
+			En.NLeft = FVector2D(-Dir.Y, Dir.X);
+			const bool bAtStart = (Seg->StartNodeID == NodeID);
+			En.A = bAtStart ? Dir : -Dir;
+			En.bCCWIsLeft = bAtStart; // CCW normal of A is (-A.Y, A.X): equals NLeft when A == Dir, -NLeft when A == -Dir
+			En.Half = Seg->Thickness * 0.5f;
+			En.Thickness = Seg->Thickness;
+			En.Len = Len;
+			En.Angle = FMath::Atan2(En.A.Y, En.A.X);
+			Entries.Add(En);
+		}
+		if (Entries.Num() == 0) continue;
+
+		// Per-wall face state at this node (indexed like Entries): CCW face / CW face w.r.t. the wall's outgoing direction.
+		const int32 NumWalls = Entries.Num();
+		TArray<bool> bCCWMitred, bCWMitred;
+		TArray<FVector2D> CCWPoint, CWPoint;
+		TArray<int32> CCWPartner, CWPartner;
+		bCCWMitred.Init(false, NumWalls);
+		bCWMitred.Init(false, NumWalls);
+		CCWPoint.Init(FVector2D::ZeroVector, NumWalls);
+		CWPoint.Init(FVector2D::ZeroVector, NumWalls);
+		CCWPartner.Init(-1, NumWalls);
+		CWPartner.Init(-1, NumWalls);
+
+		if (NumWalls >= 2)
+		{
+			// Counter-clockwise order around the node.
+			TArray<int32> Order;
+			for (int32 i = 0; i < NumWalls; ++i) Order.Add(i);
+			Order.Sort([&Entries](int32 L, int32 R) { return Entries[L].Angle < Entries[R].Angle; });
+
+			const int32 Count = Order.Num();
+			for (int32 k = 0; k < Count; ++k)
+			{
+				const int32 i = Order[k];
+				const int32 j = Order[(k + 1) % Count]; // next wall counter-clockwise
+				if (i == j) continue;
+
+				const FEntry& Wi = Entries[i];
+				const FEntry& Wj = Entries[j];
+
+				const float Cross = Cross2(Wi.A, Wj.A);
+				if (FMath::Abs(Cross) < 0.02f) continue; // parallel / collinear: flush caps
+
+				// Wedge between wall i and wall j is bounded by i's CCW face and j's CW face.
+				const FVector2D NCCW_i(-Wi.A.Y, Wi.A.X);
+				const FVector2D NCW_j(Wj.A.Y, -Wj.A.X);
+				const FVector2D P1 = N + NCCW_i * Wi.Half;
+				const FVector2D P2 = N + NCW_j * Wj.Half;
+				const FVector2D D = P2 - P1;
+
+				// P1 + t*Ai = P2 + s*Aj
+				const float T = Cross2(D, Wj.A) / Cross;
+				const float Sv = Cross2(D, Wi.A) / Cross;
+
+				// One shared decision for the pair.
+				const float Limit = FMath::Min(3.f * FMath::Max(Wi.Thickness, Wj.Thickness), 0.5f * FMath::Min(Wi.Len, Wj.Len));
+				if (FMath::Abs(T) > Limit || FMath::Abs(Sv) > Limit) continue;
+
+				const FVector2D Point = P1 + Wi.A * T;
+
+				bCCWMitred[i] = true; CCWPoint[i] = Point; CCWPartner[i] = j;
+				bCWMitred[j] = true;  CWPoint[j] = Point;  CWPartner[j] = i;
+			}
+
+			// A wall end may stay mitred only when BOTH of its faces are mitred. A half-mitred end would be
+			// drawn with a diagonal cap across the wall body (holes at T-junctions, spikes at acute branches).
+			// Reverting a wall also un-mitres the partner faces that were paired with it, until stable.
+			bool bChanged = true;
+			while (bChanged)
+			{
+				bChanged = false;
+				for (int32 i = 0; i < NumWalls; ++i)
+				{
+					if (bCCWMitred[i] == bCWMitred[i]) continue; // both or none: consistent
+
+					if (bCCWMitred[i])
+					{
+						bCCWMitred[i] = false;
+						const int32 j = CCWPartner[i];
+						if (j >= 0 && bCWMitred[j] && CWPartner[j] == i)
+						{
+							bCWMitred[j] = false;
+						}
+					}
+					if (bCWMitred[i])
+					{
+						bCWMitred[i] = false;
+						const int32 k = CWPartner[i];
+						if (k >= 0 && bCCWMitred[k] && CCWPartner[k] == i)
+						{
+							bCCWMitred[k] = false;
+						}
+					}
+					bChanged = true;
+				}
+			}
+		}
+
+		// Build the joints: plain node offsets by default, mitre points where the pair survived.
+		for (int32 i = 0; i < NumWalls; ++i)
+		{
+			const FEntry& W = Entries[i];
+			FWallCornerJoint J;
+			J.Left = N + W.NLeft * W.Half;
+			J.Right = N - W.NLeft * W.Half;
+
+			if (bCCWMitred[i])
+			{
+				if (W.bCCWIsLeft) { J.Left = CCWPoint[i]; J.bLeftMitred = true; }
+				else              { J.Right = CCWPoint[i]; J.bRightMitred = true; }
+			}
+			if (bCWMitred[i])
+			{
+				if (W.bCCWIsLeft) { J.Right = CWPoint[i]; J.bRightMitred = true; }
+				else              { J.Left = CWPoint[i]; J.bLeftMitred = true; }
+			}
+			CornerJoints.Add(MakeJointKey(W.SegID, NodeID), J);
+		}
+	}
 }
 
 void ARoomPlannerManager::RebuildAllWalls()
 {
+	ComputeAllCornerJoints();
+
 	for (auto& Pair : WallActors)
 	{
 		int32 SegID = Pair.Key;
@@ -639,89 +801,19 @@ void ARoomPlannerManager::RebuildAllWalls()
 			bool bStartCap = true;
 			bool bEndCap = true;
 
-			// --- Calculate Start Bisector Corner ---
-			if (const FWallNode* StartNode = Nodes.Find(Seg->StartNodeID))
+			// Corner joints from the per-node pre-pass (shared decision per face pair, 2..N walls per node).
+			// A cap is drawn whenever at least one face of this end is not mitred.
+			if (const FWallCornerJoint* J = CornerJoints.Find(MakeJointKey(SegID, Seg->StartNodeID)))
 			{
-				if (StartNode->ConnectedSegmentIDs.Num() == 2)
-				{
-					int32 OtherSegID = (StartNode->ConnectedSegmentIDs[0] == SegID) ? StartNode->ConnectedSegmentIDs[1] : StartNode->ConnectedSegmentIDs[0];
-					if (const FWallSegment* OtherSeg = WallSegments.Find(OtherSegID))
-					{
-						FVector2D OtherEnd = (OtherSeg->StartNodeID == Seg->StartNodeID) ? Nodes[OtherSeg->EndNodeID].Position : Nodes[OtherSeg->StartNodeID].Position;
-						FVector2D OtherDir = (OtherEnd - StartPos).GetSafeNormal();
-
-						float Cross = Dir.X * OtherDir.Y - Dir.Y * OtherDir.X;
-						float Dot = FVector2D::DotProduct(Dir, OtherDir);
-
-						if (FMath::Abs(Cross) > 0.02f)
-						{
-							float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
-							float SinHalf = FMath::Sin(AngleRad * 0.5f);
-							float BisectorDist = (SinHalf > 0.05f) ? (HalfThick / SinHalf) : HalfThick;
-							BisectorDist = FMath::Clamp(BisectorDist, HalfThick, Seg->Thickness * 2.5f);
-
-							FVector2D Bisector = (Dir + OtherDir).GetSafeNormal();
-
-							if (Cross > 0.f)
-							{
-								// Turn Left: Left side is inside corner (+Bisector), Right side is outside apex (-Bisector)
-								SL2D = StartPos + Bisector * BisectorDist;
-								SR2D = StartPos - Bisector * BisectorDist;
-							}
-							else
-							{
-								// Turn Right: Right side is inside corner (+Bisector), Left side is outside apex (-Bisector)
-								SL2D = StartPos - Bisector * BisectorDist;
-								SR2D = StartPos + Bisector * BisectorDist;
-							}
-
-							bStartCap = false; // Seamless bisector seam with connecting wall
-						}
-					}
-				}
+				SL2D = J->Left;
+				SR2D = J->Right;
+				bStartCap = !(J->bLeftMitred && J->bRightMitred);
 			}
-
-			// --- Calculate End Bisector Corner ---
-			if (const FWallNode* EndNode = Nodes.Find(Seg->EndNodeID))
+			if (const FWallCornerJoint* J = CornerJoints.Find(MakeJointKey(SegID, Seg->EndNodeID)))
 			{
-				if (EndNode->ConnectedSegmentIDs.Num() == 2)
-				{
-					int32 OtherSegID = (EndNode->ConnectedSegmentIDs[0] == SegID) ? EndNode->ConnectedSegmentIDs[1] : EndNode->ConnectedSegmentIDs[0];
-					if (const FWallSegment* OtherSeg = WallSegments.Find(OtherSegID))
-					{
-						FVector2D OtherEnd = (OtherSeg->StartNodeID == Seg->EndNodeID) ? Nodes[OtherSeg->EndNodeID].Position : Nodes[OtherSeg->StartNodeID].Position;
-						FVector2D OtherDir = (OtherEnd - EndPos).GetSafeNormal();
-						FVector2D AwayDir = -Dir;
-
-						float Cross = AwayDir.X * OtherDir.Y - AwayDir.Y * OtherDir.X;
-						float Dot = FVector2D::DotProduct(AwayDir, OtherDir);
-
-						if (FMath::Abs(Cross) > 0.02f)
-						{
-							float AngleRad = FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f));
-							float SinHalf = FMath::Sin(AngleRad * 0.5f);
-							float BisectorDist = (SinHalf > 0.05f) ? (HalfThick / SinHalf) : HalfThick;
-							BisectorDist = FMath::Clamp(BisectorDist, HalfThick, Seg->Thickness * 2.5f);
-
-							FVector2D Bisector = (AwayDir + OtherDir).GetSafeNormal();
-
-							if (Cross > 0.f)
-							{
-								// Turn Left relative to AwayDir (which is segment's Right side: ER2D)
-								ER2D = EndPos + Bisector * BisectorDist;
-								EL2D = EndPos - Bisector * BisectorDist;
-							}
-							else
-							{
-								// Turn Right relative to AwayDir (which is segment's Left side: EL2D)
-								EL2D = EndPos + Bisector * BisectorDist;
-								ER2D = EndPos - Bisector * BisectorDist;
-							}
-
-							bEndCap = false; // Seamless bisector seam with connecting wall
-						}
-					}
-				}
+				EL2D = J->Left;
+				ER2D = J->Right;
+				bEndCap = !(J->bLeftMitred && J->bRightMitred);
 			}
 
 			WallActor->WallData = *Seg;
@@ -1225,7 +1317,25 @@ void ARoomPlannerManager::RebuildRooms()
 			TArray<FVector2D> CeilUVs;
 			TArray<FColor> CeilColors;
 
-			float CeilZ = 280.f;
+			// Ceiling sits on the tallest wall of this room (walls whose both corners are polygon vertices).
+			float CeilZ = 0.f;
+			for (const auto& SegPair : WallSegments)
+			{
+				const FWallNode* SNode = Nodes.Find(SegPair.Value.StartNodeID);
+				const FWallNode* ENode = Nodes.Find(SegPair.Value.EndNodeID);
+				if (!SNode || !ENode) continue;
+				bool bStartOnPoly = false, bEndOnPoly = false;
+				for (const FVector2D& PV : FloorPolygon)
+				{
+					if (FVector2D::DistSquared(PV, SNode->Position) < 4.f) bStartOnPoly = true;
+					if (FVector2D::DistSquared(PV, ENode->Position) < 4.f) bEndOnPoly = true;
+				}
+				if (bStartOnPoly && bEndOnPoly)
+				{
+					CeilZ = FMath::Max(CeilZ, SegPair.Value.Height);
+				}
+			}
+			if (CeilZ <= 0.f) CeilZ = 280.f;
 			for (int32 i = 0; i < VertCount; ++i)
 			{
 				CeilVerts.Add(FVector(FloorPolygon[i].X, FloorPolygon[i].Y, CeilZ));
@@ -2394,6 +2504,47 @@ bool ARoomPlannerManager::SetWallLength(int32 SegmentID, float NewLengthMeters)
 	return false;
 }
 
+bool ARoomPlannerManager::SetWallDimensions(int32 SegmentID, float HeightCm, float ThicknessCm)
+{
+	FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg) return false;
+
+	if (HeightCm < 10.f || HeightCm > 1000.f)
+	{
+		BroadcastRejected(TEXT("Высота стены должна быть от 10 до 1000 см"));
+		return false;
+	}
+	if (ThicknessCm < 1.f || ThicknessCm > 200.f)
+	{
+		BroadcastRejected(TEXT("Толщина стены должна быть от 1 до 200 см"));
+		return false;
+	}
+
+	// Existing openings must still fit under the new height (same rule as opening sizing).
+	for (const FWallOpening& Op : Seg->Openings)
+	{
+		if (Op.SillHeight + Op.Height > HeightCm + 0.5f)
+		{
+			BroadcastRejected(FString::Printf(TEXT("Проём (%.0f см от пола) выше новой высоты стены %.0f см"), Op.SillHeight + Op.Height, HeightCm));
+			return false;
+		}
+	}
+
+	if (FMath::IsNearlyEqual(Seg->Height, HeightCm, 0.01f) && FMath::IsNearlyEqual(Seg->Thickness, ThicknessCm, 0.01f))
+	{
+		return true; // nothing to do
+	}
+
+	Seg->Height = HeightCm;
+	Seg->Thickness = ThicknessCm;
+
+	RebuildAllWalls();   // recomputes bisector corner joints with the new thickness
+	RebuildRooms();      // ceiling follows the room's wall height
+	CommitStateAfterMutation();
+	UpdateSelectionVisuals();
+	return true;
+}
+
 bool ARoomPlannerManager::DeleteWallAtWorldPos(const FVector& WorldPos)
 {
 	int32 TargetSeg = SelectWallAtWorldPos(WorldPos);
@@ -2920,12 +3071,199 @@ bool ARoomPlannerManager::ApplyNodeMove(int32 NodeID, const FVector2D& NewPositi
 
 bool ARoomPlannerManager::MoveNode(int32 NodeID, const FVector2D& NewPosition)
 {
-	return ApplyNodeMove(NodeID, NewPosition, false);
+	// Server-side: snap exactly like the client preview, validate/apply, then join the node to
+	// whatever it landed on (another corner, or the middle of a wall) so a real junction exists.
+	const FVector2D Snapped = SnapNodeDragPosition(NodeID, NewPosition);
+	if (!ApplyNodeMove(NodeID, Snapped, false))
+	{
+		return false;
+	}
+	TryConnectMovedNode(NodeID);
+	return true;
+}
+
+bool ARoomPlannerManager::MergeNodeInto(int32 NodeID, int32 TargetNodeID)
+{
+	if (NodeID == TargetNodeID || !Nodes.Contains(NodeID) || !Nodes.Contains(TargetNodeID)) return false;
+
+	const TArray<int32> SrcSegs = Nodes[NodeID].ConnectedSegmentIDs;
+	const TArray<int32> TgtSegs = Nodes[TargetNodeID].ConnectedSegmentIDs;
+
+	// Validation: no wall may collapse (both ends on the target) and no duplicate wall may appear.
+	for (int32 SegID : SrcSegs)
+	{
+		const FWallSegment* Seg = WallSegments.Find(SegID);
+		if (!Seg) continue;
+		const int32 OtherEnd = (Seg->StartNodeID == NodeID) ? Seg->EndNodeID : Seg->StartNodeID;
+		if (OtherEnd == TargetNodeID)
+		{
+			BroadcastRejected(TEXT("Стена не может быть соединена сама с собой"));
+			return false;
+		}
+		for (int32 TSegID : TgtSegs)
+		{
+			const FWallSegment* TSeg = WallSegments.Find(TSegID);
+			if (!TSeg) continue;
+			const int32 TOther = (TSeg->StartNodeID == TargetNodeID) ? TSeg->EndNodeID : TSeg->StartNodeID;
+			if (TOther == OtherEnd)
+			{
+				BroadcastRejected(TEXT("Между этими углами уже есть стена"));
+				return false;
+			}
+		}
+	}
+
+	// Re-point every wall of the moved node to the target node.
+	for (int32 SegID : SrcSegs)
+	{
+		if (FWallSegment* Seg = WallSegments.Find(SegID))
+		{
+			if (Seg->StartNodeID == NodeID) Seg->StartNodeID = TargetNodeID;
+			if (Seg->EndNodeID == NodeID) Seg->EndNodeID = TargetNodeID;
+			Nodes[TargetNodeID].ConnectedSegmentIDs.AddUnique(SegID);
+		}
+	}
+	Nodes.Remove(NodeID);
+	if (DraggingNodeID == NodeID) DraggingNodeID = -1;
+	return true;
+}
+
+bool ARoomPlannerManager::TryConnectMovedNode(int32 NodeID)
+{
+	const FWallNode* Node = Nodes.Find(NodeID);
+	if (!Node) return false;
+	const FVector2D Pos = Node->Position;
+	const TArray<int32> MySegs = Node->ConnectedSegmentIDs;
+
+	auto IsNeighbourNode = [&](int32 OtherNodeID) -> bool
+	{
+		for (int32 SegID : MySegs)
+		{
+			const FWallSegment* Seg = WallSegments.Find(SegID);
+			if (Seg && (Seg->StartNodeID == OtherNodeID || Seg->EndNodeID == OtherNodeID)) return true;
+		}
+		return false;
+	};
+
+	// 1. Coincident corner → merge.
+	int32 TargetNodeID = -1;
+	float BestDistSq = 25.f * 25.f;
+	for (const auto& Pair : Nodes)
+	{
+		if (Pair.Key == NodeID || IsNeighbourNode(Pair.Key)) continue;
+		const float D = FVector2D::DistSquared(Pair.Value.Position, Pos);
+		if (D < BestDistSq) { BestDistSq = D; TargetNodeID = Pair.Key; }
+	}
+	if (TargetNodeID != -1)
+	{
+		if (!MergeNodeInto(NodeID, TargetNodeID)) return false;
+		RebuildAllWalls();
+		RebuildRooms();
+		CommitStateAfterMutation();
+		UpdateSelectionVisuals();
+		return true;
+	}
+
+	// 2. Landed on the middle of a wall that is not one of its own → split it (T-junction) and merge with the junction.
+	int32 TargetSegID = -1;
+	FVector2D SplitPoint = Pos;
+	float BestWallDist = TNumericLimits<float>::Max();
+	for (const auto& Pair : WallSegments)
+	{
+		if (MySegs.Contains(Pair.Key)) continue;
+		const FWallSegment& Seg = Pair.Value;
+		if (!Nodes.Contains(Seg.StartNodeID) || !Nodes.Contains(Seg.EndNodeID)) continue;
+		const FVector2D P1 = Nodes[Seg.StartNodeID].Position;
+		const FVector2D P2 = Nodes[Seg.EndNodeID].Position;
+		const float SegLen = FVector2D::Distance(P1, P2);
+		if (SegLen < 40.f) continue;
+		const FVector2D SegDir = (P2 - P1) / SegLen;
+		const float T = FVector2D::DotProduct(Pos - P1, SegDir);
+		if (T < 20.f || T > SegLen - 20.f) continue;
+		const FVector2D Proj = P1 + SegDir * T;
+		const float Dist = FVector2D::Distance(Pos, Proj);
+		if (Dist <= Seg.Thickness * 0.5f + 20.f && Dist < BestWallDist)
+		{
+			BestWallDist = Dist;
+			TargetSegID = Pair.Key;
+			SplitPoint = Proj;
+		}
+	}
+	if (TargetSegID != -1)
+	{
+		const int32 JunctionID = SplitWallSegment(TargetSegID, SplitPoint);
+		if (JunctionID == INDEX_NONE || !Nodes.Contains(NodeID)) return false;
+		if (!MergeNodeInto(NodeID, JunctionID)) return false;
+		RebuildAllWalls();
+		RebuildRooms();
+		CommitStateAfterMutation();
+		UpdateSelectionVisuals();
+		return true;
+	}
+
+	return false;
 }
 
 FVector2D ARoomPlannerManager::SnapNodeDragPosition(int32 NodeID, const FVector2D& RawPos) const
 {
-	// Axis alignment with any other node (keeps walls orthogonal while dragging a corner).
+	const FWallNode* Node = Nodes.Find(NodeID);
+	const TArray<int32> MySegs = Node ? Node->ConnectedSegmentIDs : TArray<int32>();
+
+	auto IsNeighbourNode = [&](int32 OtherNodeID) -> bool
+	{
+		for (int32 SegID : MySegs)
+		{
+			const FWallSegment* Seg = WallSegments.Find(SegID);
+			if (Seg && (Seg->StartNodeID == OtherNodeID || Seg->EndNodeID == OtherNodeID)) return true;
+		}
+		return false;
+	};
+
+	// 1. Magnet to another corner (not a direct neighbour, which would collapse a wall) — 25 cm, same as wall drawing.
+	int32 BestNode = -1;
+	float BestDistSq = 25.f * 25.f;
+	for (const auto& Pair : Nodes)
+	{
+		if (Pair.Key == NodeID || IsNeighbourNode(Pair.Key)) continue;
+		const float D = FVector2D::DistSquared(Pair.Value.Position, RawPos);
+		if (D < BestDistSq) { BestDistSq = D; BestNode = Pair.Key; }
+	}
+	if (BestNode != -1)
+	{
+		return Nodes[BestNode].Position;
+	}
+
+	// 2. Magnet to the centreline of a wall that is not one of its own (T-junction target).
+	float BestWallDist = TNumericLimits<float>::Max();
+	FVector2D WallSnap = RawPos;
+	bool bWallSnap = false;
+	for (const auto& Pair : WallSegments)
+	{
+		if (MySegs.Contains(Pair.Key)) continue;
+		const FWallSegment& Seg = Pair.Value;
+		if (!Nodes.Contains(Seg.StartNodeID) || !Nodes.Contains(Seg.EndNodeID)) continue;
+		const FVector2D P1 = Nodes[Seg.StartNodeID].Position;
+		const FVector2D P2 = Nodes[Seg.EndNodeID].Position;
+		const float SegLen = FVector2D::Distance(P1, P2);
+		if (SegLen < 40.f) continue;
+		const FVector2D SegDir = (P2 - P1) / SegLen;
+		const float T = FVector2D::DotProduct(RawPos - P1, SegDir);
+		if (T < 20.f || T > SegLen - 20.f) continue;
+		const FVector2D Proj = P1 + SegDir * T;
+		const float Dist = FVector2D::Distance(RawPos, Proj);
+		if (Dist <= Seg.Thickness * 0.5f + 20.f && Dist < BestWallDist)
+		{
+			BestWallDist = Dist;
+			WallSnap = Proj;
+			bWallSnap = true;
+		}
+	}
+	if (bWallSnap)
+	{
+		return WallSnap;
+	}
+
+	// 3. Axis alignment with any other node (keeps walls orthogonal while dragging a corner).
 	const float SnapCm = 15.f;
 	FVector2D Snapped = RawPos;
 	float BestDX = SnapCm, BestDY = SnapCm;
@@ -3055,13 +3393,15 @@ void ARoomPlannerManager::RefreshNodeHandles()
 	for (const auto& Pair : Nodes)
 	{
 		const bool bActive = (Pair.Key == DraggingNodeID);
-		const float Radius = bActive ? 16.f : 12.f;
-		float MaxHeight = 280.f;
+		// Floor-level handle: drawn just above the floor slab and wider than the thickest wall at the node,
+		// so a ring stays visible around the wall footprint from the top-down camera.
+		float MaxHalfThickness = 10.f;
 		for (int32 SegID : Pair.Value.ConnectedSegmentIDs)
 		{
-			if (const FWallSegment* Seg = WallSegments.Find(SegID)) MaxHeight = FMath::Max(MaxHeight, Seg->Height);
+			if (const FWallSegment* Seg = WallSegments.Find(SegID)) MaxHalfThickness = FMath::Max(MaxHalfThickness, Seg->Thickness * 0.5f);
 		}
-		const float Z = MaxHeight + 6.f;
+		const float Radius = FMath::Max(bActive ? 16.f : 12.f, MaxHalfThickness + (bActive ? 10.f : 6.f));
+		const float Z = 2.f;
 
 		TArray<FVector> V; TArray<int32> T; TArray<FVector> N; TArray<FVector2D> UV;
 		const FVector2D C = Pair.Value.Position;

@@ -313,6 +313,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool SetWallLength(int32 SegmentID, float NewLengthMeters);
 
+	/**
+	 * Sets the wall's height and thickness in cm (REQ-01). Refused (with OnOperationRejected) when an opening
+	 * would end above the new height, or when a value is out of range (height 10..1000 cm, thickness 1..200 cm).
+	 * Corner joints are recomputed by RebuildAllWalls; the change is committed to ReplicatedRoomJSON.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool SetWallDimensions(int32 SegmentID, float HeightCm, float ThicknessCm);
+
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool DeleteWallAtWorldPos(const FVector& WorldPos);
 
@@ -654,6 +662,33 @@ private:
 
 	// Internal helpers
 	void ClearWallsAndRooms();
+
+	/** Corner points of one wall end (in the wall's own left/right terms) and whether each face was mitred against a neighbour. */
+	struct FWallCornerJoint
+	{
+		FVector2D Left = FVector2D::ZeroVector;
+		FVector2D Right = FVector2D::ZeroVector;
+		bool bLeftMitred = false;
+		bool bRightMitred = false;
+	};
+
+	/** Joints computed by the pre-pass, keyed by (SegmentID, NodeID). Rebuilt on every RebuildAllWalls. */
+	TMap<uint64, FWallCornerJoint> CornerJoints;
+
+	static uint64 MakeJointKey(int32 SegID, int32 NodeID) { return ((uint64)(uint32)SegID << 32) | (uint64)(uint32)NodeID; }
+
+	/**
+	 * Joint pre-pass: at every node the connected walls are sorted by angle; each wall's counter-clockwise
+	 * face is intersected with the next wall's clockwise face (each with its own thickness). The decision
+	 * to mitre or fall back is taken once per face pair, so both walls always agree. Works for 2, 3 or more walls.
+	 */
+	void ComputeAllCornerJoints();
+
+	/** Re-points every wall of NodeID to TargetNodeID and deletes NodeID. Refused if a wall would collapse or duplicate another. */
+	bool MergeNodeInto(int32 NodeID, int32 TargetNodeID);
+
+	/** After a node move: joins the node to a coincident node, or splits a wall it landed on and joins the junction. */
+	bool TryConnectMovedNode(int32 NodeID);
 	void BroadcastRejected(const FString& Reason);
 	bool ApplyNodeMove(int32 NodeID, const FVector2D& NewPosition, bool bLocalPreviewOnly);
 	bool ValidateOpeningFits(const FWallSegment& Seg, float WallLengthCm, const FWallOpening& Candidate, int32 IgnoreOpeningIndex, FString& OutReason) const;

@@ -67,6 +67,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
 	void RestorePlayerCamera();
 
+	/**
+	 * Re-applies the planner input mode exactly as SetRoomPlannerCamera2D does (2D: GameAndUI, cursor kept
+	 * visible during capture; 3D: GameAndUI, cursor hidden during capture; never locks the mouse), without
+	 * touching the camera or control rotation. Used after overlay UI (e.g. the RAL/NCS catalog) closes.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
+	void ApplyRoomPlannerInputMode(bool bIn2D);
+
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	static FVector FindNonOverlappingPlannerSpot(UWorld* World, AActor* IgnoreActor, const FVector& BaseLocation);
 
@@ -101,6 +109,10 @@ public:
 	void Server_UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm);
 
 	// ── Room Planner: control points, swing, finishing, objects, cabinet sets, project (REQ-02..18) ──
+
+	/** Sets the selected wall's height and thickness in cm (REQ-01); validated and replicated like every other wall edit. */
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetWallDimensions(int32 SegmentID, float HeightCm, float ThicknessCm);
 
 	/** Moves a wall corner (control point). Openings stay attached; refused if one no longer fits (REQ-02 / REQ-09). */
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")

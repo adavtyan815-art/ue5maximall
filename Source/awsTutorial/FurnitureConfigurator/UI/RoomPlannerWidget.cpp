@@ -816,8 +816,19 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 				float LenCm = PlannerManager->GetWallLength(PlannerManager->SelectedSegmentID) * 100.f;
 				EditableTxtProp1->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), LenCm)));
 			}
-			if (EditableTxtProp2) EditableTxtProp2->SetVisibility(ESlateVisibility::Hidden);
-			if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
+			// REQ-01: Prop2 = wall height (cm), Prop3 = wall thickness (cm)
+			FWallSegment SelSeg;
+			const bool bHaveSeg = PlannerManager->GetWallSegmentData(PlannerManager->SelectedSegmentID, SelSeg);
+			if (EditableTxtProp2)
+			{
+				EditableTxtProp2->SetVisibility(ESlateVisibility::Visible);
+				EditableTxtProp2->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), bHaveSeg ? SelSeg.Height : 280.f)));
+			}
+			if (EditableTxtProp3)
+			{
+				EditableTxtProp3->SetVisibility(ESlateVisibility::Visible);
+				EditableTxtProp3->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), bHaveSeg ? SelSeg.Thickness : 20.f)));
+			}
 			if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер стены")));
 		}
 
@@ -901,10 +912,33 @@ void URoomPlannerWidget::OnApplyPropertiesClicked()
 	else
 	{
 		// Modify Wall
+		const int32 SegID = PlannerManager->SelectedSegmentID;
+
+		// REQ-01: height (Prop2) and thickness (Prop3) in cm — sent only when either value actually changed.
+		FWallSegment SelSeg;
+		if (PlannerManager->GetWallSegmentData(SegID, SelSeg) && (EditableTxtProp2 || EditableTxtProp3))
+		{
+			float NewHeightCm = SelSeg.Height;
+			float NewThicknessCm = SelSeg.Thickness;
+			if (EditableTxtProp2 && !EditableTxtProp2->GetText().IsEmpty())
+			{
+				NewHeightCm = FCString::Atof(*EditableTxtProp2->GetText().ToString());
+			}
+			if (EditableTxtProp3 && !EditableTxtProp3->GetText().IsEmpty())
+			{
+				NewThicknessCm = FCString::Atof(*EditableTxtProp3->GetText().ToString());
+			}
+			if (!FMath::IsNearlyEqual(NewHeightCm, SelSeg.Height, 0.5f) || !FMath::IsNearlyEqual(NewThicknessCm, SelSeg.Thickness, 0.5f))
+			{
+				PC->Server_SetWallDimensions(SegID, NewHeightCm, NewThicknessCm);
+			}
+		}
+
+		// Length (existing behaviour, unchanged)
 		if (EditableTxtProp1)
 		{
 			float NewLenMeters = FCString::Atof(*EditableTxtProp1->GetText().ToString()) / 100.f;
-			PC->Server_SetWallLength(PlannerManager->SelectedSegmentID, NewLenMeters);
+			PC->Server_SetWallLength(SegID, NewLenMeters);
 		}
 	}
 }
@@ -1428,6 +1462,9 @@ void URoomPlannerWidget::OpenPaintCatalogForSelection()
 		return; // already open
 	}
 
+	// The catalog collapses this widget and later forces it back to Visible; remember the designed visibility.
+	VisibilityBeforePaintCatalog = GetVisibility();
+
 	UColorCatalogWidget* Catalog = UColorCatalogWidget::OpenColorCatalogForWidget(this, CatalogClass);
 	if (!Catalog)
 	{
@@ -1451,6 +1488,20 @@ void URoomPlannerWidget::HandlePaintCatalogClosed()
 		ActivePlannerColorCatalog->OnCatalogClosed.RemoveAll(this);
 	}
 	ActivePlannerColorCatalog = nullptr;
+
+	// CloseColorCatalog has just set this widget to Visible; restore the designed visibility instead.
+	if (VisibilityBeforePaintCatalog != ESlateVisibility::Collapsed && VisibilityBeforePaintCatalog != ESlateVisibility::Hidden)
+	{
+		SetVisibility(VisibilityBeforePaintCatalog);
+	}
+
+	// Re-establish the planner input mode for the current view (2D keeps the cursor free during capture),
+	// so cursor-driven corner / opening / object drags keep working after the overlay closes.
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		PC->ApplyRoomPlannerInputMode(CurrentViewMode == ERoomPlannerViewMode::View2D);
+	}
+
 	UpdateFinishUI();
 }
 
