@@ -303,7 +303,18 @@ void UColorCatalogWidget::OnTileViewEntryClicked(UObject* Item)
 	}
 
 	// Live Preview on target mesh
+	OnColorItemSelected.Broadcast(ActiveSelectedColorItem);
 	BroadcastColorSelected(ActiveSelectedColorItem.Color, OverrideMaterial);
+}
+
+bool UColorCatalogWidget::GetActiveSelectedColorItem(FColorCatalogItem& OutItem) const
+{
+	if (bHasActiveSelection)
+	{
+		OutItem = ActiveSelectedColorItem;
+		return true;
+	}
+	return false;
 }
 
 void UColorCatalogWidget::BroadcastColorSelected(const FLinearColor& LinearColor, UMaterialInterface* InOverrideMaterial)

@@ -100,6 +100,58 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm);
 
+	// ── Room Planner: control points, swing, finishing, objects, cabinet sets, project (REQ-02..18) ──
+
+	/** Moves a wall corner (control point). Openings stay attached; refused if one no longer fits (REQ-02 / REQ-09). */
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_MoveNode(int32 NodeID, FVector2D NewPosition);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetOpeningSwing(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide Side, EOpeningSwingDirection Direction);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetWallFinish(int32 SegmentID, FSurfaceFinish Finish);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetFloorFinish(int32 RoomID, FSurfaceFinish Finish);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_AddPlacedObject(const FString& AssetID, FVector Location, FRotator Rotation, FVector Scale);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_MovePlacedObject(const FString& InstanceID, FVector Location, FRotator Rotation, FVector Scale);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_RemovePlacedObject(const FString& InstanceID);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetPlacedObjectFinish(const FString& InstanceID, FSurfaceFinish Finish);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_AddCabinetSet(FName ProductID, FVector Location, FRotator Rotation);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_MoveCabinetSet(const FString& InstanceID, FVector Location, FRotator Rotation);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_RemoveCabinetSet(const FString& InstanceID);
+
+	/** Restores a whole saved project record (planner layout + booth states) on the server (REQ-16). */
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_LoadPlannerProject(const FString& SaveRecordJSON);
+
+	/** Performs the armed click-to-place (BeginPlaceObject / BeginPlaceCabinetSet) at a world position; returns true if a request was sent. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool PlannerPlacePendingAt(const FVector& WorldPos, float YawDeg = 0.f);
+
+	/** Line-traces under the cursor and selects the planner wall / opening / floor / object / cabinet set hit (3D mode). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	EPlannerSelectionKind PlannerPickUnderCursor();
+
+	/** Commits the current planner selection's transform (after a local drag) to the server. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	void PlannerCommitSelectedObjectTransform();
+
     // РІвЂќР‚РІвЂќР‚ CONFIGURATOR PREVIEW MANAGEMENT РІвЂќР‚РІвЂќР‚
 
     UFUNCTION(BlueprintCallable, Category = "MaxiMall | Preview", meta = (DisplayName = "Open Furniture Preview"))
@@ -335,6 +387,14 @@ private:
 
     /** True while dragging in 2D top-down mode to draw a wall. */
     bool bIs2DDrawingWall = false;
+
+    /** True while dragging a wall control point in 2D Select mode (REQ-02). */
+    bool bIs2DDraggingNode = false;
+
+    /** InstanceID of the placed object / cabinet set being dragged in 2D Select mode (empty = none). */
+    FString Dragged2DObjectID;
+    bool bDragged2DIsCabinetSet = false;
+    FVector Dragged2DOffset = FVector::ZeroVector;
 
     /**
      * Cached reference to the UPixelStreamingInput component owned by the PS plugin.

@@ -17,6 +17,44 @@
 #include "Serialization/JsonWriter.h"
 #include "JsonObjectConverter.h"
 #include "PixelStreamingInputComponent.h"
+#include "Constructor/PlannerPlacedObjectActor.h"
+#include "FurnitureConfigurator/ShowroomBooth.h"
+#include "Engine/DataTable.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/HitResult.h"
+#include "Components/StaticMeshComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Kismet/GameplayStatics.h"
+#include "Misc/Guid.h"
+#include "Framework/Application/SlateApplication.h"
+#include "awsTutorial_PlayerController.h"
+
+namespace PlannerJsonKeys
+{
+	static const TCHAR* FinishTypeToString(ESurfaceFinishType Type)
+	{
+		switch (Type)
+		{
+		case ESurfaceFinishType::Paint: return TEXT("paint");
+		case ESurfaceFinishType::Tile:  return TEXT("tile");
+		default: return TEXT("none");
+		}
+	}
+	static ESurfaceFinishType FinishTypeFromString(const FString& S)
+	{
+		if (S.Equals(TEXT("paint"), ESearchCase::IgnoreCase)) return ESurfaceFinishType::Paint;
+		if (S.Equals(TEXT("tile"), ESearchCase::IgnoreCase)) return ESurfaceFinishType::Tile;
+		return ESurfaceFinishType::None;
+	}
+	static FString NewInstanceID()
+	{
+		return FGuid::NewGuid().ToString(EGuidFormats::Short);
+	}
+	static FString FormatMeters(float Cm)
+	{
+		return FString::Printf(TEXT("%.2f м"), Cm / 100.f);
+	}
+}
 
 ARoomPlannerManager::ARoomPlannerManager()
 {
@@ -49,6 +87,16 @@ ARoomPlannerManager::ARoomPlannerManager()
 	BaseboardProceduralMesh->bUseComplexAsSimpleCollision = false;
 	BaseboardProceduralMesh->SetCastShadow(false);
 	BaseboardProceduralMesh->SetAbsolute(true, true, true);
+
+	NodeHandleMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("NodeHandleMesh"));
+	NodeHandleMesh->SetupAttachment(SceneRoot);
+	NodeHandleMesh->bUseAsyncCooking = false;
+	NodeHandleMesh->SetCastShadow(false);
+	NodeHandleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	NodeHandleMesh->SetAbsolute(true, true, true);
+	NodeHandleMesh->SetVisibility(false);
+
+	PlacedObjectActorClass = APlannerPlacedObjectActor::StaticClass();
 
 	WallSelectionMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_WallSelection.M_WallSelection"));
 	if (!WallSelectionMaterial)
@@ -84,6 +132,8 @@ void ARoomPlannerManager::Tick(float DeltaTime)
 		// We no longer need to track drag state here since openings stay selected on click!
 		bWasDraggingOpening = false;
 	}
+
+	TickLocalNodeDrag();
 
 	if (!BoundPSInput.IsValid())
 	{
@@ -329,6 +379,9 @@ int32 ARoomPlannerManager::SplitWallSegment(int32 SegmentID, const FVector2D& Sp
 	Seg2.Thickness = OldSeg.Thickness;
 	Seg2.Height = OldSeg.Height;
 	Seg2.Openings = Openings2;
+	Seg2.Finish = OldSeg.Finish;              // a split wall keeps its finish on both halves (REQ-13)
+	Seg2.bLeftSideIsInterior = OldSeg.bLeftSideIsInterior;
+	Seg2.WallGuid = PlannerJsonKeys::NewInstanceID();
 
 	WallSegments.Add(Seg2ID, Seg2);
 	Nodes[JunctionNodeID].ConnectedSegmentIDs.AddUnique(Seg2ID);
@@ -346,6 +399,7 @@ int32 ARoomPlannerManager::SplitWallSegment(int32 SegmentID, const FVector2D& Sp
 			WallActor2->BaseWallMaterial = DefaultWallMaterial;
 			WallActor2->WallSelectionMaterial = WallSelectionMaterial;
 			WallActor2->OpeningSelectionMaterial = OpeningSelectionMaterial;
+			WallActor2->LeafMaterial = LeafMaterial;
 			WallActors.Add(Seg2ID, WallActor2);
 		}
 	}
@@ -376,6 +430,7 @@ int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thi
 	int32 SegID = NextSegmentID++;
 	FWallSegment Segment;
 	Segment.SegmentID = SegID;
+	Segment.WallGuid = PlannerJsonKeys::NewInstanceID();
 	Segment.StartNodeID = StartNodeID;
 	Segment.EndNodeID = EndNodeID;
 	Segment.Thickness = Thickness;
@@ -398,6 +453,7 @@ int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thi
 			WallActor->BaseWallMaterial = DefaultWallMaterial;
 			WallActor->WallSelectionMaterial = WallSelectionMaterial;
 			WallActor->OpeningSelectionMaterial = OpeningSelectionMaterial;
+			WallActor->LeafMaterial = LeafMaterial;
 			WallActors.Add(SegID, WallActor);
 		}
 	}
@@ -490,7 +546,7 @@ void ARoomPlannerManager::RemoveWall(int32 SegmentID)
 	OnWallSelected.Broadcast(-1, 0.f);
 }
 
-void ARoomPlannerManager::ClearLayout()
+void ARoomPlannerManager::ClearWallsAndRooms()
 {
 	for (auto& Pair : WallActors)
 	{
@@ -503,12 +559,51 @@ void ARoomPlannerManager::ClearLayout()
 	WallSegments.Empty();
 	Nodes.Empty();
 	Rooms.Empty();
+	FloorSectionMaterials.Empty();
 	NextNodeID = 1;
 	NextSegmentID = 1;
+	DraggingNodeID = -1;
 
 	if (FloorProceduralMesh) FloorProceduralMesh->ClearAllMeshSections();
 	if (CeilingProceduralMesh) CeilingProceduralMesh->ClearAllMeshSections();
 	if (BaseboardProceduralMesh) BaseboardProceduralMesh->ClearAllMeshSections();
+	if (NodeHandleMesh) NodeHandleMesh->ClearAllMeshSections();
+}
+
+void ARoomPlannerManager::ClearLayout()
+{
+	// Walls / nodes / rooms
+	ClearWallsAndRooms();
+
+	// Finishes
+	FloorFinishes.Empty();
+
+	// Placed interior objects (local actors on every machine)
+	for (auto& Pair : PlacedObjectActors)
+	{
+		if (Pair.Value && Pair.Value->IsValidLowLevel())
+		{
+			Pair.Value->Destroy();
+		}
+	}
+	PlacedObjectActors.Empty();
+	PlacedObjects.Empty();
+
+	// Cabinet sets (replicated booths — only the server destroys them)
+	CabinetSets.Empty();
+	if (HasAuthority())
+	{
+		DestroyAllPlannerCabinetSets();
+	}
+	CabinetSetActorCache.Empty();
+
+	SelectedSegmentID = -1;
+	SelectedOpeningIndex = -1;
+	SelectedRoomID = -1;
+	SelectedObjectID.Empty();
+	SelectedCabinetSetID.Empty();
+	PendingPlacementKind = EPlannerPlacementKind::None;
+	PendingPlacementAssetID.Empty();
 }
 
 void ARoomPlannerManager::ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FVector2D>& OutStartLeftOffsets,
@@ -630,9 +725,19 @@ void ARoomPlannerManager::RebuildAllWalls()
 			}
 
 			WallActor->WallData = *Seg;
+
+			// Keep the wall's finish material in sync with its data (REQ-13); only rebuild the instance when the finish changed.
+			if (Seg->Finish != WallActor->AppliedFinish || (Seg->Finish.IsSet() && !WallActor->FinishMaterial))
+			{
+				WallActor->SetFinishMaterial(Seg->Finish.IsSet() ? CreateFinishMaterialInstance(Seg->Finish, WallActor) : nullptr);
+				WallActor->AppliedFinish = Seg->Finish;
+			}
+
 			WallActor->RebuildWallMesh(StartPos, EndPos, SL2D, SR2D, EL2D, ER2D, bStartCap, bEndCap, true);
 		}
 	}
+
+	RefreshNodeHandles();
 }
 
 void ARoomPlannerManager::ToggleCeilingVisibility()
@@ -658,6 +763,7 @@ void ARoomPlannerManager::RebuildRooms()
 
 	if (Nodes.Num() < 3 || WallSegments.Num() < 3)
 	{
+		ComputeWallInteriorSides(TArray<TArray<FVector2D>>{});
 		return;
 	}
 
@@ -706,6 +812,7 @@ void ARoomPlannerManager::RebuildRooms()
 	// If no closed 2-core cycles exist in the graph, abort immediately (zero floors/ceilings for open walls)
 	if (NodeNeighbors.Num() < 3)
 	{
+		ComputeWallInteriorSides(TArray<TArray<FVector2D>>{});
 		return;
 	}
 
@@ -892,21 +999,21 @@ void ARoomPlannerManager::RebuildRooms()
 
 	if (DetectedRoomPolygons.Num() == 0)
 	{
+		ComputeWallInteriorSides(TArray<TArray<FVector2D>>{});
 		return;
 	}
 
 	// 5. Materials Setup
-	UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+	// Ceiling / baseboard use the parameterised paint material (BaseColor); floors get a per-room
+	// material from ResolveFloorMaterialForRoom (finish if any, else white paint) — REQ-13.
+	UMaterialInterface* BaseMat = ResolvePaintBaseMaterial();
+	if (!BaseMat)
+	{
+		BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+	}
 	if (!BaseMat)
 	{
 		BaseMat = UMaterial::GetDefaultMaterial(MD_Surface);
-	}
-
-	UMaterialInstanceDynamic* FloorMatInst = UMaterialInstanceDynamic::Create(BaseMat, this);
-	if (FloorMatInst)
-	{
-		FloorMatInst->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
-		FloorMatInst->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(1.0f, 1.0f, 1.0f, 1.0f));
 	}
 
 	UMaterialInstanceDynamic* CeilMatInst = UMaterialInstanceDynamic::Create(BaseMat, this);
@@ -953,6 +1060,33 @@ void ARoomPlannerManager::RebuildRooms()
 		Room.RoomID = RoomIdx + 1;
 		Room.FloorPolygon = FloorPolygon;
 		Room.AreaM2 = TwiceArea * 0.5f / 10000.f;
+
+		// Polygon centroid (area weighted) — the stable key for floor finishes across rebuilds.
+		{
+			double Cx = 0.0, Cy = 0.0;
+			for (int32 i = 0; i < VertCount; ++i)
+			{
+				const FVector2D& P1 = FloorPolygon[i];
+				const FVector2D& P2 = FloorPolygon[(i + 1) % VertCount];
+				const double Cross = (double)P1.X * P2.Y - (double)P2.X * P1.Y;
+				Cx += (P1.X + P2.X) * Cross;
+				Cy += (P1.Y + P2.Y) * Cross;
+			}
+			if (FMath::Abs(TwiceArea) > KINDA_SMALL_NUMBER)
+			{
+				Room.Centroid = FVector2D((float)(Cx / (3.0 * TwiceArea)), (float)(Cy / (3.0 * TwiceArea)));
+			}
+			else
+			{
+				FVector2D Sum = FVector2D::ZeroVector;
+				for (const FVector2D& P : FloorPolygon) Sum += P;
+				Room.Centroid = Sum / (float)VertCount;
+			}
+		}
+		if (const FFloorFinishRecord* Rec = FindFloorFinishRecord(Room.Centroid))
+		{
+			Room.FloorFinish = Rec->Finish;
+		}
 		Rooms.Add(Room.RoomID, Room);
 
 		// Ear Clipping Triangulation
@@ -1078,7 +1212,8 @@ void ARoomPlannerManager::RebuildRooms()
 			}
 
 			FloorProceduralMesh->CreateMeshSection(RoomIdx, Vertices, Triangles, Normals, UVs, FloorColors, TArray<FProcMeshTangent>(), true);
-			FloorProceduralMesh->SetMaterial(RoomIdx, FloorMatInst ? FloorMatInst : BaseMat);
+			UMaterialInterface* FloorMat = ResolveFloorMaterialForRoom(Rooms[RoomIdx + 1]);
+			FloorProceduralMesh->SetMaterial(RoomIdx, FloorMat ? FloorMat : BaseMat);
 		}
 
 		// 6.2. Generate Ceiling Mesh Section
@@ -1155,12 +1290,58 @@ void ARoomPlannerManager::RebuildRooms()
 	if (FloorProceduralMesh) FloorProceduralMesh->SetVisibility(true);
 	if (CeilingProceduralMesh) CeilingProceduralMesh->SetVisibility(bCeilingVisible && !b2DViewMode);
 	if (BaseboardProceduralMesh) BaseboardProceduralMesh->SetVisibility(true);
+
+	// Which face of every wall looks into a room (drives door/window swing direction, REQ-07).
+	ComputeWallInteriorSides(DetectedRoomPolygons);
 }
 
+
+TSharedPtr<FJsonObject> ARoomPlannerManager::FinishToJson(const FSurfaceFinish& Finish)
+{
+	TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
+	Obj->SetStringField(TEXT("type"), PlannerJsonKeys::FinishTypeToString(Finish.Type));
+	Obj->SetStringField(TEXT("code"), Finish.ColorCode);
+	Obj->SetNumberField(TEXT("r"), Finish.Color.R);
+	Obj->SetNumberField(TEXT("g"), Finish.Color.G);
+	Obj->SetNumberField(TEXT("b"), Finish.Color.B);
+	Obj->SetNumberField(TEXT("a"), Finish.Color.A);
+	Obj->SetStringField(TEXT("tile"), Finish.TileAssetID);
+	Obj->SetNumberField(TEXT("tileSize"), Finish.TileSizeCm);
+	return Obj;
+}
+
+FSurfaceFinish ARoomPlannerManager::FinishFromJson(const TSharedPtr<FJsonObject>& Obj)
+{
+	FSurfaceFinish Finish;
+	if (!Obj.IsValid())
+	{
+		return Finish;
+	}
+	FString TypeStr;
+	if (Obj->TryGetStringField(TEXT("type"), TypeStr))
+	{
+		Finish.Type = PlannerJsonKeys::FinishTypeFromString(TypeStr);
+	}
+	Obj->TryGetStringField(TEXT("code"), Finish.ColorCode);
+	double R = 1.0, G = 1.0, B = 1.0, A = 1.0;
+	Obj->TryGetNumberField(TEXT("r"), R);
+	Obj->TryGetNumberField(TEXT("g"), G);
+	Obj->TryGetNumberField(TEXT("b"), B);
+	Obj->TryGetNumberField(TEXT("a"), A);
+	Finish.Color = FLinearColor((float)R, (float)G, (float)B, (float)A);
+	Obj->TryGetStringField(TEXT("tile"), Finish.TileAssetID);
+	double TileSize = 30.0;
+	if (Obj->TryGetNumberField(TEXT("tileSize"), TileSize))
+	{
+		Finish.TileSizeCm = (float)TileSize;
+	}
+	return Finish;
+}
 
 FString ARoomPlannerManager::ExportLayoutToJSON() const
 {
 	TSharedPtr<FJsonObject> RootObject = MakeShareable(new FJsonObject());
+	RootObject->SetNumberField(TEXT("version"), 2);
 
 	// Serializing Nodes
 	TArray<TSharedPtr<FJsonValue>> NodesArray;
@@ -1174,27 +1355,34 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 	}
 	RootObject->SetArrayField(TEXT("nodes"), NodesArray);
 
-	// Serializing Wall Segments
+	// Serializing Wall Segments (+ guid, finish, opening swing)
 	TArray<TSharedPtr<FJsonValue>> WallsArray;
 	for (const TPair<int32, FWallSegment>& Pair : WallSegments)
 	{
 		TSharedPtr<FJsonObject> WallObj = MakeShareable(new FJsonObject());
 		WallObj->SetNumberField(TEXT("id"), Pair.Key);
+		WallObj->SetStringField(TEXT("guid"), Pair.Value.WallGuid);
 		WallObj->SetNumberField(TEXT("start"), Pair.Value.StartNodeID);
 		WallObj->SetNumberField(TEXT("end"), Pair.Value.EndNodeID);
 		WallObj->SetNumberField(TEXT("thickness"), Pair.Value.Thickness);
 		WallObj->SetNumberField(TEXT("height"), Pair.Value.Height);
+		WallObj->SetObjectField(TEXT("finish"), FinishToJson(Pair.Value.Finish));
 
 		TArray<TSharedPtr<FJsonValue>> OpeningsArray;
 		for (const FWallOpening& Op : Pair.Value.Openings)
 		{
 			TSharedPtr<FJsonObject> OpObj = MakeShareable(new FJsonObject());
 			OpObj->SetStringField(TEXT("id"), Op.OpeningID);
-			OpObj->SetStringField(TEXT("type"), Op.Type == EOpeningType::Door ? TEXT("door") : TEXT("window"));
+			const TCHAR* TypeStr = TEXT("door");
+			if (Op.Type == EOpeningType::Window) TypeStr = TEXT("window");
+			else if (Op.Type == EOpeningType::Archway) TypeStr = TEXT("archway");
+			OpObj->SetStringField(TEXT("type"), TypeStr);
 			OpObj->SetNumberField(TEXT("dist"), Op.DistanceFromStart);
 			OpObj->SetNumberField(TEXT("width"), Op.Width);
 			OpObj->SetNumberField(TEXT("height"), Op.Height);
 			OpObj->SetNumberField(TEXT("sill"), Op.SillHeight);
+			OpObj->SetStringField(TEXT("swingSide"), Op.SwingSide == EOpeningSwingSide::Right ? TEXT("right") : TEXT("left"));
+			OpObj->SetStringField(TEXT("swingDir"), Op.SwingDirection == EOpeningSwingDirection::Outward ? TEXT("out") : TEXT("in"));
 			OpeningsArray.Add(MakeShareable(new FJsonValueObject(OpObj)));
 		}
 		WallObj->SetArrayField(TEXT("openings"), OpeningsArray);
@@ -1202,16 +1390,72 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 	}
 	RootObject->SetArrayField(TEXT("walls"), WallsArray);
 
-	// Serializing Rooms Stats
+	// Serializing Rooms Stats (derived; informational for the browser / save record)
 	TArray<TSharedPtr<FJsonValue>> RoomsArray;
 	for (const TPair<int32, FRoomData>& Pair : Rooms)
 	{
 		TSharedPtr<FJsonObject> RoomObj = MakeShareable(new FJsonObject());
 		RoomObj->SetNumberField(TEXT("id"), Pair.Key);
 		RoomObj->SetNumberField(TEXT("area_m2"), Pair.Value.AreaM2);
+		RoomObj->SetNumberField(TEXT("cx"), Pair.Value.Centroid.X);
+		RoomObj->SetNumberField(TEXT("cy"), Pair.Value.Centroid.Y);
+		RoomObj->SetObjectField(TEXT("finish"), FinishToJson(Pair.Value.FloorFinish));
 		RoomsArray.Add(MakeShareable(new FJsonValueObject(RoomObj)));
 	}
 	RootObject->SetArrayField(TEXT("rooms"), RoomsArray);
+
+	// Floor finishes (authoritative, keyed by room centroid)
+	TArray<TSharedPtr<FJsonValue>> FloorFinishArray;
+	for (const FFloorFinishRecord& Rec : FloorFinishes)
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
+		Obj->SetNumberField(TEXT("x"), Rec.Anchor.X);
+		Obj->SetNumberField(TEXT("y"), Rec.Anchor.Y);
+		Obj->SetObjectField(TEXT("finish"), FinishToJson(Rec.Finish));
+		FloorFinishArray.Add(MakeShareable(new FJsonValueObject(Obj)));
+	}
+	RootObject->SetArrayField(TEXT("floorFinishes"), FloorFinishArray);
+
+	// Placed interior objects (REQ-17)
+	TArray<TSharedPtr<FJsonValue>> ObjectsArray;
+	for (const TPair<FString, FPlacedFurnitureData>& Pair : PlacedObjects)
+	{
+		const FPlacedFurnitureData& D = Pair.Value;
+		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
+		Obj->SetStringField(TEXT("id"), D.InstanceID);
+		Obj->SetStringField(TEXT("asset"), D.AssetID);
+		Obj->SetNumberField(TEXT("x"), D.Location.X);
+		Obj->SetNumberField(TEXT("y"), D.Location.Y);
+		Obj->SetNumberField(TEXT("z"), D.Location.Z);
+		Obj->SetNumberField(TEXT("pitch"), D.Rotation.Pitch);
+		Obj->SetNumberField(TEXT("yaw"), D.Rotation.Yaw);
+		Obj->SetNumberField(TEXT("roll"), D.Rotation.Roll);
+		Obj->SetNumberField(TEXT("sx"), D.Scale.X);
+		Obj->SetNumberField(TEXT("sy"), D.Scale.Y);
+		Obj->SetNumberField(TEXT("sz"), D.Scale.Z);
+		Obj->SetStringField(TEXT("material"), D.CustomMaterialID);
+		Obj->SetObjectField(TEXT("finish"), FinishToJson(D.Finish));
+		ObjectsArray.Add(MakeShareable(new FJsonValueObject(Obj)));
+	}
+	RootObject->SetArrayField(TEXT("objects"), ObjectsArray);
+
+	// Placed cabinet sets (REQ-18)
+	TArray<TSharedPtr<FJsonValue>> SetsArray;
+	for (const TPair<FString, FPlacedCabinetSetData>& Pair : CabinetSets)
+	{
+		const FPlacedCabinetSetData& D = Pair.Value;
+		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
+		Obj->SetStringField(TEXT("id"), D.InstanceID);
+		Obj->SetStringField(TEXT("product"), D.ProductID.ToString());
+		Obj->SetNumberField(TEXT("x"), D.Location.X);
+		Obj->SetNumberField(TEXT("y"), D.Location.Y);
+		Obj->SetNumberField(TEXT("z"), D.Location.Z);
+		Obj->SetNumberField(TEXT("pitch"), D.Rotation.Pitch);
+		Obj->SetNumberField(TEXT("yaw"), D.Rotation.Yaw);
+		Obj->SetNumberField(TEXT("roll"), D.Rotation.Roll);
+		SetsArray.Add(MakeShareable(new FJsonValueObject(Obj)));
+	}
+	RootObject->SetArrayField(TEXT("cabinetSets"), SetsArray);
 
 	FString OutputString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
@@ -1230,7 +1474,9 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 		return false;
 	}
 
-	ClearLayout();
+	// Walls / nodes / rooms are rebuilt from scratch (established full-reimport model);
+	// placed objects and cabinet sets are RECONCILED by InstanceID so they do not flicker.
+	ClearWallsAndRooms();
 
 	// Read Nodes
 	const TArray<TSharedPtr<FJsonValue>>* NodesArray = nullptr;
@@ -1255,6 +1501,31 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 		}
 	}
 
+	// Read Floor finishes BEFORE walls so RebuildRooms (triggered by AddWall) can associate them.
+	FloorFinishes.Empty();
+	const TArray<TSharedPtr<FJsonValue>>* FloorFinishArray = nullptr;
+	if (RootObject->TryGetArrayField(TEXT("floorFinishes"), FloorFinishArray) && FloorFinishArray)
+	{
+		for (const TSharedPtr<FJsonValue>& Val : *FloorFinishArray)
+		{
+			TSharedPtr<FJsonObject> Obj = Val->AsObject();
+			if (Obj.IsValid())
+			{
+				FFloorFinishRecord Rec;
+				Rec.Anchor = FVector2D(Obj->GetNumberField(TEXT("x")), Obj->GetNumberField(TEXT("y")));
+				const TSharedPtr<FJsonObject>* FinishObj = nullptr;
+				if (Obj->TryGetObjectField(TEXT("finish"), FinishObj) && FinishObj)
+				{
+					Rec.Finish = FinishFromJson(*FinishObj);
+				}
+				if (Rec.Finish.IsSet())
+				{
+					FloorFinishes.Add(Rec);
+				}
+			}
+		}
+	}
+
 	// Read Walls
 	const TArray<TSharedPtr<FJsonValue>>* WallsArray = nullptr;
 	if (RootObject->TryGetArrayField(TEXT("walls"), WallsArray) && WallsArray)
@@ -1271,6 +1542,23 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 
 				int32 SegID = AddWall(StartID, EndID, Thickness > 0.f ? Thickness : 20.f, Height > 0.f ? Height : 280.f);
 
+				if (SegID != -1)
+				{
+					if (FWallSegment* Seg = WallSegments.Find(SegID))
+					{
+						FString Guid;
+						if (WallObj->TryGetStringField(TEXT("guid"), Guid) && !Guid.IsEmpty())
+						{
+							Seg->WallGuid = Guid;
+						}
+						const TSharedPtr<FJsonObject>* FinishObj = nullptr;
+						if (WallObj->TryGetObjectField(TEXT("finish"), FinishObj) && FinishObj)
+						{
+							Seg->Finish = FinishFromJson(*FinishObj);
+						}
+					}
+				}
+
 				const TArray<TSharedPtr<FJsonValue>>* OpeningsArray = nullptr;
 				if (SegID != -1 && WallObj->TryGetArrayField(TEXT("openings"), OpeningsArray) && OpeningsArray)
 				{
@@ -1280,13 +1568,33 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 						if (OpObj.IsValid())
 						{
 							FString TypeStr = OpObj->GetStringField(TEXT("type"));
-							EOpeningType Type = TypeStr.Equals(TEXT("window"), ESearchCase::IgnoreCase) ? EOpeningType::Window : EOpeningType::Door;
+							EOpeningType Type = EOpeningType::Door;
+							if (TypeStr.Equals(TEXT("window"), ESearchCase::IgnoreCase)) Type = EOpeningType::Window;
+							else if (TypeStr.Equals(TEXT("archway"), ESearchCase::IgnoreCase)) Type = EOpeningType::Archway;
 							float Dist = OpObj->GetNumberField(TEXT("dist"));
 							float Width = OpObj->GetNumberField(TEXT("width"));
 							float OpHeight = OpObj->GetNumberField(TEXT("height"));
 							float Sill = OpObj->GetNumberField(TEXT("sill"));
 
-							AddOpeningToWall(SegID, Type, Dist, Width, OpHeight, Sill);
+							if (AddOpeningToWall(SegID, Type, Dist, Width, OpHeight, Sill))
+							{
+								if (FWallSegment* Seg = WallSegments.Find(SegID))
+								{
+									if (Seg->Openings.Num() > 0)
+									{
+										FWallOpening& NewOp = Seg->Openings.Last();
+										FString SideStr, DirStr;
+										if (OpObj->TryGetStringField(TEXT("swingSide"), SideStr))
+										{
+											NewOp.SwingSide = SideStr.Equals(TEXT("right"), ESearchCase::IgnoreCase) ? EOpeningSwingSide::Right : EOpeningSwingSide::Left;
+										}
+										if (OpObj->TryGetStringField(TEXT("swingDir"), DirStr))
+										{
+											NewOp.SwingDirection = DirStr.Equals(TEXT("out"), ESearchCase::IgnoreCase) ? EOpeningSwingDirection::Outward : EOpeningSwingDirection::Inward;
+										}
+									}
+								}
+							}
 						}
 					}
 				}
@@ -1294,8 +1602,59 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 		}
 	}
 
+	// Read placed objects (REQ-17)
+	PlacedObjects.Empty();
+	const TArray<TSharedPtr<FJsonValue>>* ObjectsArray = nullptr;
+	if (RootObject->TryGetArrayField(TEXT("objects"), ObjectsArray) && ObjectsArray)
+	{
+		for (const TSharedPtr<FJsonValue>& Val : *ObjectsArray)
+		{
+			TSharedPtr<FJsonObject> Obj = Val->AsObject();
+			if (!Obj.IsValid()) continue;
+
+			FPlacedFurnitureData D;
+			D.InstanceID = Obj->GetStringField(TEXT("id"));
+			D.AssetID = Obj->GetStringField(TEXT("asset"));
+			if (D.InstanceID.IsEmpty()) continue;
+			D.Location = FVector(Obj->GetNumberField(TEXT("x")), Obj->GetNumberField(TEXT("y")), Obj->GetNumberField(TEXT("z")));
+			D.Rotation = FRotator(Obj->GetNumberField(TEXT("pitch")), Obj->GetNumberField(TEXT("yaw")), Obj->GetNumberField(TEXT("roll")));
+			double Sx = 1.0, Sy = 1.0, Sz = 1.0;
+			Obj->TryGetNumberField(TEXT("sx"), Sx); Obj->TryGetNumberField(TEXT("sy"), Sy); Obj->TryGetNumberField(TEXT("sz"), Sz);
+			D.Scale = FVector((float)Sx, (float)Sy, (float)Sz);
+			Obj->TryGetStringField(TEXT("material"), D.CustomMaterialID);
+			const TSharedPtr<FJsonObject>* FinishObj = nullptr;
+			if (Obj->TryGetObjectField(TEXT("finish"), FinishObj) && FinishObj)
+			{
+				D.Finish = FinishFromJson(*FinishObj);
+			}
+			PlacedObjects.Add(D.InstanceID, D);
+		}
+	}
+
+	// Read cabinet sets (REQ-18)
+	CabinetSets.Empty();
+	const TArray<TSharedPtr<FJsonValue>>* SetsArray = nullptr;
+	if (RootObject->TryGetArrayField(TEXT("cabinetSets"), SetsArray) && SetsArray)
+	{
+		for (const TSharedPtr<FJsonValue>& Val : *SetsArray)
+		{
+			TSharedPtr<FJsonObject> Obj = Val->AsObject();
+			if (!Obj.IsValid()) continue;
+
+			FPlacedCabinetSetData D;
+			D.InstanceID = Obj->GetStringField(TEXT("id"));
+			D.ProductID = FName(*Obj->GetStringField(TEXT("product")));
+			if (D.InstanceID.IsEmpty()) continue;
+			D.Location = FVector(Obj->GetNumberField(TEXT("x")), Obj->GetNumberField(TEXT("y")), Obj->GetNumberField(TEXT("z")));
+			D.Rotation = FRotator(Obj->GetNumberField(TEXT("pitch")), Obj->GetNumberField(TEXT("yaw")), Obj->GetNumberField(TEXT("roll")));
+			CabinetSets.Add(D.InstanceID, D);
+		}
+	}
+
 	RebuildAllWalls();
 	RebuildRooms();
+	RebuildPlacedObjectActors();
+	ReconcileCabinetSetActors();
 
 	if (SelectedSegmentID != -1 && !WallSegments.Contains(SelectedSegmentID))
 	{
@@ -1309,12 +1668,27 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 			SelectedOpeningIndex = -1;
 		}
 	}
+	if (SelectedRoomID != -1 && !Rooms.Contains(SelectedRoomID))
+	{
+		SelectedRoomID = -1;
+	}
+	if (!SelectedObjectID.IsEmpty() && !PlacedObjects.Contains(SelectedObjectID))
+	{
+		SelectedObjectID.Empty();
+	}
+	if (!SelectedCabinetSetID.IsEmpty() && !CabinetSets.Contains(SelectedCabinetSetID))
+	{
+		SelectedCabinetSetID.Empty();
+	}
+
 	UpdateSelectionVisuals();
+	RefreshNodeHandles();
 	OnRoomPlannerUpdated.Broadcast(JSONString);
 	if (SelectedSegmentID != -1)
 	{
 		OnWallSelected.Broadcast(SelectedSegmentID, GetWallLength(SelectedSegmentID));
 	}
+	NotifySelectionChanged();
 
 	return true;
 }
@@ -1415,13 +1789,16 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 	if (!bIn2DMode)
 	{
 		bCeilingVisible = true;
-		ClearWallSelection();
+		DraggingNodeID = -1; // corner dragging is a 2D-only interaction
+		ClearAllSelection();
 	}
 
 	if (CeilingProceduralMesh)
 	{
 		CeilingProceduralMesh->SetVisibility(bCeilingVisible && !bIn2DMode);
 	}
+
+	RefreshNodeHandles();
 }
 
 bool ARoomPlannerManager::FindWallSnapPoint2D(const FVector2D& Point2D, float SnapRadiusCm, FVector2D& OutSnapPos, int32& OutSnappedSegmentID, bool& bOutIsEndpoint) const
@@ -1696,10 +2073,99 @@ void ARoomPlannerManager::OnRep_ReplicatedRoomJSON()
 
 void ARoomPlannerManager::SetToolMode(EPlannerToolMode NewToolMode)
 {
+	const bool bChanged = (ActiveToolMode != NewToolMode);
 	ActiveToolMode = NewToolMode;
 	if (ActiveToolMode != EPlannerToolMode::Select)
 	{
-		ClearWallSelection();
+		ClearAllSelection();
+	}
+	if (ActiveToolMode != EPlannerToolMode::PlaceFurniture)
+	{
+		PendingPlacementKind = EPlannerPlacementKind::None;
+		PendingPlacementAssetID.Empty();
+	}
+	// Only an actual tool change cancels a corner drag; re-asserting Select on every click must not.
+	if (bChanged && DraggingNodeID != -1)
+	{
+		DraggingNodeID = -1;
+	}
+	RefreshNodeHandles();
+}
+
+void ARoomPlannerManager::TickLocalNodeDrag()
+{
+	if (!b2DViewMode || ActiveToolMode != EPlannerToolMode::Select || !bPlannerUIOpen || !GetWorld())
+	{
+		bPrevLMBDownForNodeDrag = false;
+		return;
+	}
+
+	// Local player controller only (never the dedicated server / remote controllers).
+	AAwsTutorial_PlayerController* LocalPC = nullptr;
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		if (AAwsTutorial_PlayerController* PC = Cast<AAwsTutorial_PlayerController>(It->Get()))
+		{
+			if (PC->IsLocalController()) { LocalPC = PC; break; }
+		}
+	}
+	if (!LocalPC)
+	{
+		bPrevLMBDownForNodeDrag = false;
+		return;
+	}
+
+	// Slate's own pressed-button set: valid even when a widget consumed the press before PlayerInput saw it.
+	const bool bLMBDown = FSlateApplication::IsInitialized() && FSlateApplication::Get().GetPressedMouseButtons().Contains(EKeys::LeftMouseButton);
+	const bool bJustPressed = bLMBDown && !bPrevLMBDownForNodeDrag;
+	const bool bJustReleased = !bLMBDown && bPrevLMBDownForNodeDrag;
+	bPrevLMBDownForNodeDrag = bLMBDown;
+
+	FVector GroundPos = FVector::ZeroVector;
+	bool bHasGround = false;
+	{
+		FVector Origin, Dir;
+		if (LocalPC->DeprojectMousePositionToWorld(Origin, Dir) && !FMath::IsNearlyZero(Dir.Z))
+		{
+			const float T = -Origin.Z / Dir.Z;
+			if (T >= 0.f)
+			{
+				GroundPos = Origin + T * Dir;
+				GroundPos.Z = 0.f;
+				bHasGround = true;
+			}
+		}
+	}
+
+	if (DraggingNodeID == -1)
+	{
+		// Start: LMB pressed this frame over a corner handle (whatever click path is live).
+		if (bJustPressed && bHasGround && !bIsDrawingWall)
+		{
+			const int32 NodeID = FindNodeAtWorldPos(GroundPos, 25.f);
+			if (NodeID != -1)
+			{
+				StartNodeDrag(NodeID);
+			}
+		}
+		return;
+	}
+
+	if (bLMBDown)
+	{
+		if (bHasGround)
+		{
+			UpdateNodeDrag(GroundPos);
+		}
+	}
+	else if (bJustReleased || !bLMBDown)
+	{
+		int32 NodeID = -1;
+		FVector2D FinalPos;
+		if (EndNodeDrag(NodeID, FinalPos))
+		{
+			LocalPC->Server_MoveNode(NodeID, FinalPos);
+		}
 	}
 }
 
@@ -1716,6 +2182,7 @@ void ARoomPlannerManager::ClearWallSelection()
 		}
 	}
 	OnWallSelected.Broadcast(-1, 0.f);
+	NotifySelectionChanged();
 }
 
 int32 ARoomPlannerManager::SelectWallAtWorldPos(const FVector& WorldPos)
@@ -1724,6 +2191,22 @@ int32 ARoomPlannerManager::SelectWallAtWorldPos(const FVector& WorldPos)
 	{
 		ClearWallSelection();
 		return -1;
+	}
+
+	// REQ-02: a press on a corner handle (2D only) is a drag, not a wall pick — whichever
+	// click path (native, tick, or Blueprint) called us. The current selection is left untouched.
+	if (b2DViewMode)
+	{
+		if (DraggingNodeID != -1)
+		{
+			return SelectedSegmentID;
+		}
+		const int32 HandleNodeID = FindNodeAtWorldPos(WorldPos, 25.f);
+		if (HandleNodeID != -1)
+		{
+			StartNodeDrag(HandleNodeID);
+			return SelectedSegmentID;
+		}
 	}
 
 	FVector2D Click2D(WorldPos.X, WorldPos.Y);
@@ -1752,6 +2235,14 @@ int32 ARoomPlannerManager::SelectWallAtWorldPos(const FVector& WorldPos)
 				}
 			}
 		}
+	}
+
+	// A wall / opening pick replaces any floor / object / cabinet-set selection.
+	if (ClosestSegID != -1)
+	{
+		SelectedRoomID = -1;
+		SelectedObjectID.Empty();
+		SelectedCabinetSetID.Empty();
 	}
 
 	SelectedSegmentID = ClosestSegID;
@@ -1786,6 +2277,7 @@ int32 ARoomPlannerManager::SelectWallAtWorldPos(const FVector& WorldPos)
 	UpdateSelectionVisuals();
 
 	OnWallSelected.Broadcast(SelectedSegmentID, LengthMeters);
+	NotifySelectionChanged();
 	return SelectedSegmentID;
 }
 
@@ -1814,6 +2306,59 @@ void ARoomPlannerManager::UpdateSelectionVisuals()
 			}
 		}
 	}
+
+	// Floors: selected room shows the selection material, every other room its finish / default material.
+	if (FloorProceduralMesh)
+	{
+		const int32 NumSections = FloorProceduralMesh->GetNumSections();
+		for (const auto& Pair : Rooms)
+		{
+			const int32 SectionIdx = Pair.Key - 1;
+			if (SectionIdx < 0 || SectionIdx >= NumSections) continue;
+
+			UMaterialInterface* Mat = nullptr;
+			if (Pair.Key == SelectedRoomID && WallSelectionMaterial)
+			{
+				Mat = WallSelectionMaterial;
+			}
+			else if (const TObjectPtr<UMaterialInterface>* Found = FloorSectionMaterials.Find(Pair.Key))
+			{
+				Mat = Found->Get();
+			}
+			if (Mat)
+			{
+				FloorProceduralMesh->SetMaterial(SectionIdx, Mat);
+			}
+		}
+	}
+
+	// Placed objects
+	for (auto& Pair : PlacedObjectActors)
+	{
+		if (Pair.Value)
+		{
+			Pair.Value->SetSelectedHighlight(Pair.Key == SelectedObjectID);
+		}
+	}
+
+	// Cabinet sets (custom depth outline on every mesh of the booth)
+	for (const auto& Pair : CabinetSets)
+	{
+		if (AShowroomBooth* Booth = FindCabinetSetActor(Pair.Key))
+		{
+			const bool bSel = (Pair.Key == SelectedCabinetSetID);
+			TArray<UPrimitiveComponent*> Prims;
+			Booth->GetComponents<UPrimitiveComponent>(Prims);
+			for (UPrimitiveComponent* Prim : Prims)
+			{
+				if (Prim)
+				{
+					Prim->SetRenderCustomDepth(bSel);
+					if (bSel) Prim->SetCustomDepthStencilValue(2);
+				}
+			}
+		}
+	}
 }
 
 float ARoomPlannerManager::GetWallLength(int32 SegmentID) const
@@ -1834,7 +2379,7 @@ bool ARoomPlannerManager::SetWallLength(int32 SegmentID, float NewLengthMeters)
 {
 	if (NewLengthMeters <= 0.1f || !WallSegments.Contains(SegmentID)) return false;
 
-	FWallSegment& Seg = WallSegments[SegmentID];
+	const FWallSegment& Seg = WallSegments[SegmentID];
 	if (Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
 	{
 		FVector2D P1 = Nodes[Seg.StartNodeID].Position;
@@ -1842,14 +2387,9 @@ bool ARoomPlannerManager::SetWallLength(int32 SegmentID, float NewLengthMeters)
 		FVector2D Dir = (P2 - P1).GetSafeNormal();
 		float NewLengthCm = NewLengthMeters * 100.f;
 
-		Nodes[Seg.EndNodeID].Position = P1 + Dir * NewLengthCm;
-
-		RebuildAllWalls();
-		RebuildRooms();
-		ReplicatedRoomJSON = ExportLayoutToJSON();
-		UpdateSelectionVisuals();
-		OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
-		return true;
+		// Shared-node model (intended): the END node moves and every connected wall follows.
+		// ApplyNodeMove keeps openings attached and refuses the edit if one no longer fits (REQ-09).
+		return ApplyNodeMove(Seg.EndNodeID, P1 + Dir * NewLengthCm, false);
 	}
 	return false;
 }
@@ -2156,26 +2696,35 @@ bool ARoomPlannerManager::UpdateOpeningDimensions(int32 SegmentID, int32 Opening
 	if (!WallSegments.Contains(SegmentID)) return false;
 
 	FWallSegment& Seg = WallSegments[SegmentID];
-	if (Seg.Openings.IsValidIndex(OpeningIndex))
+	if (Seg.Openings.IsValidIndex(OpeningIndex) && Nodes.Contains(Seg.StartNodeID) && Nodes.Contains(Seg.EndNodeID))
 	{
-		FWallOpening& Op = Seg.Openings[OpeningIndex];
-		Op.Width = WidthMeters * 100.f;
-		Op.Height = HeightMeters * 100.f;
-		Op.SillHeight = SillHeightMeters * 100.f;
+		const float WallLen = FVector2D::Distance(Nodes[Seg.StartNodeID].Position, Nodes[Seg.EndNodeID].Position);
 
-		if (TObjectPtr<AProceduralWallActor>* ActorPtr = WallActors.Find(SegmentID))
+		// Free numeric sizing (REQ-08), validated against the wall (REQ-09).
+		FWallOpening Candidate = Seg.Openings[OpeningIndex];
+		Candidate.Width = WidthMeters * 100.f;
+		Candidate.Height = HeightMeters * 100.f;
+		Candidate.SillHeight = SillHeightMeters * 100.f;
+
+		// If the new width no longer fits at the current position, slide the opening inside the wall first.
+		const float HalfW = Candidate.Width * 0.5f;
+		if (Candidate.Width <= WallLen)
 		{
-			if (*ActorPtr)
-			{
-				(*ActorPtr)->WallData = Seg;
-				FVector2D P1 = Nodes[Seg.StartNodeID].Position;
-				FVector2D P2 = Nodes[Seg.EndNodeID].Position;
-				(*ActorPtr)->RebuildWallMesh(P1, P2);
-			}
+			Candidate.DistanceFromStart = FMath::Clamp(Candidate.DistanceFromStart, HalfW, WallLen - HalfW);
 		}
+
+		FString Reason;
+		if (!ValidateOpeningFits(Seg, WallLen, Candidate, OpeningIndex, Reason))
+		{
+			BroadcastRejected(Reason);
+			return false;
+		}
+
+		Seg.Openings[OpeningIndex] = Candidate;
+
 		RebuildAllWalls();
-		ReplicatedRoomJSON = ExportLayoutToJSON();
-		OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+		CommitStateAfterMutation();
+		UpdateSelectionVisuals();
 		return true;
 	}
 	return false;
@@ -2218,5 +2767,1884 @@ bool ARoomPlannerManager::DeleteSelectedOpening()
 {
 	if (SelectedSegmentID == -1 || SelectedOpeningIndex == -1) return false;
 	return DeleteOpening(SelectedSegmentID, SelectedOpeningIndex);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Internal helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void ARoomPlannerManager::CommitStateAfterMutation()
+{
+	ReplicatedRoomJSON = ExportLayoutToJSON();
+	OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+}
+
+void ARoomPlannerManager::NotifySelectionChanged()
+{
+	OnSelectionChanged.Broadcast();
+}
+
+void ARoomPlannerManager::BroadcastRejected(const FString& Reason)
+{
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	if (Now - LastRejectBroadcastTime >= 0.25f)
+	{
+		LastRejectBroadcastTime = Now;
+		UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] Operation rejected: %s"), *Reason);
+		OnOperationRejected.Broadcast(Reason);
+	}
+}
+
+bool ARoomPlannerManager::ValidateOpeningFits(const FWallSegment& Seg, float WallLengthCm, const FWallOpening& Candidate, int32 IgnoreOpeningIndex, FString& OutReason) const
+{
+	if (Candidate.Width < 10.f || Candidate.Height < 10.f)
+	{
+		OutReason = TEXT("Минимальный размер проёма — 10 см");
+		return false;
+	}
+	if (Candidate.SillHeight < 0.f)
+	{
+		OutReason = TEXT("Высота от пола не может быть отрицательной");
+		return false;
+	}
+	if (Candidate.SillHeight + Candidate.Height > Seg.Height + 0.5f)
+	{
+		OutReason = FString::Printf(TEXT("Проём выше стены (макс. %.0f см)"), Seg.Height);
+		return false;
+	}
+
+	const float Start = Candidate.DistanceFromStart - Candidate.Width * 0.5f;
+	const float End = Candidate.DistanceFromStart + Candidate.Width * 0.5f;
+	if (Start < -0.5f || End > WallLengthCm + 0.5f)
+	{
+		OutReason = FString::Printf(TEXT("Проём (%.0f см) не помещается на стене (%.0f см)"), Candidate.Width, WallLengthCm);
+		return false;
+	}
+
+	for (int32 i = 0; i < Seg.Openings.Num(); ++i)
+	{
+		if (i == IgnoreOpeningIndex) continue;
+		const FWallOpening& Other = Seg.Openings[i];
+		const float OStart = Other.DistanceFromStart - Other.Width * 0.5f;
+		const float OEnd = Other.DistanceFromStart + Other.Width * 0.5f;
+		if (Start < OEnd - 0.5f && End > OStart + 0.5f)
+		{
+			OutReason = TEXT("Проём пересекается с соседним проёмом");
+			return false;
+		}
+	}
+	return true;
+}
+
+bool ARoomPlannerManager::CanMoveNode(int32 NodeID, const FVector2D& NewPosition, FString& OutReason) const
+{
+	const FWallNode* Node = Nodes.Find(NodeID);
+	if (!Node)
+	{
+		OutReason = TEXT("Узел не найден");
+		return false;
+	}
+
+	for (int32 SegID : Node->ConnectedSegmentIDs)
+	{
+		const FWallSegment* Seg = WallSegments.Find(SegID);
+		if (!Seg) continue;
+		const int32 OtherNodeID = (Seg->StartNodeID == NodeID) ? Seg->EndNodeID : Seg->StartNodeID;
+		const FWallNode* Other = Nodes.Find(OtherNodeID);
+		if (!Other) continue;
+
+		const float OldLen = FVector2D::Distance(Node->Position, Other->Position);
+		const float NewLen = FVector2D::Distance(NewPosition, Other->Position);
+		if (NewLen < 10.f)
+		{
+			OutReason = TEXT("Стена не может быть короче 10 см");
+			return false;
+		}
+
+		// Openings keep their distance from the UNMOVED corner. When the start node moves,
+		// DistanceFromStart therefore shifts by the length delta.
+		const float Shift = (Seg->StartNodeID == NodeID) ? (NewLen - OldLen) : 0.f;
+
+		FWallSegment Shifted = *Seg;
+		for (FWallOpening& Op : Shifted.Openings)
+		{
+			Op.DistanceFromStart += Shift;
+		}
+		for (int32 i = 0; i < Shifted.Openings.Num(); ++i)
+		{
+			if (!ValidateOpeningFits(Shifted, NewLen, Shifted.Openings[i], i, OutReason))
+			{
+				OutReason = FString::Printf(TEXT("Стена не может быть изменена: %s"), *OutReason);
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+bool ARoomPlannerManager::ApplyNodeMove(int32 NodeID, const FVector2D& NewPosition, bool bLocalPreviewOnly)
+{
+	FString Reason;
+	if (!CanMoveNode(NodeID, NewPosition, Reason))
+	{
+		BroadcastRejected(Reason);
+		return false;
+	}
+
+	FWallNode& Node = Nodes[NodeID];
+	for (int32 SegID : Node.ConnectedSegmentIDs)
+	{
+		FWallSegment* Seg = WallSegments.Find(SegID);
+		if (!Seg || Seg->StartNodeID != NodeID) continue;
+		const FWallNode* Other = Nodes.Find(Seg->EndNodeID);
+		if (!Other) continue;
+		const float OldLen = FVector2D::Distance(Node.Position, Other->Position);
+		const float NewLen = FVector2D::Distance(NewPosition, Other->Position);
+		const float Shift = NewLen - OldLen;
+		for (FWallOpening& Op : Seg->Openings)
+		{
+			Op.DistanceFromStart += Shift;
+		}
+	}
+	Node.Position = NewPosition;
+
+	RebuildAllWalls();
+	RebuildRooms();
+	if (!bLocalPreviewOnly)
+	{
+		CommitStateAfterMutation();
+	}
+	UpdateSelectionVisuals();
+	return true;
+}
+
+bool ARoomPlannerManager::MoveNode(int32 NodeID, const FVector2D& NewPosition)
+{
+	return ApplyNodeMove(NodeID, NewPosition, false);
+}
+
+FVector2D ARoomPlannerManager::SnapNodeDragPosition(int32 NodeID, const FVector2D& RawPos) const
+{
+	// Axis alignment with any other node (keeps walls orthogonal while dragging a corner).
+	const float SnapCm = 15.f;
+	FVector2D Snapped = RawPos;
+	float BestDX = SnapCm, BestDY = SnapCm;
+	for (const auto& Pair : Nodes)
+	{
+		if (Pair.Key == NodeID) continue;
+		const float DX = FMath::Abs(Pair.Value.Position.X - RawPos.X);
+		const float DY = FMath::Abs(Pair.Value.Position.Y - RawPos.Y);
+		if (DX < BestDX) { BestDX = DX; Snapped.X = Pair.Value.Position.X; }
+		if (DY < BestDY) { BestDY = DY; Snapped.Y = Pair.Value.Position.Y; }
+	}
+	return Snapped;
+}
+
+int32 ARoomPlannerManager::FindNodeAtWorldPos(const FVector& WorldPos, float RadiusCm) const
+{
+	const FVector2D P(WorldPos.X, WorldPos.Y);
+	int32 Best = -1;
+	float BestDistSq = RadiusCm * RadiusCm;
+	for (const auto& Pair : Nodes)
+	{
+		const float D = FVector2D::DistSquared(P, Pair.Value.Position);
+		if (D <= BestDistSq)
+		{
+			BestDistSq = D;
+			Best = Pair.Key;
+		}
+	}
+	return Best;
+}
+
+bool ARoomPlannerManager::GetNodePosition(int32 NodeID, FVector2D& OutPosition) const
+{
+	if (const FWallNode* Node = Nodes.Find(NodeID))
+	{
+		OutPosition = Node->Position;
+		return true;
+	}
+	return false;
+}
+
+TArray<FVector> ARoomPlannerManager::GetNodeHandleWorldPositions() const
+{
+	TArray<FVector> Out;
+	for (const auto& Pair : Nodes)
+	{
+		Out.Add(FVector(Pair.Value.Position.X, Pair.Value.Position.Y, 0.f));
+	}
+	return Out;
+}
+
+bool ARoomPlannerManager::StartNodeDrag(int32 NodeID)
+{
+	const FWallNode* Node = Nodes.Find(NodeID);
+	if (!Node) return false;
+	DraggingNodeID = NodeID;
+	NodeDragOriginalPos = Node->Position;
+	RefreshNodeHandles();
+	return true;
+}
+
+void ARoomPlannerManager::UpdateNodeDrag(const FVector& WorldPos)
+{
+	if (DraggingNodeID == -1 || !Nodes.Contains(DraggingNodeID)) return;
+
+	const FVector2D Raw(WorldPos.X, WorldPos.Y);
+	const FVector2D Target = SnapNodeDragPosition(DraggingNodeID, Raw);
+	const bool bSnapped = !Target.Equals(Raw, 0.01f);
+
+	if (!Target.Equals(Nodes[DraggingNodeID].Position, 0.01f))
+	{
+		ApplyNodeMove(DraggingNodeID, Target, true); // refused positions keep the last valid one (REQ-09)
+	}
+
+	const FVector2D Cur = Nodes[DraggingNodeID].Position;
+	OnNodeDragProgress.Broadcast(DraggingNodeID, FVector(Cur.X, Cur.Y, 0.f));
+
+	// Live wall dimension for the 3D scene label (REQ-02): prefer the selected wall if it touches this node.
+	const FWallNode& Node = Nodes[DraggingNodeID];
+	int32 PrimarySeg = -1;
+	if (SelectedSegmentID != -1 && Node.ConnectedSegmentIDs.Contains(SelectedSegmentID))
+	{
+		PrimarySeg = SelectedSegmentID;
+	}
+	else if (Node.ConnectedSegmentIDs.Num() > 0)
+	{
+		PrimarySeg = Node.ConnectedSegmentIDs[0];
+	}
+	if (const FWallSegment* Seg = (PrimarySeg != -1) ? WallSegments.Find(PrimarySeg) : nullptr)
+	{
+		if (Nodes.Contains(Seg->StartNodeID) && Nodes.Contains(Seg->EndNodeID))
+		{
+			const FVector2D P1 = Nodes[Seg->StartNodeID].Position;
+			const FVector2D P2 = Nodes[Seg->EndNodeID].Position;
+			const float LenM = FVector2D::Distance(P1, P2) / 100.f;
+			const FVector2D Mid = (P1 + P2) * 0.5f;
+			const float AngleDeg = FMath::RadiansToDegrees(FMath::Atan2(P2.Y - P1.Y, P2.X - P1.X));
+			OnInteractiveWallDragProgress.Broadcast(LenM, FVector(Mid.X, Mid.Y, Seg->Height), AngleDeg, bSnapped);
+		}
+	}
+}
+
+bool ARoomPlannerManager::EndNodeDrag(int32& OutNodeID, FVector2D& OutFinalPosition)
+{
+	if (DraggingNodeID == -1 || !Nodes.Contains(DraggingNodeID))
+	{
+		DraggingNodeID = -1;
+		return false;
+	}
+	OutNodeID = DraggingNodeID;
+	OutFinalPosition = Nodes[DraggingNodeID].Position;
+	DraggingNodeID = -1;
+	RefreshNodeHandles();
+	return true;
+}
+
+void ARoomPlannerManager::RefreshNodeHandles()
+{
+	if (!NodeHandleMesh) return;
+
+	NodeHandleMesh->ClearAllMeshSections();
+	const bool bShow = b2DViewMode && ActiveToolMode == EPlannerToolMode::Select && Nodes.Num() > 0;
+	NodeHandleMesh->SetVisibility(bShow);
+	if (!bShow) return;
+
+	int32 Section = 0;
+	for (const auto& Pair : Nodes)
+	{
+		const bool bActive = (Pair.Key == DraggingNodeID);
+		const float Radius = bActive ? 16.f : 12.f;
+		float MaxHeight = 280.f;
+		for (int32 SegID : Pair.Value.ConnectedSegmentIDs)
+		{
+			if (const FWallSegment* Seg = WallSegments.Find(SegID)) MaxHeight = FMath::Max(MaxHeight, Seg->Height);
+		}
+		const float Z = MaxHeight + 6.f;
+
+		TArray<FVector> V; TArray<int32> T; TArray<FVector> N; TArray<FVector2D> UV;
+		const FVector2D C = Pair.Value.Position;
+		V.Add(FVector(C.X, C.Y, Z)); N.Add(FVector::UpVector); UV.Add(FVector2D(0.5f, 0.5f));
+		const int32 Steps = 12;
+		for (int32 i = 0; i < Steps; ++i)
+		{
+			const float A = 2.f * PI * (float)i / (float)Steps;
+			V.Add(FVector(C.X + FMath::Cos(A) * Radius, C.Y + FMath::Sin(A) * Radius, Z));
+			N.Add(FVector::UpVector);
+			UV.Add(FVector2D(0.5f + 0.5f * FMath::Cos(A), 0.5f + 0.5f * FMath::Sin(A)));
+		}
+		for (int32 i = 0; i < Steps; ++i)
+		{
+			const int32 A = 1 + i;
+			const int32 B = 1 + ((i + 1) % Steps);
+			// Both windings so the disc is visible from above and below in every camera mode.
+			T.Add(0); T.Add(B); T.Add(A);
+			T.Add(0); T.Add(A); T.Add(B);
+		}
+		NodeHandleMesh->CreateMeshSection(Section, V, T, N, UV, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
+		UMaterialInterface* Mat = bActive ? WallSelectionMaterial.Get() : OpeningSelectionMaterial.Get();
+		if (!Mat) Mat = WallSelectionMaterial.Get();
+		if (Mat) NodeHandleMesh->SetMaterial(Section, Mat);
+		++Section;
+	}
+}
+
+void ARoomPlannerManager::ComputeWallInteriorSides(const TArray<TArray<FVector2D>>& RoomPolygons)
+{
+	bool bAnyChanged = false;
+
+	TMap<int32, bool> NewFlags;
+	for (const auto& Pair : WallSegments)
+	{
+		NewFlags.Add(Pair.Key, true);
+	}
+	for (auto& RoomPair : Rooms)
+	{
+		RoomPair.Value.WallSegmentIDs.Reset();
+	}
+
+	auto NearlySame = [](const FVector2D& A, const FVector2D& B) { return FVector2D::DistSquared(A, B) < 4.f; };
+
+	for (int32 PolyIdx = 0; PolyIdx < RoomPolygons.Num(); ++PolyIdx)
+	{
+		const TArray<FVector2D>& Poly = RoomPolygons[PolyIdx];
+		const int32 N = Poly.Num();
+		FRoomData* Room = Rooms.Find(PolyIdx + 1);
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector2D& Pi = Poly[i];
+			const FVector2D& Pj = Poly[(i + 1) % N];
+			for (const auto& Pair : WallSegments)
+			{
+				const FWallSegment& Seg = Pair.Value;
+				const FWallNode* S = Nodes.Find(Seg.StartNodeID);
+				const FWallNode* E = Nodes.Find(Seg.EndNodeID);
+				if (!S || !E) continue;
+				if (NearlySame(S->Position, Pi) && NearlySame(E->Position, Pj))
+				{
+					NewFlags[Pair.Key] = true;   // polygon is CCW: interior on the left of Start->End
+					if (Room) Room->WallSegmentIDs.AddUnique(Pair.Key);
+				}
+				else if (NearlySame(S->Position, Pj) && NearlySame(E->Position, Pi))
+				{
+					NewFlags[Pair.Key] = false;  // traversed End->Start: interior on the right
+					if (Room) Room->WallSegmentIDs.AddUnique(Pair.Key);
+				}
+			}
+		}
+	}
+
+	for (auto& Pair : WallSegments)
+	{
+		const bool NewVal = NewFlags.FindRef(Pair.Key);
+		if (Pair.Value.bLeftSideIsInterior != NewVal)
+		{
+			Pair.Value.bLeftSideIsInterior = NewVal;
+			bAnyChanged = true;
+		}
+	}
+
+	if (bAnyChanged)
+	{
+		RebuildAllWalls(); // leaves depend on the interior side
+	}
+}
+
+bool ARoomPlannerManager::IsWallLeftSideInterior(int32 SegmentID) const
+{
+	if (const FWallSegment* Seg = WallSegments.Find(SegmentID))
+	{
+		return Seg->bLeftSideIsInterior;
+	}
+	return true;
+}
+
+bool ARoomPlannerManager::GetWallSegmentData(int32 SegmentID, FWallSegment& OutSegment) const
+{
+	if (const FWallSegment* Seg = WallSegments.Find(SegmentID))
+	{
+		OutSegment = *Seg;
+		return true;
+	}
+	return false;
+}
+
+bool ARoomPlannerManager::GetRoomData(int32 RoomID, FRoomData& OutRoom) const
+{
+	if (const FRoomData* Room = Rooms.Find(RoomID))
+	{
+		OutRoom = *Room;
+		return true;
+	}
+	return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-07: opening swing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool ARoomPlannerManager::SetOpeningSwing(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide Side, EOpeningSwingDirection Direction)
+{
+	FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || !Seg->Openings.IsValidIndex(OpeningIndex)) return false;
+
+	Seg->Openings[OpeningIndex].SwingSide = Side;
+	Seg->Openings[OpeningIndex].SwingDirection = Direction;
+
+	RebuildAllWalls();
+	CommitStateAfterMutation();
+	UpdateSelectionVisuals();
+	return true;
+}
+
+bool ARoomPlannerManager::GetOpeningSwing(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide& OutSide, EOpeningSwingDirection& OutDirection) const
+{
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || !Seg->Openings.IsValidIndex(OpeningIndex)) return false;
+	OutSide = Seg->Openings[OpeningIndex].SwingSide;
+	OutDirection = Seg->Openings[OpeningIndex].SwingDirection;
+	return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-06: exact distances
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool ARoomPlannerManager::GetOpeningDistances(int32 SegmentID, int32 OpeningIndex, float& OutLeftCornerCm, float& OutRightCornerCm, float& OutFloorCm, float& OutNeighborCm, bool& bOutHasNeighbor) const
+{
+	OutLeftCornerCm = OutRightCornerCm = OutFloorCm = OutNeighborCm = 0.f;
+	bOutHasNeighbor = false;
+
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || !Seg->Openings.IsValidIndex(OpeningIndex)) return false;
+	if (!Nodes.Contains(Seg->StartNodeID) || !Nodes.Contains(Seg->EndNodeID)) return false;
+
+	const float WallLen = FVector2D::Distance(Nodes[Seg->StartNodeID].Position, Nodes[Seg->EndNodeID].Position);
+	const FWallOpening& Op = Seg->Openings[OpeningIndex];
+	const float Start = Op.DistanceFromStart - Op.Width * 0.5f;
+	const float End = Op.DistanceFromStart + Op.Width * 0.5f;
+
+	const float ToStartCorner = FMath::Max(0.f, Start);
+	const float ToEndCorner = FMath::Max(0.f, WallLen - End);
+
+	// Seen from inside the room: with the interior on the wall's LEFT face, the observer's
+	// right hand points to the START node (see AProceduralWallActor::IsHingeAtStart).
+	if (Seg->bLeftSideIsInterior)
+	{
+		OutRightCornerCm = ToStartCorner;
+		OutLeftCornerCm = ToEndCorner;
+	}
+	else
+	{
+		OutLeftCornerCm = ToStartCorner;
+		OutRightCornerCm = ToEndCorner;
+	}
+	OutFloorCm = FMath::Max(0.f, Op.SillHeight);
+
+	float Best = TNumericLimits<float>::Max();
+	for (int32 i = 0; i < Seg->Openings.Num(); ++i)
+	{
+		if (i == OpeningIndex) continue;
+		const FWallOpening& Other = Seg->Openings[i];
+		const float OStart = Other.DistanceFromStart - Other.Width * 0.5f;
+		const float OEnd = Other.DistanceFromStart + Other.Width * 0.5f;
+		float Gap;
+		if (OStart >= End) Gap = OStart - End;
+		else if (OEnd <= Start) Gap = Start - OEnd;
+		else Gap = 0.f; // overlapping
+		if (Gap < Best) Best = Gap;
+	}
+	if (Best < TNumericLimits<float>::Max())
+	{
+		bOutHasNeighbor = true;
+		OutNeighborCm = Best;
+	}
+	return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-02 / 04 / 06: dimension labels
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TArray<FPlannerDimensionLabel> ARoomPlannerManager::GetSelectionDimensionLabels() const
+{
+	TArray<FPlannerDimensionLabel> Labels;
+
+	auto AddLabel = [&Labels](const FString& Key, const FString& Text, float Value, const FVector& World)
+	{
+		FPlannerDimensionLabel L;
+		L.Key = Key; L.Text = Text; L.Value = Value; L.WorldLocation = World;
+		Labels.Add(L);
+	};
+
+	auto WallLengthLabel = [&](int32 SegID)
+	{
+		const FWallSegment* Seg = WallSegments.Find(SegID);
+		if (!Seg || !Nodes.Contains(Seg->StartNodeID) || !Nodes.Contains(Seg->EndNodeID)) return;
+		const FVector2D P1 = Nodes[Seg->StartNodeID].Position;
+		const FVector2D P2 = Nodes[Seg->EndNodeID].Position;
+		const float LenCm = FVector2D::Distance(P1, P2);
+		const FVector2D Mid = (P1 + P2) * 0.5f;
+		AddLabel(TEXT("length"), PlannerJsonKeys::FormatMeters(LenCm), LenCm, FVector(Mid.X, Mid.Y, Seg->Height + 15.f));
+	};
+
+	// While a control point is dragged: live length of every wall attached to it (REQ-02).
+	if (DraggingNodeID != -1)
+	{
+		if (const FWallNode* Node = Nodes.Find(DraggingNodeID))
+		{
+			for (int32 SegID : Node->ConnectedSegmentIDs)
+			{
+				WallLengthLabel(SegID);
+			}
+		}
+		return Labels;
+	}
+
+	switch (GetSelectionKind())
+	{
+	case EPlannerSelectionKind::Wall:
+	{
+		WallLengthLabel(SelectedSegmentID);
+		if (const FWallSegment* Seg = WallSegments.Find(SelectedSegmentID))
+		{
+			if (Nodes.Contains(Seg->EndNodeID))
+			{
+				const FVector2D P = Nodes[Seg->EndNodeID].Position;
+				AddLabel(TEXT("height"), PlannerJsonKeys::FormatMeters(Seg->Height), Seg->Height, FVector(P.X, P.Y, Seg->Height * 0.5f));
+			}
+		}
+		break;
+	}
+	case EPlannerSelectionKind::Opening:
+	{
+		const FWallSegment* Seg = WallSegments.Find(SelectedSegmentID);
+		if (!Seg || !Seg->Openings.IsValidIndex(SelectedOpeningIndex)) break;
+		if (!Nodes.Contains(Seg->StartNodeID) || !Nodes.Contains(Seg->EndNodeID)) break;
+
+		const FWallOpening& Op = Seg->Openings[SelectedOpeningIndex];
+		const FVector2D P1 = Nodes[Seg->StartNodeID].Position;
+		const FVector2D P2 = Nodes[Seg->EndNodeID].Position;
+		const float WallLen = FVector2D::Distance(P1, P2);
+		const FVector2D Dir = (P2 - P1).GetSafeNormal();
+		const FVector2D Normal(-Dir.Y, Dir.X);
+		const FVector2D Interior = Seg->bLeftSideIsInterior ? Normal : -Normal;
+		const FVector2D Off = Interior * (Seg->Thickness * 0.5f + 5.f);
+
+		auto AlongWall = [&](float DistCm, float Z) { const FVector2D P = P1 + Dir * DistCm + Off; return FVector(P.X, P.Y, Z); };
+
+		const float Start = Op.DistanceFromStart - Op.Width * 0.5f;
+		const float End = Op.DistanceFromStart + Op.Width * 0.5f;
+		const float TopZ = Op.SillHeight + Op.Height;
+
+		AddLabel(TEXT("width"), PlannerJsonKeys::FormatMeters(Op.Width), Op.Width, AlongWall(Op.DistanceFromStart, TopZ + 12.f));
+		AddLabel(TEXT("height"), PlannerJsonKeys::FormatMeters(Op.Height), Op.Height, AlongWall(End + 8.f, Op.SillHeight + Op.Height * 0.5f));
+		if (Op.SillHeight > 0.5f)
+		{
+			AddLabel(TEXT("sill"), PlannerJsonKeys::FormatMeters(Op.SillHeight), Op.SillHeight, AlongWall(Start - 8.f, Op.SillHeight * 0.5f));
+		}
+
+		float L, R, Fl, Nb; bool bHasNb;
+		if (GetOpeningDistances(SelectedSegmentID, SelectedOpeningIndex, L, R, Fl, Nb, bHasNb))
+		{
+			// Physical positions along the wall for each gap (start-corner gap and end-corner gap).
+			const float ToStart = FMath::Max(0.f, Start);
+			const float ToEnd = FMath::Max(0.f, WallLen - End);
+			const FVector StartGapPos = AlongWall(Start * 0.5f, 25.f);
+			const FVector EndGapPos = AlongWall(End + ToEnd * 0.5f, 25.f);
+			if (Seg->bLeftSideIsInterior)
+			{
+				AddLabel(TEXT("distRight"), PlannerJsonKeys::FormatMeters(ToStart), ToStart, StartGapPos);
+				AddLabel(TEXT("distLeft"), PlannerJsonKeys::FormatMeters(ToEnd), ToEnd, EndGapPos);
+			}
+			else
+			{
+				AddLabel(TEXT("distLeft"), PlannerJsonKeys::FormatMeters(ToStart), ToStart, StartGapPos);
+				AddLabel(TEXT("distRight"), PlannerJsonKeys::FormatMeters(ToEnd), ToEnd, EndGapPos);
+			}
+			AddLabel(TEXT("distFloor"), PlannerJsonKeys::FormatMeters(Fl), Fl, AlongWall(Op.DistanceFromStart, FMath::Max(8.f, Fl * 0.5f)));
+			if (bHasNb)
+			{
+				// Place at the middle of the gap to the nearest neighbour.
+				float GapCenter = Op.DistanceFromStart;
+				float BestGap = TNumericLimits<float>::Max();
+				for (int32 i = 0; i < Seg->Openings.Num(); ++i)
+				{
+					if (i == SelectedOpeningIndex) continue;
+					const FWallOpening& Other = Seg->Openings[i];
+					const float OStart = Other.DistanceFromStart - Other.Width * 0.5f;
+					const float OEnd = Other.DistanceFromStart + Other.Width * 0.5f;
+					if (OStart >= End && OStart - End < BestGap) { BestGap = OStart - End; GapCenter = (End + OStart) * 0.5f; }
+					else if (OEnd <= Start && Start - OEnd < BestGap) { BestGap = Start - OEnd; GapCenter = (OEnd + Start) * 0.5f; }
+				}
+				AddLabel(TEXT("distNeighbor"), PlannerJsonKeys::FormatMeters(Nb), Nb, AlongWall(GapCenter, TopZ * 0.5f));
+			}
+		}
+		break;
+	}
+	case EPlannerSelectionKind::Floor:
+	{
+		if (const FRoomData* Room = Rooms.Find(SelectedRoomID))
+		{
+			AddLabel(TEXT("area"), FString::Printf(TEXT("%.2f м²"), Room->AreaM2), Room->AreaM2, FVector(Room->Centroid.X, Room->Centroid.Y, 5.f));
+		}
+		break;
+	}
+	case EPlannerSelectionKind::Object:
+	{
+		if (const FPlacedFurnitureData* D = PlacedObjects.Find(SelectedObjectID))
+		{
+			FVector Half(50.f, 50.f, 50.f);
+			if (APlannerPlacedObjectActor* A = FindPlacedObjectActor(SelectedObjectID)) Half = A->GetLocalHalfExtents();
+			const FString SizeText = FString::Printf(TEXT("%.2f × %.2f × %.2f м"), Half.X * 2.f / 100.f, Half.Y * 2.f / 100.f, Half.Z * 2.f / 100.f);
+			AddLabel(TEXT("size"), SizeText, Half.X * 2.f, D->Location + FVector(0.f, 0.f, Half.Z * 2.f + 10.f));
+		}
+		break;
+	}
+	case EPlannerSelectionKind::CabinetSet:
+	{
+		if (const FPlacedCabinetSetData* D = CabinetSets.Find(SelectedCabinetSetID))
+		{
+			FVector Origin = D->Location, Extent(50.f, 50.f, 50.f);
+			if (AShowroomBooth* Booth = FindCabinetSetActor(SelectedCabinetSetID)) Booth->GetActorBounds(false, Origin, Extent);
+			const FString SizeText = FString::Printf(TEXT("%s  %.2f × %.2f м"), *D->ProductID.ToString(), Extent.X * 2.f / 100.f, Extent.Y * 2.f / 100.f);
+			AddLabel(TEXT("size"), SizeText, Extent.X * 2.f, Origin + FVector(0.f, 0.f, Extent.Z + 10.f));
+		}
+		break;
+	}
+	default:
+		break;
+	}
+
+	return Labels;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Selection
+// ═══════════════════════════════════════════════════════════════════════════════
+
+EPlannerSelectionKind ARoomPlannerManager::GetSelectionKind() const
+{
+	if (SelectedSegmentID != -1)
+	{
+		return (SelectedOpeningIndex != -1) ? EPlannerSelectionKind::Opening : EPlannerSelectionKind::Wall;
+	}
+	if (SelectedRoomID != -1) return EPlannerSelectionKind::Floor;
+	if (!SelectedObjectID.IsEmpty()) return EPlannerSelectionKind::Object;
+	if (!SelectedCabinetSetID.IsEmpty()) return EPlannerSelectionKind::CabinetSet;
+	return EPlannerSelectionKind::None;
+}
+
+void ARoomPlannerManager::ClearAllSelection()
+{
+	const bool bHadFloor = (SelectedRoomID != -1);
+	const bool bHadObject = !SelectedObjectID.IsEmpty() || !SelectedCabinetSetID.IsEmpty();
+
+	SelectedRoomID = -1;
+	SelectedObjectID.Empty();
+	SelectedCabinetSetID.Empty();
+
+	ClearWallSelection(); // broadcasts OnWallSelected(-1) + OnSelectionChanged
+	UpdateSelectionVisuals();
+
+	if (bHadFloor) OnFloorSelected.Broadcast(-1, 0.f);
+	if (bHadObject) OnPlannerObjectSelected.Broadcast(FString(), EPlannerSelectionKind::None);
+}
+
+int32 ARoomPlannerManager::FindRoomAtWorldPos(const FVector& WorldPos) const
+{
+	const FVector2D P(WorldPos.X, WorldPos.Y);
+	for (const auto& Pair : Rooms)
+	{
+		const TArray<FVector2D>& Poly = Pair.Value.FloorPolygon;
+		const int32 N = Poly.Num();
+		if (N < 3) continue;
+		bool bInside = false;
+		for (int32 i = 0, j = N - 1; i < N; j = i++)
+		{
+			const FVector2D& A = Poly[i];
+			const FVector2D& B = Poly[j];
+			if (((A.Y > P.Y) != (B.Y > P.Y)) && (P.X < (B.X - A.X) * (P.Y - A.Y) / (B.Y - A.Y) + A.X))
+			{
+				bInside = !bInside;
+			}
+		}
+		if (bInside) return Pair.Key;
+	}
+	return -1;
+}
+
+int32 ARoomPlannerManager::SelectFloorAtWorldPos(const FVector& WorldPos)
+{
+	const int32 RoomID = FindRoomAtWorldPos(WorldPos);
+
+	SelectedSegmentID = -1;
+	SelectedOpeningIndex = -1;
+	SelectedObjectID.Empty();
+	SelectedCabinetSetID.Empty();
+	SelectedRoomID = RoomID;
+
+	UpdateSelectionVisuals();
+	OnWallSelected.Broadcast(-1, 0.f);
+	OnFloorSelected.Broadcast(RoomID, (RoomID != -1 && Rooms.Contains(RoomID)) ? Rooms[RoomID].AreaM2 : 0.f);
+	NotifySelectionChanged();
+	return RoomID;
+}
+
+bool ARoomPlannerManager::SelectPlacedObject(const FString& InstanceID)
+{
+	if (!PlacedObjects.Contains(InstanceID)) return false;
+	SelectedSegmentID = -1;
+	SelectedOpeningIndex = -1;
+	SelectedRoomID = -1;
+	SelectedCabinetSetID.Empty();
+	SelectedObjectID = InstanceID;
+	UpdateSelectionVisuals();
+	OnWallSelected.Broadcast(-1, 0.f);
+	OnPlannerObjectSelected.Broadcast(InstanceID, EPlannerSelectionKind::Object);
+	NotifySelectionChanged();
+	return true;
+}
+
+bool ARoomPlannerManager::SelectCabinetSet(const FString& InstanceID)
+{
+	if (!CabinetSets.Contains(InstanceID)) return false;
+	SelectedSegmentID = -1;
+	SelectedOpeningIndex = -1;
+	SelectedRoomID = -1;
+	SelectedObjectID.Empty();
+	SelectedCabinetSetID = InstanceID;
+	UpdateSelectionVisuals();
+	OnWallSelected.Broadcast(-1, 0.f);
+	OnPlannerObjectSelected.Broadcast(InstanceID, EPlannerSelectionKind::CabinetSet);
+	NotifySelectionChanged();
+	return true;
+}
+
+EPlannerSelectionKind ARoomPlannerManager::SelectAtWorldPos2D(const FVector& WorldPos)
+{
+	if (ActiveToolMode != EPlannerToolMode::Select)
+	{
+		ClearAllSelection();
+		return EPlannerSelectionKind::None;
+	}
+
+	const FString ObjID = FindPlacedObjectAtWorldPos(WorldPos);
+	if (!ObjID.IsEmpty() && SelectPlacedObject(ObjID))
+	{
+		return EPlannerSelectionKind::Object;
+	}
+
+	const FString SetID = FindCabinetSetAtWorldPos(WorldPos);
+	if (!SetID.IsEmpty() && SelectCabinetSet(SetID))
+	{
+		return EPlannerSelectionKind::CabinetSet;
+	}
+
+	if (SelectWallAtWorldPos(WorldPos) != -1)
+	{
+		return (SelectedOpeningIndex != -1) ? EPlannerSelectionKind::Opening : EPlannerSelectionKind::Wall;
+	}
+
+	if (SelectFloorAtWorldPos(WorldPos) != -1)
+	{
+		return EPlannerSelectionKind::Floor;
+	}
+
+	ClearAllSelection();
+	return EPlannerSelectionKind::None;
+}
+
+EPlannerSelectionKind ARoomPlannerManager::SelectSurfaceFromHit(const FHitResult& Hit)
+{
+	AActor* HitActor = Hit.GetActor();
+	UPrimitiveComponent* HitComp = Hit.GetComponent();
+
+	if (AProceduralWallActor* Wall = Cast<AProceduralWallActor>(HitActor))
+	{
+		int32 SegID = -1;
+		for (const auto& Pair : WallActors)
+		{
+			if (Pair.Value == Wall) { SegID = Pair.Key; break; }
+		}
+		const FWallSegment* Seg = (SegID != -1) ? WallSegments.Find(SegID) : nullptr;
+		if (Seg && Nodes.Contains(Seg->StartNodeID) && Nodes.Contains(Seg->EndNodeID))
+		{
+			const FVector2D P1 = Nodes[Seg->StartNodeID].Position;
+			const FVector2D P2 = Nodes[Seg->EndNodeID].Position;
+			const FVector2D Dir = (P2 - P1).GetSafeNormal();
+			const float Along = FVector2D::DotProduct(FVector2D(Hit.ImpactPoint.X, Hit.ImpactPoint.Y) - P1, Dir);
+			const float Z = Hit.ImpactPoint.Z;
+
+			int32 OpIdx = -1;
+			for (int32 i = 0; i < Seg->Openings.Num(); ++i)
+			{
+				const FWallOpening& Op = Seg->Openings[i];
+				if (FMath::Abs(Along - Op.DistanceFromStart) <= Op.Width * 0.5f + 6.f && Z >= Op.SillHeight - 6.f && Z <= Op.SillHeight + Op.Height + 6.f)
+				{
+					OpIdx = i;
+					break;
+				}
+			}
+
+			SelectedRoomID = -1;
+			SelectedObjectID.Empty();
+			SelectedCabinetSetID.Empty();
+			SelectedSegmentID = SegID;
+			SelectedOpeningIndex = OpIdx;
+			UpdateSelectionVisuals();
+			OnWallSelected.Broadcast(SegID, GetWallLength(SegID));
+			NotifySelectionChanged();
+			return (OpIdx != -1) ? EPlannerSelectionKind::Opening : EPlannerSelectionKind::Wall;
+		}
+	}
+
+	if (HitComp && FloorProceduralMesh && HitComp == static_cast<UPrimitiveComponent*>(FloorProceduralMesh.Get()))
+	{
+		if (SelectFloorAtWorldPos(Hit.ImpactPoint) != -1)
+		{
+			return EPlannerSelectionKind::Floor;
+		}
+	}
+
+	if (APlannerPlacedObjectActor* Obj = Cast<APlannerPlacedObjectActor>(HitActor))
+	{
+		if (SelectPlacedObject(Obj->Data.InstanceID))
+		{
+			return EPlannerSelectionKind::Object;
+		}
+	}
+
+	if (AShowroomBooth* Booth = Cast<AShowroomBooth>(HitActor))
+	{
+		if (!Booth->PlannerInstanceID.IsEmpty() && SelectCabinetSet(Booth->PlannerInstanceID))
+		{
+			return EPlannerSelectionKind::CabinetSet;
+		}
+	}
+
+	ClearAllSelection();
+	return EPlannerSelectionKind::None;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-13: finishing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+UMaterialInterface* ARoomPlannerManager::ResolvePaintBaseMaterial()
+{
+	if (PaintMaterial) return PaintMaterial;
+	if (CachedPaintBaseMaterial) return CachedPaintBaseMaterial;
+
+	CachedPaintBaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_PlannerPaint.M_PlannerPaint"));
+	if (!CachedPaintBaseMaterial)
+	{
+		CachedPaintBaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/ColorCatalog/Materials/M_Change_Color.M_Change_Color"));
+	}
+	if (!CachedPaintBaseMaterial)
+	{
+		CachedPaintBaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	}
+	if (!CachedPaintBaseMaterial)
+	{
+		CachedPaintBaseMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
+	}
+	return CachedPaintBaseMaterial;
+}
+
+UMaterialInterface* ARoomPlannerManager::ResolveTileBaseMaterial(const FSurfaceFinish& Finish)
+{
+	// 1. Tile catalog row material
+	if (UDataTable* Catalog = ResolveTileCatalog())
+	{
+		if (!Finish.TileAssetID.IsEmpty())
+		{
+			if (const FPlannerTileRow* Row = Catalog->FindRow<FPlannerTileRow>(FName(*Finish.TileAssetID), TEXT("ResolveTileBaseMaterial"), false))
+			{
+				if (UMaterialInterface* RowMat = Row->Material.LoadSynchronous())
+				{
+					return RowMat;
+				}
+			}
+		}
+	}
+	// 2. Asset path stored directly in TileAssetID
+	if (Finish.TileAssetID.StartsWith(TEXT("/")))
+	{
+		if (UMaterialInterface* PathMat = LoadObject<UMaterialInterface>(nullptr, *Finish.TileAssetID))
+		{
+			return PathMat;
+		}
+	}
+	// 3. Generic tile material
+	if (TileMaterial) return TileMaterial;
+	if (!CachedTileBaseMaterial)
+	{
+		CachedTileBaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_PlannerTile.M_PlannerTile"));
+	}
+	if (CachedTileBaseMaterial) return CachedTileBaseMaterial;
+	// 4. Paint fallback (tinted with the tile's average colour)
+	return ResolvePaintBaseMaterial();
+}
+
+UMaterialInstanceDynamic* ARoomPlannerManager::CreateFinishMaterialInstance(const FSurfaceFinish& Finish, UObject* Outer)
+{
+	UMaterialInterface* Base = (Finish.Type == ESurfaceFinishType::Tile) ? ResolveTileBaseMaterial(Finish) : ResolvePaintBaseMaterial();
+	if (!Base) return nullptr;
+
+	UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Base, Outer ? Outer : this);
+	if (!MID) return nullptr;
+
+	MID->SetVectorParameterValue(FName("BaseColor"), Finish.Color);
+	MID->SetVectorParameterValue(FName("Color"), Finish.Color);
+	if (Finish.Type == ESurfaceFinishType::Tile)
+	{
+		const float TileSize = FMath::Max(1.f, Finish.TileSizeCm);
+		MID->SetScalarParameterValue(FName("TilesPerMeter"), 100.f / TileSize); // UVs are metric (1 UV = 1 m)
+		MID->SetScalarParameterValue(FName("TileSize"), TileSize / 100.f);
+	}
+	return MID;
+}
+
+const FFloorFinishRecord* ARoomPlannerManager::FindFloorFinishRecord(const FVector2D& Centroid) const
+{
+	const FFloorFinishRecord* Best = nullptr;
+	float BestDist = 100.f * 100.f; // 1 m association radius
+	for (const FFloorFinishRecord& Rec : FloorFinishes)
+	{
+		const float D = FVector2D::DistSquared(Rec.Anchor, Centroid);
+		if (D < BestDist)
+		{
+			BestDist = D;
+			Best = &Rec;
+		}
+	}
+	return Best;
+}
+
+UMaterialInterface* ARoomPlannerManager::ResolveFloorMaterialForRoom(const FRoomData& Room)
+{
+	UMaterialInterface* Mat = nullptr;
+	if (Room.FloorFinish.IsSet())
+	{
+		Mat = CreateFinishMaterialInstance(Room.FloorFinish, this);
+	}
+	if (!Mat)
+	{
+		if (UMaterialInterface* Base = ResolvePaintBaseMaterial())
+		{
+			if (UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Base, this))
+			{
+				MID->SetVectorParameterValue(FName("BaseColor"), FLinearColor(0.92f, 0.92f, 0.92f, 1.f));
+				MID->SetVectorParameterValue(FName("Color"), FLinearColor(0.92f, 0.92f, 0.92f, 1.f));
+				Mat = MID;
+			}
+		}
+	}
+	FloorSectionMaterials.Add(Room.RoomID, Mat);
+	return Mat;
+}
+
+void ARoomPlannerManager::ApplyWallFinishMaterials()
+{
+	for (auto& Pair : WallActors)
+	{
+		AProceduralWallActor* Actor = Pair.Value;
+		const FWallSegment* Seg = WallSegments.Find(Pair.Key);
+		if (!Actor || !Seg) continue;
+		if (Seg->Finish != Actor->AppliedFinish || (Seg->Finish.IsSet() && !Actor->FinishMaterial))
+		{
+			Actor->SetFinishMaterial(Seg->Finish.IsSet() ? CreateFinishMaterialInstance(Seg->Finish, Actor) : nullptr);
+			Actor->AppliedFinish = Seg->Finish;
+		}
+	}
+}
+
+bool ARoomPlannerManager::SetWallFinish(int32 SegmentID, const FSurfaceFinish& Finish)
+{
+	FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg) return false;
+	Seg->Finish = Finish;
+	ApplyWallFinishMaterials();
+	CommitStateAfterMutation();
+	UpdateSelectionVisuals();
+	return true;
+}
+
+bool ARoomPlannerManager::SetFloorFinish(int32 RoomID, const FSurfaceFinish& Finish)
+{
+	FRoomData* Room = Rooms.Find(RoomID);
+	if (!Room) return false;
+
+	// Upsert the centroid-keyed record
+	bool bFound = false;
+	for (FFloorFinishRecord& Rec : FloorFinishes)
+	{
+		if (FVector2D::DistSquared(Rec.Anchor, Room->Centroid) < 100.f * 100.f)
+		{
+			Rec.Anchor = Room->Centroid;
+			Rec.Finish = Finish;
+			bFound = true;
+			break;
+		}
+	}
+	if (!bFound && Finish.IsSet())
+	{
+		FFloorFinishRecord Rec;
+		Rec.Anchor = Room->Centroid;
+		Rec.Finish = Finish;
+		FloorFinishes.Add(Rec);
+	}
+	if (!Finish.IsSet())
+	{
+		FloorFinishes.RemoveAll([Room](const FFloorFinishRecord& R) { return FVector2D::DistSquared(R.Anchor, Room->Centroid) < 100.f * 100.f; });
+	}
+
+	Room->FloorFinish = Finish;
+	ResolveFloorMaterialForRoom(*Room);
+	CommitStateAfterMutation();
+	UpdateSelectionVisuals();
+	return true;
+}
+
+bool ARoomPlannerManager::GetWallFinish(int32 SegmentID, FSurfaceFinish& OutFinish) const
+{
+	if (const FWallSegment* Seg = WallSegments.Find(SegmentID))
+	{
+		OutFinish = Seg->Finish;
+		return true;
+	}
+	return false;
+}
+
+bool ARoomPlannerManager::GetFloorFinish(int32 RoomID, FSurfaceFinish& OutFinish) const
+{
+	if (const FRoomData* Room = Rooms.Find(RoomID))
+	{
+		OutFinish = Room->FloorFinish;
+		return true;
+	}
+	return false;
+}
+
+bool ARoomPlannerManager::GetSelectedSurfaceFinish(FSurfaceFinish& OutFinish) const
+{
+	switch (GetSelectionKind())
+	{
+	case EPlannerSelectionKind::Wall:   return GetWallFinish(SelectedSegmentID, OutFinish);
+	case EPlannerSelectionKind::Floor:  return GetFloorFinish(SelectedRoomID, OutFinish);
+	case EPlannerSelectionKind::Object:
+		if (const FPlacedFurnitureData* D = PlacedObjects.Find(SelectedObjectID)) { OutFinish = D->Finish; return true; }
+		return false;
+	default: return false;
+	}
+}
+
+bool ARoomPlannerManager::CanApplyFinishToSelection() const
+{
+	const EPlannerSelectionKind Kind = GetSelectionKind();
+	return Kind == EPlannerSelectionKind::Wall || Kind == EPlannerSelectionKind::Floor || Kind == EPlannerSelectionKind::Object;
+}
+
+FSurfaceFinish ARoomPlannerManager::MakePaintFinish(const FString& ColorCode, FLinearColor Color)
+{
+	FSurfaceFinish F;
+	F.Type = ESurfaceFinishType::Paint;
+	F.ColorCode = ColorCode;
+	F.Color = Color;
+	return F;
+}
+
+UDataTable* ARoomPlannerManager::ResolveTileCatalog() const
+{
+	if (TileCatalog) return TileCatalog;
+	return LoadObject<UDataTable>(nullptr, TEXT("/Game/DT/DT_PlannerTiles.DT_PlannerTiles"));
+}
+
+UDataTable* ARoomPlannerManager::ResolveObjectCatalog() const
+{
+	if (ObjectCatalog) return ObjectCatalog;
+	return LoadObject<UDataTable>(nullptr, TEXT("/Game/DT/DT_PlannerObjects.DT_PlannerObjects"));
+}
+
+UDataTable* ARoomPlannerManager::ResolveCabinetSetCatalog() const
+{
+	if (CabinetSetCatalog) return CabinetSetCatalog;
+	return LoadObject<UDataTable>(nullptr, TEXT("/Game/DT/DT_FurnitureCatalog.DT_FurnitureCatalog"));
+}
+
+UClass* ARoomPlannerManager::ResolveCabinetSetActorClass() const
+{
+	if (CabinetSetActorClass) return CabinetSetActorClass;
+	if (UClass* BP = LoadClass<AShowroomBooth>(nullptr, TEXT("/Game/BP_Booth.BP_Booth_C")))
+	{
+		return BP;
+	}
+	return AShowroomBooth::StaticClass();
+}
+
+bool ARoomPlannerManager::MakeTileFinish(FName TileID, FSurfaceFinish& OutFinish) const
+{
+	UDataTable* Catalog = ResolveTileCatalog();
+	const FPlannerTileRow* Row = Catalog ? Catalog->FindRow<FPlannerTileRow>(TileID, TEXT("MakeTileFinish"), false) : nullptr;
+	if (!Row)
+	{
+		// Allow a raw material path as tile id (no catalog needed).
+		const FString IdStr = TileID.ToString();
+		if (!IdStr.StartsWith(TEXT("/"))) return false;
+		OutFinish = FSurfaceFinish();
+		OutFinish.Type = ESurfaceFinishType::Tile;
+		OutFinish.TileAssetID = IdStr;
+		OutFinish.TileSizeCm = 30.f;
+		OutFinish.Color = FLinearColor::White;
+		return true;
+	}
+	OutFinish = FSurfaceFinish();
+	OutFinish.Type = ESurfaceFinishType::Tile;
+	OutFinish.TileAssetID = TileID.ToString();
+	OutFinish.TileSizeCm = Row->TileSizeCm > 0.f ? Row->TileSizeCm : 30.f;
+	OutFinish.Color = Row->AverageColor;
+	return true;
+}
+
+TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableTiles() const
+{
+	TArray<FPlannerCatalogEntry> Out;
+	UDataTable* Catalog = ResolveTileCatalog();
+	if (!Catalog) return Out;
+	for (const auto& Pair : Catalog->GetRowMap())
+	{
+		const FPlannerTileRow* Row = reinterpret_cast<const FPlannerTileRow*>(Pair.Value);
+		if (!Row) continue;
+		FPlannerCatalogEntry E;
+		E.ID = Pair.Key.ToString();
+		E.DisplayName = Row->DisplayName.IsEmpty() ? FText::FromName(Pair.Key) : Row->DisplayName;
+		E.Thumbnail = Row->Thumbnail;
+		E.TileSizeCm = Row->TileSizeCm;
+		E.Color = Row->AverageColor;
+		Out.Add(E);
+	}
+	return Out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-14: finishing areas
+// ═══════════════════════════════════════════════════════════════════════════════
+
+float ARoomPlannerManager::GetWallNetAreaM2(int32 SegmentID) const
+{
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || !Nodes.Contains(Seg->StartNodeID) || !Nodes.Contains(Seg->EndNodeID)) return 0.f;
+	const float Len = FVector2D::Distance(Nodes[Seg->StartNodeID].Position, Nodes[Seg->EndNodeID].Position);
+	float AreaCm2 = Len * Seg->Height;
+	for (const FWallOpening& Op : Seg->Openings)
+	{
+		AreaCm2 -= Op.Width * Op.Height;
+	}
+	return FMath::Max(0.f, AreaCm2) / 10000.f;
+}
+
+TArray<FFinishAreaEntry> ARoomPlannerManager::CalculateFinishAreas() const
+{
+	TArray<FFinishAreaEntry> Out;
+	auto Accumulate = [&Out](const FSurfaceFinish& F, float AreaM2)
+	{
+		if (!F.IsSet() || AreaM2 <= 0.f) return;
+		const FString Key = F.GetKey();
+		for (FFinishAreaEntry& E : Out)
+		{
+			if (E.Type == F.Type && E.FinishKey == Key)
+			{
+				E.AreaM2 += AreaM2;
+				E.SurfaceCount++;
+				return;
+			}
+		}
+		FFinishAreaEntry NewE;
+		NewE.Type = F.Type;
+		NewE.FinishKey = Key;
+		NewE.AreaM2 = AreaM2;
+		NewE.SurfaceCount = 1;
+		Out.Add(NewE);
+	};
+
+	for (const auto& Pair : WallSegments)
+	{
+		Accumulate(Pair.Value.Finish, GetWallNetAreaM2(Pair.Key));
+	}
+	for (const auto& Pair : Rooms)
+	{
+		Accumulate(Pair.Value.FloorFinish, Pair.Value.AreaM2);
+	}
+	Out.Sort([](const FFinishAreaEntry& A, const FFinishAreaEntry& B)
+	{
+		if (A.Type != B.Type) return (uint8)A.Type < (uint8)B.Type;
+		return A.AreaM2 > B.AreaM2;
+	});
+	return Out;
+}
+
+float ARoomPlannerManager::GetTotalFinishAreaM2(ESurfaceFinishType Type) const
+{
+	float Total = 0.f;
+	for (const FFinishAreaEntry& E : CalculateFinishAreas())
+	{
+		if (E.Type == Type) Total += E.AreaM2;
+	}
+	return Total;
+}
+
+FString ARoomPlannerManager::GetFinishAreaSummaryText() const
+{
+	const TArray<FFinishAreaEntry> Entries = CalculateFinishAreas();
+	if (Entries.Num() == 0)
+	{
+		return TEXT("Отделка не назначена");
+	}
+	FString Text;
+	for (int32 Pass = 0; Pass < 2; ++Pass)
+	{
+		const ESurfaceFinishType Type = (Pass == 0) ? ESurfaceFinishType::Paint : ESurfaceFinishType::Tile;
+		float Total = 0.f;
+		FString Lines;
+		for (const FFinishAreaEntry& E : Entries)
+		{
+			if (E.Type != Type) continue;
+			Total += E.AreaM2;
+			Lines += FString::Printf(TEXT("  %s: %.2f м² (%d)\n"), *E.FinishKey, E.AreaM2, E.SurfaceCount);
+		}
+		if (Total > 0.f)
+		{
+			Text += FString::Printf(TEXT("%s: %.2f м²\n%s"), (Type == ESurfaceFinishType::Paint) ? TEXT("Краска") : TEXT("Плитка"), Total, *Lines);
+		}
+	}
+	return Text.TrimEnd();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Placement (REQ-17 / REQ-18)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void ARoomPlannerManager::BeginPlaceObject(const FString& AssetID)
+{
+	PendingPlacementKind = EPlannerPlacementKind::Object;
+	PendingPlacementAssetID = AssetID;
+	ActiveToolMode = EPlannerToolMode::PlaceFurniture;
+	ClearAllSelection();
+	RefreshNodeHandles();
+}
+
+void ARoomPlannerManager::BeginPlaceCabinetSet(FName ProductID)
+{
+	PendingPlacementKind = EPlannerPlacementKind::CabinetSet;
+	PendingPlacementAssetID = ProductID.ToString();
+	ActiveToolMode = EPlannerToolMode::PlaceFurniture;
+	ClearAllSelection();
+	RefreshNodeHandles();
+}
+
+void ARoomPlannerManager::CancelPendingPlacement()
+{
+	PendingPlacementKind = EPlannerPlacementKind::None;
+	PendingPlacementAssetID.Empty();
+}
+
+UStaticMesh* ARoomPlannerManager::ResolveObjectMesh(const FString& AssetID) const
+{
+	if (AssetID.IsEmpty()) return nullptr;
+	if (UDataTable* Catalog = ResolveObjectCatalog())
+	{
+		if (const FPlannerObjectRow* Row = Catalog->FindRow<FPlannerObjectRow>(FName(*AssetID), TEXT("ResolveObjectMesh"), false))
+		{
+			if (UStaticMesh* Mesh = Row->Mesh.LoadSynchronous())
+			{
+				return Mesh;
+			}
+		}
+	}
+	if (AssetID.StartsWith(TEXT("/")))
+	{
+		return LoadObject<UStaticMesh>(nullptr, *AssetID);
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] Object asset '%s' not found in DT_PlannerObjects and is not an asset path."), *AssetID);
+	return nullptr;
+}
+
+TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableObjects() const
+{
+	TArray<FPlannerCatalogEntry> Out;
+	UDataTable* Catalog = ResolveObjectCatalog();
+	if (!Catalog) return Out;
+	for (const auto& Pair : Catalog->GetRowMap())
+	{
+		const FPlannerObjectRow* Row = reinterpret_cast<const FPlannerObjectRow*>(Pair.Value);
+		if (!Row) continue;
+		FPlannerCatalogEntry E;
+		E.ID = Pair.Key.ToString();
+		E.DisplayName = Row->DisplayName.IsEmpty() ? FText::FromName(Pair.Key) : Row->DisplayName;
+		E.Thumbnail = Row->Thumbnail;
+		E.Category = Row->Category;
+		Out.Add(E);
+	}
+	return Out;
+}
+
+FString ARoomPlannerManager::AddPlacedObject(const FString& AssetID, const FVector& Location, const FRotator& Rotation, const FVector& Scale)
+{
+	if (AssetID.IsEmpty()) return FString();
+
+	FPlacedFurnitureData D;
+	D.InstanceID = PlannerJsonKeys::NewInstanceID();
+	D.AssetID = AssetID;
+	D.Location = Location;
+	D.Rotation = Rotation;
+	D.Scale = Scale.IsNearlyZero() ? FVector::OneVector : Scale;
+	if (UDataTable* Catalog = ResolveObjectCatalog())
+	{
+		if (const FPlannerObjectRow* Row = Catalog->FindRow<FPlannerObjectRow>(FName(*AssetID), TEXT("AddPlacedObject"), false))
+		{
+			if (Scale.IsNearlyZero() || Scale.Equals(FVector::OneVector))
+			{
+				D.Scale = Row->DefaultScale.IsNearlyZero() ? FVector::OneVector : Row->DefaultScale;
+			}
+		}
+	}
+
+	PlacedObjects.Add(D.InstanceID, D);
+	ApplyPlacedObjectActor(D);
+	CommitStateAfterMutation();
+	return D.InstanceID;
+}
+
+bool ARoomPlannerManager::MovePlacedObject(const FString& InstanceID, const FVector& Location, const FRotator& Rotation, const FVector& Scale)
+{
+	FPlacedFurnitureData* D = PlacedObjects.Find(InstanceID);
+	if (!D) return false;
+	D->Location = Location;
+	D->Rotation = Rotation;
+	if (!Scale.IsNearlyZero()) D->Scale = Scale;
+	ApplyPlacedObjectActor(*D);
+	CommitStateAfterMutation();
+	return true;
+}
+
+bool ARoomPlannerManager::RemovePlacedObject(const FString& InstanceID)
+{
+	if (!PlacedObjects.Remove(InstanceID)) return false;
+	if (TObjectPtr<APlannerPlacedObjectActor>* ActorPtr = PlacedObjectActors.Find(InstanceID))
+	{
+		if (*ActorPtr) (*ActorPtr)->Destroy();
+		PlacedObjectActors.Remove(InstanceID);
+	}
+	if (SelectedObjectID == InstanceID)
+	{
+		SelectedObjectID.Empty();
+		OnPlannerObjectSelected.Broadcast(FString(), EPlannerSelectionKind::None);
+		NotifySelectionChanged();
+	}
+	CommitStateAfterMutation();
+	return true;
+}
+
+bool ARoomPlannerManager::SetPlacedObjectFinish(const FString& InstanceID, const FSurfaceFinish& Finish)
+{
+	FPlacedFurnitureData* D = PlacedObjects.Find(InstanceID);
+	if (!D) return false;
+	D->Finish = Finish;
+	ApplyPlacedObjectActor(*D);
+	CommitStateAfterMutation();
+	return true;
+}
+
+TArray<FPlacedFurnitureData> ARoomPlannerManager::GetPlacedObjects() const
+{
+	TArray<FPlacedFurnitureData> Out;
+	PlacedObjects.GenerateValueArray(Out);
+	return Out;
+}
+
+bool ARoomPlannerManager::GetPlacedObject(const FString& InstanceID, FPlacedFurnitureData& OutData) const
+{
+	if (const FPlacedFurnitureData* D = PlacedObjects.Find(InstanceID))
+	{
+		OutData = *D;
+		return true;
+	}
+	return false;
+}
+
+APlannerPlacedObjectActor* ARoomPlannerManager::FindPlacedObjectActor(const FString& InstanceID) const
+{
+	if (const TObjectPtr<APlannerPlacedObjectActor>* Found = PlacedObjectActors.Find(InstanceID))
+	{
+		return Found->Get();
+	}
+	return nullptr;
+}
+
+FString ARoomPlannerManager::FindPlacedObjectAtWorldPos(const FVector& WorldPos) const
+{
+	const FVector2D P(WorldPos.X, WorldPos.Y);
+	FString Best;
+	float BestDist = TNumericLimits<float>::Max();
+	for (const auto& Pair : PlacedObjects)
+	{
+		float Radius = 50.f;
+		if (APlannerPlacedObjectActor* A = FindPlacedObjectActor(Pair.Key)) Radius = A->GetFootprintRadiusCm();
+		const float D = FVector2D::Distance(P, FVector2D(Pair.Value.Location.X, Pair.Value.Location.Y));
+		if (D <= Radius && D < BestDist)
+		{
+			BestDist = D;
+			Best = Pair.Key;
+		}
+	}
+	return Best;
+}
+
+void ARoomPlannerManager::MovePlacedObjectLocal(const FString& InstanceID, const FVector& Location, const FRotator& Rotation)
+{
+	FPlacedFurnitureData* D = PlacedObjects.Find(InstanceID);
+	if (!D) return;
+	D->Location = Location;
+	D->Rotation = Rotation;
+	if (APlannerPlacedObjectActor* A = FindPlacedObjectActor(InstanceID))
+	{
+		A->SetActorLocationAndRotation(Location, Rotation);
+		A->Data.Location = Location;
+		A->Data.Rotation = Rotation;
+	}
+}
+
+void ARoomPlannerManager::ApplyPlacedObjectActor(const FPlacedFurnitureData& Data)
+{
+	APlannerPlacedObjectActor* Actor = FindPlacedObjectActor(Data.InstanceID);
+	if (!Actor && GetWorld())
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		UClass* Cls = PlacedObjectActorClass ? PlacedObjectActorClass.Get() : APlannerPlacedObjectActor::StaticClass();
+		Actor = GetWorld()->SpawnActor<APlannerPlacedObjectActor>(Cls, Data.Location, Data.Rotation, SpawnParams);
+		if (Actor)
+		{
+			PlacedObjectActors.Add(Data.InstanceID, Actor);
+		}
+	}
+	if (Actor)
+	{
+		UStaticMesh* Mesh = ResolveObjectMesh(Data.AssetID);
+		UMaterialInterface* ColorMat = Data.Finish.IsSet() ? ResolvePaintBaseMaterial() : nullptr;
+		Actor->ApplyData(Data, Mesh, ColorMat);
+		Actor->SetSelectedHighlight(Data.InstanceID == SelectedObjectID);
+	}
+}
+
+void ARoomPlannerManager::RebuildPlacedObjectActors()
+{
+	// Remove actors whose data is gone
+	TArray<FString> ToRemove;
+	for (const auto& Pair : PlacedObjectActors)
+	{
+		if (!PlacedObjects.Contains(Pair.Key))
+		{
+			if (Pair.Value) Pair.Value->Destroy();
+			ToRemove.Add(Pair.Key);
+		}
+	}
+	for (const FString& Key : ToRemove) PlacedObjectActors.Remove(Key);
+
+	// Spawn / update the rest
+	for (const auto& Pair : PlacedObjects)
+	{
+		ApplyPlacedObjectActor(Pair.Value);
+	}
+}
+
+TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableCabinetSets() const
+{
+	TArray<FPlannerCatalogEntry> Out;
+	UDataTable* Catalog = ResolveCabinetSetCatalog();
+	if (!Catalog) return Out;
+	for (const auto& Pair : Catalog->GetRowMap())
+	{
+		const FFurnitureProductRow* Row = reinterpret_cast<const FFurnitureProductRow*>(Pair.Value);
+		if (!Row) continue;
+		FPlannerCatalogEntry E;
+		E.ID = Pair.Key.ToString();
+		E.DisplayName = FText::FromName(Pair.Key);
+		if (Row->CabinetOptions.Colors.Num() > 0)
+		{
+			const FFurnitureColorOption& First = Row->CabinetOptions.Colors[0];
+			if (!First.ProductName.IsEmpty()) E.DisplayName = First.ProductName;
+			E.Thumbnail = First.Thumbnail;
+		}
+		E.Category = TEXT("CabinetSet");
+		Out.Add(E);
+	}
+	return Out;
+}
+
+AShowroomBooth* ARoomPlannerManager::SpawnCabinetSetActor(const FPlacedCabinetSetData& Data)
+{
+	UWorld* World = GetWorld();
+	if (!World || !HasAuthority()) return nullptr;
+
+	UClass* Cls = ResolveCabinetSetActorClass();
+	const FTransform SpawnTM(Data.Rotation, Data.Location);
+	AShowroomBooth* Booth = World->SpawnActorDeferred<AShowroomBooth>(Cls, SpawnTM, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Booth) return nullptr;
+
+	Booth->InitialProductID = Data.ProductID;
+	Booth->PlannerInstanceID = Data.InstanceID;
+	Booth->SetReplicates(true);
+	Booth->SetReplicateMovement(true);
+	Booth->FinishSpawning(SpawnTM);
+
+	CabinetSetActorCache.Add(Data.InstanceID, Booth);
+	return Booth;
+}
+
+AShowroomBooth* ARoomPlannerManager::FindCabinetSetActor(const FString& InstanceID) const
+{
+	if (InstanceID.IsEmpty()) return nullptr;
+	if (const TWeakObjectPtr<AShowroomBooth>* Cached = CabinetSetActorCache.Find(InstanceID))
+	{
+		if (Cached->IsValid() && (*Cached)->PlannerInstanceID == InstanceID)
+		{
+			return Cached->Get();
+		}
+	}
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AShowroomBooth> It(World); It; ++It)
+		{
+			if (It->PlannerInstanceID == InstanceID)
+			{
+				CabinetSetActorCache.Add(InstanceID, *It);
+				return *It;
+			}
+		}
+	}
+	return nullptr;
+}
+
+FString ARoomPlannerManager::AddCabinetSet(FName ProductID, const FVector& Location, const FRotator& Rotation)
+{
+	if (!HasAuthority() || ProductID.IsNone()) return FString();
+
+	FPlacedCabinetSetData D;
+	D.InstanceID = PlannerJsonKeys::NewInstanceID();
+	D.ProductID = ProductID;
+	D.Location = Location;
+	D.Rotation = Rotation;
+
+	if (!SpawnCabinetSetActor(D))
+	{
+		return FString();
+	}
+	CabinetSets.Add(D.InstanceID, D);
+	CommitStateAfterMutation();
+	return D.InstanceID;
+}
+
+bool ARoomPlannerManager::MoveCabinetSet(const FString& InstanceID, const FVector& Location, const FRotator& Rotation)
+{
+	FPlacedCabinetSetData* D = CabinetSets.Find(InstanceID);
+	if (!D) return false;
+	D->Location = Location;
+	D->Rotation = Rotation;
+	if (AShowroomBooth* Booth = FindCabinetSetActor(InstanceID))
+	{
+		Booth->SetActorLocationAndRotation(Location, Rotation);
+	}
+	CommitStateAfterMutation();
+	return true;
+}
+
+bool ARoomPlannerManager::RemoveCabinetSet(const FString& InstanceID)
+{
+	if (!CabinetSets.Remove(InstanceID)) return false;
+	if (HasAuthority())
+	{
+		if (AShowroomBooth* Booth = FindCabinetSetActor(InstanceID))
+		{
+			Booth->Destroy();
+		}
+	}
+	CabinetSetActorCache.Remove(InstanceID);
+	if (SelectedCabinetSetID == InstanceID)
+	{
+		SelectedCabinetSetID.Empty();
+		OnPlannerObjectSelected.Broadcast(FString(), EPlannerSelectionKind::None);
+		NotifySelectionChanged();
+	}
+	CommitStateAfterMutation();
+	return true;
+}
+
+TArray<FPlacedCabinetSetData> ARoomPlannerManager::GetCabinetSets() const
+{
+	TArray<FPlacedCabinetSetData> Out;
+	CabinetSets.GenerateValueArray(Out);
+	return Out;
+}
+
+bool ARoomPlannerManager::GetCabinetSet(const FString& InstanceID, FPlacedCabinetSetData& OutData) const
+{
+	if (const FPlacedCabinetSetData* D = CabinetSets.Find(InstanceID))
+	{
+		OutData = *D;
+		return true;
+	}
+	return false;
+}
+
+FString ARoomPlannerManager::FindCabinetSetAtWorldPos(const FVector& WorldPos) const
+{
+	FString Best;
+	float BestDist = TNumericLimits<float>::Max();
+	for (const auto& Pair : CabinetSets)
+	{
+		FVector Origin = Pair.Value.Location;
+		FVector Extent(60.f, 60.f, 60.f);
+		if (AShowroomBooth* Booth = FindCabinetSetActor(Pair.Key))
+		{
+			Booth->GetActorBounds(false, Origin, Extent);
+		}
+		const float DX = FMath::Abs(WorldPos.X - Origin.X);
+		const float DY = FMath::Abs(WorldPos.Y - Origin.Y);
+		if (DX <= Extent.X + 10.f && DY <= Extent.Y + 10.f)
+		{
+			const float D = DX + DY;
+			if (D < BestDist)
+			{
+				BestDist = D;
+				Best = Pair.Key;
+			}
+		}
+	}
+	return Best;
+}
+
+void ARoomPlannerManager::MoveCabinetSetLocal(const FString& InstanceID, const FVector& Location, const FRotator& Rotation)
+{
+	FPlacedCabinetSetData* D = CabinetSets.Find(InstanceID);
+	if (!D) return;
+	D->Location = Location;
+	D->Rotation = Rotation;
+	if (AShowroomBooth* Booth = FindCabinetSetActor(InstanceID))
+	{
+		Booth->SetActorLocationAndRotation(Location, Rotation);
+	}
+}
+
+void ARoomPlannerManager::ReconcileCabinetSetActors()
+{
+	if (HasAuthority())
+	{
+		// Destroy planner booths that are no longer in the layout
+		if (UWorld* World = GetWorld())
+		{
+			TArray<AShowroomBooth*> Stale;
+			for (TActorIterator<AShowroomBooth> It(World); It; ++It)
+			{
+				if (!It->PlannerInstanceID.IsEmpty() && !CabinetSets.Contains(It->PlannerInstanceID))
+				{
+					Stale.Add(*It);
+				}
+			}
+			for (AShowroomBooth* Booth : Stale)
+			{
+				CabinetSetActorCache.Remove(Booth->PlannerInstanceID);
+				Booth->Destroy();
+			}
+		}
+		// Spawn missing / move existing
+		for (const auto& Pair : CabinetSets)
+		{
+			AShowroomBooth* Booth = FindCabinetSetActor(Pair.Key);
+			if (!Booth)
+			{
+				Booth = SpawnCabinetSetActor(Pair.Value);
+			}
+			else if (!Booth->GetActorLocation().Equals(Pair.Value.Location, 0.5f) || !Booth->GetActorRotation().Equals(Pair.Value.Rotation, 0.1f))
+			{
+				Booth->SetActorLocationAndRotation(Pair.Value.Location, Pair.Value.Rotation);
+			}
+		}
+	}
+	else
+	{
+		// Clients: booths replicate; just keep the transforms aligned with the layout for immediate feedback.
+		for (const auto& Pair : CabinetSets)
+		{
+			if (AShowroomBooth* Booth = FindCabinetSetActor(Pair.Key))
+			{
+				if (!Booth->GetActorLocation().Equals(Pair.Value.Location, 0.5f) || !Booth->GetActorRotation().Equals(Pair.Value.Rotation, 0.1f))
+				{
+					Booth->SetActorLocationAndRotation(Pair.Value.Location, Pair.Value.Rotation);
+				}
+			}
+		}
+	}
+}
+
+void ARoomPlannerManager::DestroyAllPlannerCabinetSets()
+{
+	if (!HasAuthority()) return;
+	if (UWorld* World = GetWorld())
+	{
+		TArray<AShowroomBooth*> ToDestroy;
+		for (TActorIterator<AShowroomBooth> It(World); It; ++It)
+		{
+			if (!It->PlannerInstanceID.IsEmpty())
+			{
+				ToDestroy.Add(*It);
+			}
+		}
+		for (AShowroomBooth* Booth : ToDestroy)
+		{
+			Booth->Destroy();
+		}
+	}
+	CabinetSetActorCache.Empty();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-16: project restore
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool ARoomPlannerManager::ImportProjectFromSaveJSON(const FString& SaveRecordJSON)
+{
+	if (!HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] ImportProjectFromSaveJSON must run on the server."));
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> Root;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(SaveRecordJSON);
+	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[MaxiMallConstructor] ImportProjectFromSaveJSON: invalid JSON."));
+		return false;
+	}
+
+	// 1. Planner layout (walls, openings, finishes, objects, cabinet sets)
+	const TSharedPtr<FJsonObject>* PlannerObj = nullptr;
+	if (Root->TryGetObjectField(TEXT("planner"), PlannerObj) && PlannerObj && PlannerObj->IsValid())
+	{
+		FString PlannerString;
+		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&PlannerString);
+		FJsonSerializer::Serialize(PlannerObj->ToSharedRef(), Writer);
+		ClearLayout();
+		ImportLayoutFromJSON(PlannerString);
+	}
+	else if (Root->HasField(TEXT("nodes")) && Root->HasField(TEXT("walls")))
+	{
+		// A bare planner document was passed.
+		ClearLayout();
+		ImportLayoutFromJSON(SaveRecordJSON);
+	}
+	ReplicatedRoomJSON = ExportLayoutToJSON();
+
+	// 2. Booth configuration states (planner-spawned sets by plannerInstanceId, level booths by name)
+	const TArray<TSharedPtr<FJsonValue>>* BoothStates = nullptr;
+	if (Root->TryGetArrayField(TEXT("boothStates"), BoothStates) && BoothStates)
+	{
+		TArray<AActor*> LevelBooths;
+		if (GetWorld())
+		{
+			UGameplayStatics::GetAllActorsOfClass(GetWorld(), AShowroomBooth::StaticClass(), LevelBooths);
+		}
+
+		for (const TSharedPtr<FJsonValue>& Val : *BoothStates)
+		{
+			TSharedPtr<FJsonObject> BoothObj = Val->AsObject();
+			if (!BoothObj.IsValid()) continue;
+
+			AShowroomBooth* Target = nullptr;
+			FString PlannerID;
+			if (BoothObj->TryGetStringField(TEXT("plannerInstanceId"), PlannerID) && !PlannerID.IsEmpty())
+			{
+				Target = FindCabinetSetActor(PlannerID);
+			}
+			if (!Target)
+			{
+				const FString BoothName = BoothObj->GetStringField(TEXT("boothName"));
+				for (AActor* A : LevelBooths)
+				{
+					if (A && A->GetName() == BoothName)
+					{
+						Target = Cast<AShowroomBooth>(A);
+						break;
+					}
+				}
+			}
+			if (!Target) continue;
+
+			const TSharedPtr<FJsonObject>* StateObjPtr = nullptr;
+			if (!BoothObj->TryGetObjectField(TEXT("state"), StateObjPtr) || !StateObjPtr || !StateObjPtr->IsValid()) continue;
+			const TSharedPtr<FJsonObject>& StateObj = *StateObjPtr;
+
+			FShowroomBoothConfigState State;
+			State.ProductID = FName(*StateObj->GetStringField(TEXT("productID")));
+			State.ActiveSizeIndex = StateObj->GetIntegerField(TEXT("activeSizeIndex"));
+			State.ActiveColorIndex = StateObj->GetIntegerField(TEXT("activeColorIndex"));
+			State.CountertopSizeIndex = StateObj->GetIntegerField(TEXT("countertopSizeIndex"));
+			State.ActiveCountertopColorIndex = StateObj->GetIntegerField(TEXT("activeCountertopColorIndex"));
+			State.ClosetSizeIndex = StateObj->GetIntegerField(TEXT("closetSizeIndex"));
+			State.ClosetColorIndex = StateObj->GetIntegerField(TEXT("closetColorIndex"));
+			State.SinkSizeIndex = StateObj->GetIntegerField(TEXT("sinkSizeIndex"));
+			State.SinkColorIndex = StateObj->GetIntegerField(TEXT("sinkColorIndex"));
+			State.FaucetSizeIndex = StateObj->GetIntegerField(TEXT("faucetSizeIndex"));
+			State.FaucetColorIndex = StateObj->GetIntegerField(TEXT("faucetColorIndex"));
+			State.MirrorSizeIndex = StateObj->GetIntegerField(TEXT("mirrorSizeIndex"));
+			State.MirrorColorIndex = StateObj->GetIntegerField(TEXT("mirrorColorIndex"));
+
+			TArray<FCustomColorOverride> CustomColors;
+			const TArray<TSharedPtr<FJsonValue>>* ColorsArray = nullptr;
+			if (BoothObj->TryGetArrayField(TEXT("customColors"), ColorsArray) && ColorsArray)
+			{
+				for (const TSharedPtr<FJsonValue>& CVal : *ColorsArray)
+				{
+					TSharedPtr<FJsonObject> CObj = CVal->AsObject();
+					if (!CObj.IsValid()) continue;
+					const EFurnitureComponentType CompType = static_cast<EFurnitureComponentType>(CObj->GetIntegerField(TEXT("componentType")));
+					FLinearColor Color = FLinearColor::White;
+					const TSharedPtr<FJsonObject>* RGBA = nullptr;
+					if (CObj->TryGetObjectField(TEXT("color"), RGBA) && RGBA && RGBA->IsValid())
+					{
+						Color.R = (*RGBA)->GetNumberField(TEXT("r"));
+						Color.G = (*RGBA)->GetNumberField(TEXT("g"));
+						Color.B = (*RGBA)->GetNumberField(TEXT("b"));
+						Color.A = (*RGBA)->GetNumberField(TEXT("a"));
+					}
+					UMaterialInterface* OverrideMat = nullptr;
+					FString MatPath;
+					if (CObj->TryGetStringField(TEXT("overrideMaterial"), MatPath) && !MatPath.IsEmpty())
+					{
+						OverrideMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, *MatPath));
+					}
+					CustomColors.Add(FCustomColorOverride(CompType, Color, OverrideMat));
+				}
+			}
+
+			TArray<EDoorSlotState> DoorStates;
+			const TArray<TSharedPtr<FJsonValue>>* DoorsArray = nullptr;
+			if (BoothObj->TryGetArrayField(TEXT("doorStates"), DoorsArray) && DoorsArray)
+			{
+				for (const TSharedPtr<FJsonValue>& DVal : *DoorsArray)
+				{
+					DoorStates.Add(static_cast<EDoorSlotState>(static_cast<int32>(DVal->AsNumber())));
+				}
+			}
+
+			Target->LoadBoothFullState(State, CustomColors, DoorStates);
+		}
+	}
+
+	return true;
 }
 

@@ -341,19 +341,89 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                 {
                     if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
                     {
-                        PlannerManager->SelectWallAtWorldPos(GroundPos);
-                    }
-                    else if (IsInputKeyDown(EKeys::LeftMouseButton) && PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
-                    {
-                        PlannerManager->DragSelectedOpeningToWorldPos(GroundPos);
-                    }
-                    else if (WasInputKeyJustReleased(EKeys::LeftMouseButton) && PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
-                    {
-                        float OpeningDist = 0.f;
-                        if (PlannerManager->GetOpeningDistance(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, OpeningDist))
+                        // 1. Wall control point under the cursor → start a corner drag (REQ-02)
+                        const int32 NodeID = PlannerManager->FindNodeAtWorldPos(GroundPos, 25.f);
+                        if (NodeID != -1 && PlannerManager->StartNodeDrag(NodeID))
                         {
-                            Server_UpdateOpeningPosition(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, OpeningDist);
+                            bIs2DDraggingNode = true;
                         }
+                        else
+                        {
+                            // 2. Object / cabinet set / wall / opening / floor pick
+                            const EPlannerSelectionKind Kind = PlannerManager->SelectAtWorldPos2D(GroundPos);
+                            if (Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet)
+                            {
+                                bDragged2DIsCabinetSet = (Kind == EPlannerSelectionKind::CabinetSet);
+                                Dragged2DObjectID = bDragged2DIsCabinetSet ? PlannerManager->SelectedCabinetSetID : PlannerManager->SelectedObjectID;
+                                FVector ObjLoc = GroundPos;
+                                if (bDragged2DIsCabinetSet) { FPlacedCabinetSetData D; if (PlannerManager->GetCabinetSet(Dragged2DObjectID, D)) ObjLoc = D.Location; }
+                                else { FPlacedFurnitureData D; if (PlannerManager->GetPlacedObject(Dragged2DObjectID, D)) ObjLoc = D.Location; }
+                                Dragged2DOffset = ObjLoc - FVector(GroundPos.X, GroundPos.Y, 0.f);
+                            }
+                            else
+                            {
+                                Dragged2DObjectID.Empty();
+                            }
+                        }
+                    }
+                    else if (IsInputKeyDown(EKeys::LeftMouseButton))
+                    {
+                        if (bIs2DDraggingNode)
+                        {
+                            PlannerManager->UpdateNodeDrag(GroundPos);
+                        }
+                        else if (!Dragged2DObjectID.IsEmpty())
+                        {
+                            const FVector NewLoc = FVector(GroundPos.X, GroundPos.Y, 0.f) + Dragged2DOffset;
+                            if (bDragged2DIsCabinetSet)
+                            {
+                                FPlacedCabinetSetData D;
+                                if (PlannerManager->GetCabinetSet(Dragged2DObjectID, D)) PlannerManager->MoveCabinetSetLocal(Dragged2DObjectID, NewLoc, D.Rotation);
+                            }
+                            else
+                            {
+                                FPlacedFurnitureData D;
+                                if (PlannerManager->GetPlacedObject(Dragged2DObjectID, D)) PlannerManager->MovePlacedObjectLocal(Dragged2DObjectID, NewLoc, D.Rotation);
+                            }
+                        }
+                        else if (PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
+                        {
+                            PlannerManager->DragSelectedOpeningToWorldPos(GroundPos);
+                        }
+                    }
+                    else if (WasInputKeyJustReleased(EKeys::LeftMouseButton))
+                    {
+                        if (bIs2DDraggingNode)
+                        {
+                            bIs2DDraggingNode = false;
+                            int32 NodeID = -1;
+                            FVector2D FinalPos;
+                            if (PlannerManager->EndNodeDrag(NodeID, FinalPos))
+                            {
+                                Server_MoveNode(NodeID, FinalPos);
+                            }
+                        }
+                        else if (!Dragged2DObjectID.IsEmpty())
+                        {
+                            PlannerCommitSelectedObjectTransform();
+                            Dragged2DObjectID.Empty();
+                        }
+                        else if (PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
+                        {
+                            float OpeningDist = 0.f;
+                            if (PlannerManager->GetOpeningDistance(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, OpeningDist))
+                            {
+                                Server_UpdateOpeningPosition(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, OpeningDist);
+                            }
+                        }
+                    }
+                }
+                else if (PlannerManager->ActiveToolMode == EPlannerToolMode::PlaceFurniture)
+                {
+                    // Click-to-place armed by BeginPlaceObject / BeginPlaceCabinetSet (REQ-17 / REQ-18)
+                    if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
+                    {
+                        PlannerPlacePendingAt(GroundPos);
                     }
                 }
                 else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Erase)
@@ -381,6 +451,14 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                             Server_DeleteWall(PlannerManager->SelectedSegmentID);
                         }
                     }
+                    else if (!PlannerManager->SelectedObjectID.IsEmpty())
+                    {
+                        Server_RemovePlacedObject(PlannerManager->SelectedObjectID);
+                    }
+                    else if (!PlannerManager->SelectedCabinetSetID.IsEmpty())
+                    {
+                        Server_RemoveCabinetSet(PlannerManager->SelectedCabinetSetID);
+                    }
                 }
             }
         }
@@ -390,8 +468,15 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
     UPrimitiveComponent* NewHoveredComp = nullptr;
     AShowroomBooth* HitBooth = nullptr;
     bool bHoveringShowroom = false;
-    
+
     bool bIsMouseOverUI = IsWidgetHoveredGeometrically(MainWidgetInstance);
+
+    // Planner 3D mode: LMB picks the wall / opening / floor / object / cabinet set under the cursor (REQ-13 in 3D).
+    // Passive selection only — the booth double-click / hover interaction below is unaffected.
+    if (PlannerManager && PlannerManager->bPlannerUIOpen && !bIsMouseOverUI && WasInputKeyJustPressed(EKeys::LeftMouseButton))
+    {
+        PlannerPickUnderCursor();
+    }
 
     bool bIsMouseDown = IsInputKeyDown(EKeys::LeftMouseButton) || IsInputKeyDown(EKeys::RightMouseButton) || bRightMouseIsDragging;
 
@@ -2227,5 +2312,208 @@ void AAwsTutorial_PlayerController::Server_UpdateOpeningPosition_Implementation(
 bool AAwsTutorial_PlayerController::Server_UpdateOpeningPosition_Validate(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm)
 {
 	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Room Planner — REQ-02 / 07 / 13 / 16 / 17 / 18 server RPCs
+// Every mutation ends with OnRep_ReplicatedRoomJSON() so the server rebuilds from the
+// same JSON the clients receive (established replication model, REQ-15).
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AAwsTutorial_PlayerController::Server_MoveNode_Implementation(int32 NodeID, FVector2D NewPosition)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		if (Manager->MoveNode(NodeID, NewPosition))
+		{
+			Manager->OnRep_ReplicatedRoomJSON();
+		}
+		else
+		{
+			// Refused (REQ-09): re-broadcast the authoritative state so a client-side preview snaps back.
+			Manager->ReplicatedRoomJSON = Manager->ExportLayoutToJSON();
+			Manager->OnRep_ReplicatedRoomJSON();
+		}
+	}
+}
+bool AAwsTutorial_PlayerController::Server_MoveNode_Validate(int32 NodeID, FVector2D NewPosition) { return true; }
+
+void AAwsTutorial_PlayerController::Server_SetOpeningSwing_Implementation(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide Side, EOpeningSwingDirection Direction)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetOpeningSwing(SegmentID, OpeningIndex, Side, Direction);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_SetOpeningSwing_Validate(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide Side, EOpeningSwingDirection Direction) { return true; }
+
+void AAwsTutorial_PlayerController::Server_SetWallFinish_Implementation(int32 SegmentID, FSurfaceFinish Finish)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetWallFinish(SegmentID, Finish);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_SetWallFinish_Validate(int32 SegmentID, FSurfaceFinish Finish) { return true; }
+
+void AAwsTutorial_PlayerController::Server_SetFloorFinish_Implementation(int32 RoomID, FSurfaceFinish Finish)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetFloorFinish(RoomID, Finish);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_SetFloorFinish_Validate(int32 RoomID, FSurfaceFinish Finish) { return true; }
+
+void AAwsTutorial_PlayerController::Server_AddPlacedObject_Implementation(const FString& AssetID, FVector Location, FRotator Rotation, FVector Scale)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->AddPlacedObject(AssetID, Location, Rotation, Scale);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_AddPlacedObject_Validate(const FString& AssetID, FVector Location, FRotator Rotation, FVector Scale) { return true; }
+
+void AAwsTutorial_PlayerController::Server_MovePlacedObject_Implementation(const FString& InstanceID, FVector Location, FRotator Rotation, FVector Scale)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->MovePlacedObject(InstanceID, Location, Rotation, Scale);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_MovePlacedObject_Validate(const FString& InstanceID, FVector Location, FRotator Rotation, FVector Scale) { return true; }
+
+void AAwsTutorial_PlayerController::Server_RemovePlacedObject_Implementation(const FString& InstanceID)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->RemovePlacedObject(InstanceID);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_RemovePlacedObject_Validate(const FString& InstanceID) { return true; }
+
+void AAwsTutorial_PlayerController::Server_SetPlacedObjectFinish_Implementation(const FString& InstanceID, FSurfaceFinish Finish)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetPlacedObjectFinish(InstanceID, Finish);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_SetPlacedObjectFinish_Validate(const FString& InstanceID, FSurfaceFinish Finish) { return true; }
+
+void AAwsTutorial_PlayerController::Server_AddCabinetSet_Implementation(FName ProductID, FVector Location, FRotator Rotation)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->AddCabinetSet(ProductID, Location, Rotation);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_AddCabinetSet_Validate(FName ProductID, FVector Location, FRotator Rotation) { return true; }
+
+void AAwsTutorial_PlayerController::Server_MoveCabinetSet_Implementation(const FString& InstanceID, FVector Location, FRotator Rotation)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->MoveCabinetSet(InstanceID, Location, Rotation);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_MoveCabinetSet_Validate(const FString& InstanceID, FVector Location, FRotator Rotation) { return true; }
+
+void AAwsTutorial_PlayerController::Server_RemoveCabinetSet_Implementation(const FString& InstanceID)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->RemoveCabinetSet(InstanceID);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_RemoveCabinetSet_Validate(const FString& InstanceID) { return true; }
+
+void AAwsTutorial_PlayerController::Server_LoadPlannerProject_Implementation(const FString& SaveRecordJSON)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][Server] Restoring planner project (%d chars)."), SaveRecordJSON.Len());
+		Manager->ImportProjectFromSaveJSON(SaveRecordJSON);
+	}
+}
+bool AAwsTutorial_PlayerController::Server_LoadPlannerProject_Validate(const FString& SaveRecordJSON) { return true; }
+
+bool AAwsTutorial_PlayerController::PlannerPlacePendingAt(const FVector& WorldPos, float YawDeg)
+{
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+	if (!Manager || !Manager->HasPendingPlacement())
+	{
+		return false;
+	}
+
+	const FVector Location(WorldPos.X, WorldPos.Y, 0.f);
+	const FRotator Rotation(0.f, YawDeg, 0.f);
+
+	if (Manager->PendingPlacementKind == EPlannerPlacementKind::Object)
+	{
+		Server_AddPlacedObject(Manager->PendingPlacementAssetID, Location, Rotation, FVector::OneVector);
+	}
+	else if (Manager->PendingPlacementKind == EPlannerPlacementKind::CabinetSet)
+	{
+		Server_AddCabinetSet(FName(*Manager->PendingPlacementAssetID), Location, Rotation);
+	}
+	else
+	{
+		return false;
+	}
+
+	Manager->CancelPendingPlacement();
+	Manager->SetToolMode(EPlannerToolMode::Select);
+	UpdateRoomPlannerCameraToolMode(EPlannerToolMode::Select);
+	return true;
+}
+
+EPlannerSelectionKind AAwsTutorial_PlayerController::PlannerPickUnderCursor()
+{
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+	if (!Manager)
+	{
+		return EPlannerSelectionKind::None;
+	}
+	FHitResult Hit;
+	if (GetHitResultUnderCursor(ECC_Visibility, true, Hit) && Hit.GetActor())
+	{
+		return Manager->SelectSurfaceFromHit(Hit);
+	}
+	Manager->ClearAllSelection();
+	return EPlannerSelectionKind::None;
+}
+
+void AAwsTutorial_PlayerController::PlannerCommitSelectedObjectTransform()
+{
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+	if (!Manager) return;
+
+	if (!Manager->SelectedObjectID.IsEmpty())
+	{
+		FPlacedFurnitureData D;
+		if (Manager->GetPlacedObject(Manager->SelectedObjectID, D))
+		{
+			Server_MovePlacedObject(D.InstanceID, D.Location, D.Rotation, D.Scale);
+		}
+	}
+	else if (!Manager->SelectedCabinetSetID.IsEmpty())
+	{
+		FPlacedCabinetSetData D;
+		if (Manager->GetCabinetSet(Manager->SelectedCabinetSetID, D))
+		{
+			Server_MoveCabinetSet(D.InstanceID, D.Location, D.Rotation);
+		}
+	}
 }
 

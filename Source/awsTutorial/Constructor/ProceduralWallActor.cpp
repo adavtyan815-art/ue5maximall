@@ -81,20 +81,140 @@ void AProceduralWallActor::SetSelectedHighlight(bool bSelected, int32 StencilVal
 	}
 	else
 	{
-		// Restore normal default wall material (clean white / default texture)
-		UMaterialInterface* NormalMat = BaseWallMaterial ? BaseWallMaterial.Get() : nullptr;
-		if (!NormalMat)
-		{
-			NormalMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-		}
-		if (!NormalMat)
-		{
-			NormalMat = UMaterial::GetDefaultMaterial(MD_Surface);
-		}
-
-		if (NormalMat)
+		// Restore the wall's own material: applied finish (paint / tile) if any, else the default white.
+		if (UMaterialInterface* NormalMat = ResolveNormalMaterial())
 		{
 			WallProceduralMesh->SetMaterial(0, NormalMat);
+		}
+	}
+}
+
+void AProceduralWallActor::SetFinishMaterial(UMaterialInterface* NewFinishMaterial)
+{
+	FinishMaterial = NewFinishMaterial;
+	if (WallProceduralMesh && WallProceduralMesh->GetNumSections() > 0)
+	{
+		// Only touch the live material when the wall is not currently showing the selection material.
+		UMaterialInterface* Current = WallProceduralMesh->GetMaterial(0);
+		const bool bShowingSelection = (Current != nullptr && Current == WallSelectionMaterial.Get());
+		if (!bShowingSelection)
+		{
+			if (UMaterialInterface* NormalMat = ResolveNormalMaterial())
+			{
+				WallProceduralMesh->SetMaterial(0, NormalMat);
+			}
+		}
+	}
+}
+
+UMaterialInterface* AProceduralWallActor::ResolveNormalMaterial() const
+{
+	if (FinishMaterial)
+	{
+		return FinishMaterial.Get();
+	}
+	UMaterialInterface* NormalMat = BaseWallMaterial ? BaseWallMaterial.Get() : nullptr;
+	if (!NormalMat)
+	{
+		NormalMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	}
+	if (!NormalMat)
+	{
+		NormalMat = UMaterial::GetDefaultMaterial(MD_Surface);
+	}
+	return NormalMat;
+}
+
+bool AProceduralWallActor::IsHingeAtStart(const FWallOpening& Opening, bool bLeftSideIsInterior)
+{
+	// Observer stands inside the room facing the wall.
+	//  - interior on the LEFT face  -> observer's right hand points toward the START node
+	//  - interior on the RIGHT face -> observer's right hand points toward the END node
+	const bool bRightIsStart = bLeftSideIsInterior;
+	const bool bHingeRight = (Opening.SwingSide == EOpeningSwingSide::Right);
+	return bHingeRight ? bRightIsStart : !bRightIsStart;
+}
+
+void AProceduralWallActor::AppendOpeningLeaf(TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs,
+                                             const FWallOpening& Opening, const FVector2D& StartPos, const FVector2D& Dir2D, const FVector2D& Normal2D,
+                                             float TotalLength)
+{
+	if (Opening.Type == EOpeningType::Archway)
+	{
+		return; // Archways have no leaf.
+	}
+
+	const float OpenStart = FMath::Clamp(Opening.DistanceFromStart - Opening.Width * 0.5f, 0.f, TotalLength);
+	const float OpenEnd = FMath::Clamp(Opening.DistanceFromStart + Opening.Width * 0.5f, 0.f, TotalLength);
+	const float LeafWidth = FMath::Max(2.f, (OpenEnd - OpenStart) - 2.f);
+	const float LeafThickness = (Opening.Type == EOpeningType::Door) ? 4.f : 3.f;
+	const float SillZ = FMath::Max(0.f, Opening.SillHeight);
+	const float TopZ = FMath::Max(SillZ + 2.f, Opening.SillHeight + Opening.Height - 1.f);
+
+	const bool bHingeAtStart = IsHingeAtStart(Opening, WallData.bLeftSideIsInterior);
+	const FVector2D InteriorNormal = WallData.bLeftSideIsInterior ? Normal2D : -Normal2D;
+	const FVector2D SwingNormal = (Opening.SwingDirection == EOpeningSwingDirection::Inward) ? InteriorNormal : -InteriorNormal;
+
+	const FVector2D Hinge2D = bHingeAtStart ? (StartPos + Dir2D * (OpenStart + 1.f)) : (StartPos + Dir2D * (OpenEnd - 1.f));
+	const FVector2D AlongOpening = bHingeAtStart ? Dir2D : -Dir2D;
+
+	const float OpenAngleDeg = (Opening.Type == EOpeningType::Door) ? 90.f : 25.f;
+	const float OpenAngleRad = FMath::DegreesToRadians(OpenAngleDeg);
+
+	// Leaf direction rotated from the wall plane toward the swing side.
+	const FVector2D LeafDir = (AlongOpening * FMath::Cos(OpenAngleRad) + SwingNormal * FMath::Sin(OpenAngleRad)).GetSafeNormal();
+	const FVector2D LeafPerp = FVector2D(-LeafDir.Y, LeafDir.X) * (LeafThickness * 0.5f);
+
+	const FVector2D A2 = Hinge2D - LeafPerp;                       // hinge, side 1
+	const FVector2D B2 = Hinge2D + LeafDir * LeafWidth - LeafPerp; // far edge, side 1
+	const FVector2D C2 = Hinge2D + LeafDir * LeafWidth + LeafPerp; // far edge, side 2
+	const FVector2D D2 = Hinge2D + LeafPerp;                       // hinge, side 2
+
+	const FVector A0(A2.X, A2.Y, SillZ), A1(A2.X, A2.Y, TopZ);
+	const FVector B0(B2.X, B2.Y, SillZ), B1(B2.X, B2.Y, TopZ);
+	const FVector C0(C2.X, C2.Y, SillZ), C1(C2.X, C2.Y, TopZ);
+	const FVector D0(D2.X, D2.Y, SillZ), D1(D2.X, D2.Y, TopZ);
+
+	const FVector NSide1(-LeafPerp.X, -LeafPerp.Y, 0.f);
+	const FVector NSide2(LeafPerp.X, LeafPerp.Y, 0.f);
+	const FVector NFar(LeafDir.X, LeafDir.Y, 0.f);
+	const FVector NHinge(-LeafDir.X, -LeafDir.Y, 0.f);
+
+	// Side faces
+	GenerateQuad(Vertices, Triangles, Normals, UVs, A0, B0, B1, A1, NSide1.GetSafeNormal());
+	GenerateQuad(Vertices, Triangles, Normals, UVs, C0, D0, D1, C1, NSide2.GetSafeNormal());
+	// Far edge and hinge edge
+	GenerateQuad(Vertices, Triangles, Normals, UVs, B0, C0, C1, B1, NFar);
+	GenerateQuad(Vertices, Triangles, Normals, UVs, D0, A0, A1, D1, NHinge);
+	// Top and bottom
+	GenerateQuad(Vertices, Triangles, Normals, UVs, A1, B1, C1, D1, FVector::UpVector);
+	GenerateQuad(Vertices, Triangles, Normals, UVs, D0, C0, B0, A0, -FVector::UpVector);
+
+	// Floor swing arc (doors) / sill swing arc (windows): a thin annulus strip from the wall plane to the open leaf.
+	const float ArcZ = SillZ + 1.5f;
+	const float OuterR = LeafWidth;
+	const float InnerR = FMath::Max(1.f, LeafWidth - 3.f);
+	const int32 ArcSegments = (Opening.Type == EOpeningType::Door) ? 10 : 4;
+	for (int32 i = 0; i < ArcSegments; ++i)
+	{
+		const float T0 = OpenAngleRad * (float)i / (float)ArcSegments;
+		const float T1 = OpenAngleRad * (float)(i + 1) / (float)ArcSegments;
+		const FVector2D R0 = AlongOpening * FMath::Cos(T0) + SwingNormal * FMath::Sin(T0);
+		const FVector2D R1 = AlongOpening * FMath::Cos(T1) + SwingNormal * FMath::Sin(T1);
+		const FVector2D P0 = Hinge2D + R0 * InnerR;
+		const FVector2D P1 = Hinge2D + R0 * OuterR;
+		const FVector2D P2 = Hinge2D + R1 * OuterR;
+		const FVector2D P3 = Hinge2D + R1 * InnerR;
+
+		// Ensure the quad winds so its normal points up regardless of swing orientation.
+		const float Cross = (P1 - P0).X * (P3 - P0).Y - (P1 - P0).Y * (P3 - P0).X;
+		if (Cross >= 0.f)
+		{
+			GenerateQuad(Vertices, Triangles, Normals, UVs, FVector(P0.X, P0.Y, ArcZ), FVector(P1.X, P1.Y, ArcZ), FVector(P2.X, P2.Y, ArcZ), FVector(P3.X, P3.Y, ArcZ), FVector::UpVector);
+		}
+		else
+		{
+			GenerateQuad(Vertices, Triangles, Normals, UVs, FVector(P0.X, P0.Y, ArcZ), FVector(P3.X, P3.Y, ArcZ), FVector(P2.X, P2.Y, ArcZ), FVector(P1.X, P1.Y, ArcZ), FVector::UpVector);
 		}
 	}
 }
@@ -459,19 +579,40 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 
 	WallProceduralMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, TArray<FColor>(), Tangents, bCreateCollision);
 
-	// Apply normal unselected base material upon wall creation (clean default white)
-	UMaterialInterface* NormalMat = BaseWallMaterial ? BaseWallMaterial.Get() : nullptr;
-	if (!NormalMat)
+	// Section 1: door / window leaves in their open position + swing arcs (REQ-07).
 	{
-		NormalMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	}
-	if (!NormalMat)
-	{
-		NormalMat = UMaterial::GetDefaultMaterial(MD_Surface);
+		TArray<FVector> LeafVerts;
+		TArray<int32> LeafTris;
+		TArray<FVector> LeafNorms;
+		TArray<FVector2D> LeafUVs;
+		for (const FWallOpening& Opening : ValidOpenings)
+		{
+			AppendOpeningLeaf(LeafVerts, LeafTris, LeafNorms, LeafUVs, Opening, StartPos, Dir2D, Normal2D, TotalLength);
+		}
+		if (LeafVerts.Num() > 0)
+		{
+			WallProceduralMesh->CreateMeshSection(1, LeafVerts, LeafTris, LeafNorms, LeafUVs, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
+		}
 	}
 
+	// Apply the wall's normal material (finish if any, else clean default white) and the leaf material.
+	UMaterialInterface* NormalMat = ResolveNormalMaterial();
 	if (NormalMat)
 	{
 		WallProceduralMesh->SetMaterial(0, NormalMat);
+	}
+
+	UMaterialInterface* LeafMat = LeafMaterial ? LeafMaterial.Get() : nullptr;
+	if (!LeafMat)
+	{
+		LeafMat = BaseWallMaterial ? BaseWallMaterial.Get() : nullptr;
+	}
+	if (!LeafMat)
+	{
+		LeafMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	}
+	if (LeafMat && WallProceduralMesh->GetNumSections() > 1)
+	{
+		WallProceduralMesh->SetMaterial(1, LeafMat);
 	}
 }

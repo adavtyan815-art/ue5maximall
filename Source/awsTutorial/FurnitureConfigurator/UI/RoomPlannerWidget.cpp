@@ -13,6 +13,9 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Kismet/GameplayStatics.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
+#include "Components/Widget.h"
+#include "Engine/HitResult.h"
+#include "ColorCatalog/ColorCatalogWidget.h"
 
 void URoomPlannerWidget::NativeConstruct()
 {
@@ -112,18 +115,38 @@ void URoomPlannerWidget::NativeConstruct()
 		TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или выберите пресет 4х4 м")));
 	}
 
-	if (UWorld* World = GetWorld())
-	{
-		PlannerManager = ARoomPlannerManager::GetOrCreateInstance(World);
-		if (PlannerManager)
-		{
-			PlannerManager->OnInteractiveWallDragProgress.AddUniqueDynamic(this, &URoomPlannerWidget::HandleWallDragProgress);
-			PlannerManager->OnWallSelected.AddUniqueDynamic(this, &URoomPlannerWidget::OnWallSelected);
-			PlannerManager->OnRoomPlannerUpdated.AddUniqueDynamic(this, &URoomPlannerWidget::HandleRoomPlannerUpdated);
-		}
-	}
+	BindManagerDelegates();
 
 	if (BtnApplyProperties) { BtnApplyProperties->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnApplyPropertiesClicked); }
+
+	// REQ-07 swing, REQ-13 finishing, REQ-17/18 objects — optional controls of the existing WBP
+	if (BtnSwingLeft) { BtnSwingLeft->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnSwingLeftClicked); }
+	if (BtnSwingRight) { BtnSwingRight->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnSwingRightClicked); }
+	if (BtnSwingInward) { BtnSwingInward->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnSwingInwardClicked); }
+	if (BtnSwingOutward) { BtnSwingOutward->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnSwingOutwardClicked); }
+	if (BtnFinishPaint) { BtnFinishPaint->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnFinishPaintClicked); }
+	if (BtnClearFinish) { BtnClearFinish->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnClearFinishClicked); }
+	if (BtnRotateLeft) { BtnRotateLeft->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnRotateLeftClicked); }
+	if (BtnRotateRight) { BtnRotateRight->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnRotateRightClicked); }
+	if (BtnCancelPlacement) { BtnCancelPlacement->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCancelPlacementClicked); }
+
+	if (BtnSwingLeft) BtnSwingLeft->SetToolTipText(FText::FromString(TEXT("Петли слева (вид изнутри комнаты)")));
+	if (BtnSwingRight) BtnSwingRight->SetToolTipText(FText::FromString(TEXT("Петли справа (вид изнутри комнаты)")));
+	if (BtnSwingInward) BtnSwingInward->SetToolTipText(FText::FromString(TEXT("Открывается внутрь комнаты")));
+	if (BtnSwingOutward) BtnSwingOutward->SetToolTipText(FText::FromString(TEXT("Открывается наружу")));
+	if (BtnFinishPaint) BtnFinishPaint->SetToolTipText(FText::FromString(TEXT("Покрасить выбранную стену / пол цветом RAL / NCS")));
+	if (BtnClearFinish) BtnClearFinish->SetToolTipText(FText::FromString(TEXT("Убрать отделку с выбранной поверхности")));
+
+	{
+		UWidget* InitiallyHidden[] = {
+			BtnSwingLeft.Get(), BtnSwingRight.Get(), BtnSwingInward.Get(), BtnSwingOutward.Get(),
+			BtnFinishPaint.Get(), BtnClearFinish.Get(), BtnRotateLeft.Get(), BtnRotateRight.Get(),
+			BtnCancelPlacement.Get(), SelectionLabelPanel.Get(), TxtOperationMessage.Get() };
+		for (UWidget* W : InitiallyHidden)
+		{
+			if (W) W->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
 
 	// Automatically enter 2D Top-Down Drawing Mode on open
 	CurrentViewMode = ERoomPlannerViewMode::View3D;
@@ -145,12 +168,19 @@ void URoomPlannerWidget::NativeDestruct()
 		PC->SendPixelStreamingResponse(TEXT("PlannerMode:Closed"));
 	}
 
+	if (::IsValid(ActivePlannerColorCatalog) && ActivePlannerColorCatalog->IsInViewport())
+	{
+		ActivePlannerColorCatalog->OnColorItemSelected.RemoveAll(this);
+		ActivePlannerColorCatalog->OnCatalogClosed.RemoveAll(this);
+		ActivePlannerColorCatalog->RemoveFromParent();
+	}
+	ActivePlannerColorCatalog = nullptr;
+
 	if (PlannerManager)
 	{
-		PlannerManager->OnInteractiveWallDragProgress.RemoveAll(this);
-		PlannerManager->OnWallSelected.RemoveAll(this);
-		PlannerManager->OnRoomPlannerUpdated.RemoveAll(this);
-
+		UnbindManagerDelegates();
+		PlannerManager->bPlannerUIOpen = false;
+		PlannerManager->CancelPendingPlacement();
 		PlannerManager->SetViewMode(false);
 	}
 
@@ -196,8 +226,36 @@ FReply URoomPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, 
 					}
 					else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Select)
 					{
-						PlannerManager->SelectWallAtWorldPos(GroundPos);
+						// 1. Wall control point → corner drag (REQ-02)
+						const int32 NodeID = PlannerManager->FindNodeAtWorldPos(GroundPos, 25.f);
+						if (NodeID != -1 && PlannerManager->StartNodeDrag(NodeID))
+						{
+							bIsWidgetDraggingNode = true;
+							UpdateDynamicPropertiesPanel();
+							return FReply::Handled().CaptureMouse(TakeWidget());
+						}
+
+						// 2. Object / cabinet set / wall / opening / floor
+						const EPlannerSelectionKind Kind = PlannerManager->SelectAtWorldPos2D(GroundPos);
+						if (Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet)
+						{
+							bWidgetDraggedIsCabinetSet = (Kind == EPlannerSelectionKind::CabinetSet);
+							WidgetDraggedObjectID = bWidgetDraggedIsCabinetSet ? PlannerManager->SelectedCabinetSetID : PlannerManager->SelectedObjectID;
+							FVector ObjLoc = GroundPos;
+							if (bWidgetDraggedIsCabinetSet) { FPlacedCabinetSetData D; if (PlannerManager->GetCabinetSet(WidgetDraggedObjectID, D)) ObjLoc = D.Location; }
+							else { FPlacedFurnitureData D; if (PlannerManager->GetPlacedObject(WidgetDraggedObjectID, D)) ObjLoc = D.Location; }
+							WidgetDragOffset = ObjLoc - FVector(GroundPos.X, GroundPos.Y, 0.f);
+							UpdateDynamicPropertiesPanel();
+							return FReply::Handled().CaptureMouse(TakeWidget());
+						}
+						WidgetDraggedObjectID.Empty();
 						UpdateDynamicPropertiesPanel();
+						return FReply::Handled();
+					}
+					else if (PlannerManager->ActiveToolMode == EPlannerToolMode::PlaceFurniture)
+					{
+						PC->PlannerPlacePendingAt(GroundPos);
+						UpdateToolModeButtonStyles();
 						return FReply::Handled();
 					}
 					else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Erase)
@@ -212,6 +270,12 @@ FReply URoomPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, 
 				}
 			}
 		}
+	}
+	else if (CurrentViewMode == ERoomPlannerViewMode::View3D && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		// 3D mode: pick the surface / object under the cursor for finishing (REQ-13 in 3D). Not handled so the
+		// controller's booth interaction still receives the click. Placement / editing stay 2D-only.
+		PickSurfaceUnderCursor();
 	}
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
@@ -242,6 +306,26 @@ FReply URoomPlannerWidget::NativeOnMouseMove(const FGeometry& InGeometry, const 
 					{
 						PlannerManager->CheckHoverSnapHint(GroundPos);
 					}
+					else if (bIsWidgetDraggingNode)
+					{
+						PlannerManager->UpdateNodeDrag(GroundPos);
+						return FReply::Handled();
+					}
+					else if (!WidgetDraggedObjectID.IsEmpty() && InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton))
+					{
+						const FVector NewLoc = FVector(GroundPos.X, GroundPos.Y, 0.f) + WidgetDragOffset;
+						if (bWidgetDraggedIsCabinetSet)
+						{
+							FPlacedCabinetSetData D;
+							if (PlannerManager->GetCabinetSet(WidgetDraggedObjectID, D)) PlannerManager->MoveCabinetSetLocal(WidgetDraggedObjectID, NewLoc, D.Rotation);
+						}
+						else
+						{
+							FPlacedFurnitureData D;
+							if (PlannerManager->GetPlacedObject(WidgetDraggedObjectID, D)) PlannerManager->MovePlacedObjectLocal(WidgetDraggedObjectID, NewLoc, D.Rotation);
+						}
+						return FReply::Handled();
+					}
 				}
 			}
 		}
@@ -251,6 +335,32 @@ FReply URoomPlannerWidget::NativeOnMouseMove(const FGeometry& InGeometry, const 
 
 FReply URoomPlannerWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && bIsWidgetDraggingNode)
+	{
+		bIsWidgetDraggingNode = false;
+		if (PlannerManager)
+		{
+			int32 NodeID = -1;
+			FVector2D FinalPos;
+			if (PlannerManager->EndNodeDrag(NodeID, FinalPos))
+			{
+				if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+				{
+					PC->Server_MoveNode(NodeID, FinalPos);
+				}
+			}
+		}
+		return FReply::Handled().ReleaseMouseCapture();
+	}
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && !WidgetDraggedObjectID.IsEmpty())
+	{
+		WidgetDraggedObjectID.Empty();
+		if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+		{
+			PC->PlannerCommitSelectedObjectTransform();
+		}
+		return FReply::Handled().ReleaseMouseCapture();
+	}
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && bIsWidgetDrawingWall)
 	{
 		bIsWidgetDrawingWall = false;
@@ -283,18 +393,24 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 
 	if (!PlannerManager && GetWorld())
 	{
-		PlannerManager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+		BindManagerDelegates();
 		if (PlannerManager)
 		{
-			PlannerManager->OnInteractiveWallDragProgress.AddUniqueDynamic(this, &URoomPlannerWidget::HandleWallDragProgress);
-			PlannerManager->OnWallSelected.AddUniqueDynamic(this, &URoomPlannerWidget::OnWallSelected);
-			PlannerManager->OnRoomPlannerUpdated.AddUniqueDynamic(this, &URoomPlannerWidget::HandleRoomPlannerUpdated);
 			PlannerManager->SetViewMode(CurrentViewMode == ERoomPlannerViewMode::View2D);
 			UpdateSummaryStatsUI();
 			UpdateViewModeButtonStyles();
 			UpdateDynamicPropertiesPanel();
 			UpdateToolModeButtonStyles();
 		}
+	}
+
+	// REQ-02 / REQ-04 / REQ-06: keep the dimension labels next to the selected object every frame.
+	UpdateSelectionLabelsUI();
+
+	if (TxtOperationMessage && OperationMessageClearTime > 0.f && GetWorld() && GetWorld()->GetTimeSeconds() > OperationMessageClearTime)
+	{
+		OperationMessageClearTime = 0.f;
+		TxtOperationMessage->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	if (PlannerManager)
@@ -482,18 +598,34 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 		break;
 
 	case EPlannerToolMode::Select:
-		if (PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
+		if (PlannerManager->IsNodeDragActive())
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("Проём выбран: зажмите ЛКМ и двигайте вдоль стены для перемещения, или настройте размеры справа")));
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Перетаскивание угла: длины стен обновляются в реальном времени. Отпустите ЛКМ, чтобы применить")));
+		}
+		else if (PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Проём выбран: тяните вдоль стены, задайте размеры и сторону открывания справа")));
 		}
 		else if (PlannerManager->SelectedSegmentID != -1)
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("Стена выбрана: измените длину в панели справа, добавьте дверь/окно или нажмите Delete для удаления")));
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Стена выбрана: тяните её углы, измените длину, добавьте дверь/окно или назначьте отделку")));
+		}
+		else if (PlannerManager->SelectedRoomID != -1)
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Пол выбран: назначьте краску или плитку")));
+		}
+		else if (!PlannerManager->SelectedObjectID.IsEmpty() || !PlannerManager->SelectedCabinetSetID.IsEmpty())
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Объект выбран: тяните для перемещения, поверните кнопками или удалите клавишей Delete")));
 		}
 		else
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("Кликните по любой стене или двери/окну, чтобы настроить их параметры")));
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Кликните по стене, двери/окну, полу или объекту, чтобы настроить их параметры. Углы стен можно тянуть")));
 		}
+		break;
+
+	case EPlannerToolMode::PlaceFurniture:
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("Кликните на плане, чтобы разместить выбранный объект")));
 		break;
 
 	case EPlannerToolMode::Erase:
@@ -524,6 +656,7 @@ void URoomPlannerWidget::HandleRoomPlannerUpdated(const FString& JSONState)
 	UpdateSummaryStatsUI();
 	UpdateDynamicPropertiesPanel();
 	UpdateToolModeButtonStyles();
+	UpdateFinishUI();
 }
 
 void URoomPlannerWidget::On2DViewClicked() { SetViewMode(ERoomPlannerViewMode::View2D); }
@@ -540,21 +673,9 @@ void URoomPlannerWidget::OnDeleteToolClicked()
 {
 	if (PlannerManager)
 	{
-		if (PlannerManager->SelectedSegmentID != -1)
+		if (PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None)
 		{
-			if (AAwsTutorial_PlayerController* PC = GetPreviewController())
-			{
-				if (PlannerManager->SelectedOpeningIndex != -1)
-				{
-					PC->Server_DeleteOpening(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex);
-				}
-				else
-				{
-					PC->Server_DeleteWall(PlannerManager->SelectedSegmentID);
-				}
-			}
-			PlannerManager->ClearWallSelection();
-			UpdateDynamicPropertiesPanel();
+			DeleteSelected();
 		}
 		else
 		{
@@ -706,16 +827,48 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 	}
 	else
 	{
-		// Nothing is selected
+		// No wall / opening selected (nothing, or a floor / object / cabinet set)
 		if (EditableTxtProp1) EditableTxtProp1->SetVisibility(ESlateVisibility::Hidden);
 		if (EditableTxtProp2) EditableTxtProp2->SetVisibility(ESlateVisibility::Hidden);
 		if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
 		if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Размер стены")));
 
+		// Editing (delete / rotate / swing / placement) is a 2D-only workflow, matching the existing panel logic.
+		const bool bOtherSelection = (CurrentViewMode == ERoomPlannerViewMode::View2D) && (PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None);
 		if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Collapsed);
-		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(ESlateVisibility::Collapsed);
-		if (Image_2) Image_2->SetVisibility(ESlateVisibility::Collapsed);
+		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(bOtherSelection ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		if (Image_2) Image_2->SetVisibility(bOtherSelection ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
+
+	const bool bIs2DPanel = (CurrentViewMode == ERoomPlannerViewMode::View2D);
+
+	// REQ-07: swing controls only for a selected door / window, 2D only
+	const EPlannerSelectionKind Kind = PlannerManager->GetSelectionKind();
+	const ESlateVisibility SwingVis = (bIs2DPanel && Kind == EPlannerSelectionKind::Opening) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	if (BtnSwingLeft) BtnSwingLeft->SetVisibility(SwingVis);
+	if (BtnSwingRight) BtnSwingRight->SetVisibility(SwingVis);
+	if (BtnSwingInward) BtnSwingInward->SetVisibility(SwingVis);
+	if (BtnSwingOutward) BtnSwingOutward->SetVisibility(SwingVis);
+	if (Kind == EPlannerSelectionKind::Opening)
+	{
+		EOpeningSwingSide Side; EOpeningSwingDirection Dir;
+		if (GetSelectedOpeningSwing(Side, Dir))
+		{
+			const FLinearColor Active(0.18f, 0.8f, 0.44f, 1.f), Inactive(0.17f, 0.17f, 0.18f, 1.f);
+			if (BtnSwingLeft) BtnSwingLeft->SetBackgroundColor(Side == EOpeningSwingSide::Left ? Active : Inactive);
+			if (BtnSwingRight) BtnSwingRight->SetBackgroundColor(Side == EOpeningSwingSide::Right ? Active : Inactive);
+			if (BtnSwingInward) BtnSwingInward->SetBackgroundColor(Dir == EOpeningSwingDirection::Inward ? Active : Inactive);
+			if (BtnSwingOutward) BtnSwingOutward->SetBackgroundColor(Dir == EOpeningSwingDirection::Outward ? Active : Inactive);
+		}
+	}
+
+	// REQ-17 / REQ-18: rotate controls for objects / cabinet sets
+	const ESlateVisibility RotVis = (bIs2DPanel && (Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet)) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	if (BtnRotateLeft) BtnRotateLeft->SetVisibility(RotVis);
+	if (BtnRotateRight) BtnRotateRight->SetVisibility(RotVis);
+	if (BtnCancelPlacement) BtnCancelPlacement->SetVisibility((bIs2DPanel && PlannerManager->HasPendingPlacement()) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
+	UpdateFinishUI();
 }
 
 void URoomPlannerWidget::OnApplyPropertiesClicked()
@@ -1012,4 +1165,525 @@ float URoomPlannerWidget::GetPerimeterLengthM() const
 	}
 	return 0.0f;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Manager delegate wiring
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void URoomPlannerWidget::BindManagerDelegates()
+{
+	if (!PlannerManager && GetWorld())
+	{
+		PlannerManager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+	}
+	if (!PlannerManager || bManagerDelegatesBound) return;
+
+	PlannerManager->OnInteractiveWallDragProgress.AddUniqueDynamic(this, &URoomPlannerWidget::HandleWallDragProgress);
+	PlannerManager->OnWallSelected.AddUniqueDynamic(this, &URoomPlannerWidget::OnWallSelected);
+	PlannerManager->OnRoomPlannerUpdated.AddUniqueDynamic(this, &URoomPlannerWidget::HandleRoomPlannerUpdated);
+	PlannerManager->OnOperationRejected.AddUniqueDynamic(this, &URoomPlannerWidget::HandleOperationRejected);
+	PlannerManager->OnSelectionChanged.AddUniqueDynamic(this, &URoomPlannerWidget::HandleSelectionChanged);
+	PlannerManager->bPlannerUIOpen = true;
+	bManagerDelegatesBound = true;
+}
+
+void URoomPlannerWidget::UnbindManagerDelegates()
+{
+	if (!PlannerManager) return;
+	PlannerManager->OnInteractiveWallDragProgress.RemoveAll(this);
+	PlannerManager->OnWallSelected.RemoveAll(this);
+	PlannerManager->OnRoomPlannerUpdated.RemoveAll(this);
+	PlannerManager->OnOperationRejected.RemoveAll(this);
+	PlannerManager->OnSelectionChanged.RemoveAll(this);
+	bManagerDelegatesBound = false;
+}
+
+void URoomPlannerWidget::HandleOperationRejected(const FString& Reason)
+{
+	if (TxtOperationMessage)
+	{
+		TxtOperationMessage->SetText(FText::FromString(Reason));
+		TxtOperationMessage->SetVisibility(ESlateVisibility::HitTestInvisible);
+		OperationMessageClearTime = GetWorld() ? GetWorld()->GetTimeSeconds() + 4.f : 0.f;
+	}
+	OnOperationRejectedMessage(Reason);
+}
+
+void URoomPlannerWidget::HandleSelectionChanged()
+{
+	UpdateDynamicPropertiesPanel();
+	UpdateGuidanceHintText();
+
+	const EPlannerSelectionKind Kind = GetSelectionKind();
+	if (Kind != LastNotifiedSelectionKind)
+	{
+		LastNotifiedSelectionKind = Kind;
+		OnSelectionKindChanged(Kind);
+	}
+}
+
+EPlannerSelectionKind URoomPlannerWidget::GetSelectionKind() const
+{
+	return PlannerManager ? PlannerManager->GetSelectionKind() : EPlannerSelectionKind::None;
+}
+
+bool URoomPlannerWidget::DeprojectCursorToGround(FVector& OutGroundPos) const
+{
+	AAwsTutorial_PlayerController* PC = GetPreviewController();
+	if (!PC) return false;
+	FVector WorldOrigin, WorldDirection;
+	if (PC->DeprojectMousePositionToWorld(WorldOrigin, WorldDirection) && !FMath::IsNearlyZero(WorldDirection.Z))
+	{
+		const float T = -WorldOrigin.Z / WorldDirection.Z;
+		if (T >= 0.f)
+		{
+			OutGroundPos = WorldOrigin + T * WorldDirection;
+			OutGroundPos.Z = 0.f;
+			return true;
+		}
+	}
+	return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-02 / REQ-04 / REQ-06: labels
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TArray<FPlannerDimensionLabel> URoomPlannerWidget::GetSelectionLabels() const
+{
+	TArray<FPlannerDimensionLabel> Labels;
+	if (!PlannerManager) return Labels;
+
+	Labels = PlannerManager->GetSelectionDimensionLabels();
+
+	APlayerController* PC = GetOwningPlayer();
+	const float DPIScale = UWidgetLayoutLibrary::GetViewportScale(this);
+	for (FPlannerDimensionLabel& L : Labels)
+	{
+		FVector2D ScreenPos;
+		if (PC && PC->ProjectWorldLocationToScreen(L.WorldLocation, ScreenPos))
+		{
+			if (DPIScale > 0.001f) ScreenPos /= DPIScale;
+			L.ScreenPosition = ScreenPos;
+			L.bOnScreen = true;
+		}
+	}
+	return Labels;
+}
+
+void URoomPlannerWidget::UpdateSelectionLabelsUI()
+{
+	if (!PlannerManager) return;
+
+	const bool bActive = PlannerManager->IsNodeDragActive() || PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None;
+	if (!bActive)
+	{
+		if (SelectionLabelPanel && SelectionLabelPanel->GetVisibility() != ESlateVisibility::Collapsed)
+		{
+			SelectionLabelPanel->SetVisibility(ESlateVisibility::Collapsed);
+			OnSelectionLabelsUpdated(TArray<FPlannerDimensionLabel>());
+		}
+		return;
+	}
+
+	const TArray<FPlannerDimensionLabel> Labels = GetSelectionLabels();
+
+	auto FindLabel = [&Labels](const TCHAR* Key) -> const FPlannerDimensionLabel*
+	{
+		for (const FPlannerDimensionLabel& L : Labels) if (L.Key == Key) return &L;
+		return nullptr;
+	};
+	auto SetText = [](UTextBlock* Block, const FPlannerDimensionLabel* L)
+	{
+		if (!Block) return;
+		if (L) { Block->SetText(FText::FromString(L->Text)); Block->SetVisibility(ESlateVisibility::HitTestInvisible); }
+		else { Block->SetVisibility(ESlateVisibility::Collapsed); }
+	};
+
+	// Summary line
+	if (TxtSelectedDims)
+	{
+		FString Dims;
+		if (const FPlannerDimensionLabel* W = FindLabel(TEXT("width")))
+		{
+			const FPlannerDimensionLabel* H = FindLabel(TEXT("height"));
+			Dims = H ? FString::Printf(TEXT("%s × %s"), *W->Text, *H->Text) : W->Text;
+		}
+		else if (const FPlannerDimensionLabel* Len = FindLabel(TEXT("length")))
+		{
+			Dims = Len->Text;
+		}
+		else if (const FPlannerDimensionLabel* Area = FindLabel(TEXT("area")))
+		{
+			Dims = Area->Text;
+		}
+		else if (const FPlannerDimensionLabel* Size = FindLabel(TEXT("size")))
+		{
+			Dims = Size->Text;
+		}
+		TxtSelectedDims->SetText(FText::FromString(Dims));
+		TxtSelectedDims->SetVisibility(Dims.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
+	SetText(TxtDistLeft, FindLabel(TEXT("distLeft")));
+	SetText(TxtDistRight, FindLabel(TEXT("distRight")));
+	SetText(TxtDistFloor, FindLabel(TEXT("distFloor")));
+	SetText(TxtDistNeighbor, FindLabel(TEXT("distNeighbor")));
+
+	// Anchor the optional panel at the primary label's screen position
+	if (SelectionLabelPanel)
+	{
+		const FPlannerDimensionLabel* Anchor = FindLabel(TEXT("width"));
+		if (!Anchor) Anchor = FindLabel(TEXT("length"));
+		if (!Anchor) Anchor = FindLabel(TEXT("area"));
+		if (!Anchor) Anchor = FindLabel(TEXT("size"));
+		if (Anchor && Anchor->bOnScreen)
+		{
+			SelectionLabelPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+			if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(SelectionLabelPanel->Slot))
+			{
+				CanvasSlot->SetPosition(Anchor->ScreenPosition);
+			}
+			else
+			{
+				SelectionLabelPanel->SetRenderTranslation(Anchor->ScreenPosition);
+			}
+		}
+		else
+		{
+			SelectionLabelPanel->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+
+	OnSelectionLabelsUpdated(Labels);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-07: swing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void URoomPlannerWidget::SetSelectedOpeningSwing(EOpeningSwingSide Side, EOpeningSwingDirection Direction)
+{
+	if (!PlannerManager || PlannerManager->SelectedSegmentID == -1 || PlannerManager->SelectedOpeningIndex == -1) return;
+	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // editing openings is a 2D workflow
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		PC->Server_SetOpeningSwing(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, Side, Direction);
+	}
+}
+
+void URoomPlannerWidget::SetSelectedSwingSide(EOpeningSwingSide Side)
+{
+	EOpeningSwingSide CurSide; EOpeningSwingDirection CurDir;
+	if (GetSelectedOpeningSwing(CurSide, CurDir))
+	{
+		SetSelectedOpeningSwing(Side, CurDir);
+	}
+}
+
+void URoomPlannerWidget::SetSelectedSwingDirection(EOpeningSwingDirection Direction)
+{
+	EOpeningSwingSide CurSide; EOpeningSwingDirection CurDir;
+	if (GetSelectedOpeningSwing(CurSide, CurDir))
+	{
+		SetSelectedOpeningSwing(CurSide, Direction);
+	}
+}
+
+bool URoomPlannerWidget::GetSelectedOpeningSwing(EOpeningSwingSide& OutSide, EOpeningSwingDirection& OutDirection) const
+{
+	if (!PlannerManager) return false;
+	return PlannerManager->GetOpeningSwing(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, OutSide, OutDirection);
+}
+
+void URoomPlannerWidget::OnSwingLeftClicked() { SetSelectedSwingSide(EOpeningSwingSide::Left); }
+void URoomPlannerWidget::OnSwingRightClicked() { SetSelectedSwingSide(EOpeningSwingSide::Right); }
+void URoomPlannerWidget::OnSwingInwardClicked() { SetSelectedSwingDirection(EOpeningSwingDirection::Inward); }
+void URoomPlannerWidget::OnSwingOutwardClicked() { SetSelectedSwingDirection(EOpeningSwingDirection::Outward); }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-13 / REQ-14: finishing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void URoomPlannerWidget::OpenPaintCatalogForSelection()
+{
+	if (!PlannerManager || !PlannerManager->CanApplyFinishToSelection())
+	{
+		HandleOperationRejected(TEXT("Сначала выберите стену, пол или объект"));
+		return;
+	}
+
+	TSubclassOf<UColorCatalogWidget> CatalogClass = PlannerColorCatalogWidgetClass;
+	if (!CatalogClass)
+	{
+		CatalogClass = LoadClass<UColorCatalogWidget>(nullptr, TEXT("/Game/ColorCatalog/UI/WBP_ColorCatalog.WBP_ColorCatalog_C"));
+	}
+	if (!CatalogClass)
+	{
+		HandleOperationRejected(TEXT("Каталог цветов не найден (WBP_ColorCatalog)"));
+		return;
+	}
+
+	if (::IsValid(ActivePlannerColorCatalog) && ActivePlannerColorCatalog->IsInViewport())
+	{
+		return; // already open
+	}
+
+	UColorCatalogWidget* Catalog = UColorCatalogWidget::OpenColorCatalogForWidget(this, CatalogClass);
+	if (!Catalog)
+	{
+		return;
+	}
+	ActivePlannerColorCatalog = Catalog;
+	Catalog->OnColorItemSelected.AddUniqueDynamic(this, &URoomPlannerWidget::HandlePaintColorItemSelected);
+	Catalog->OnCatalogClosed.AddUniqueDynamic(this, &URoomPlannerWidget::HandlePaintCatalogClosed);
+}
+
+void URoomPlannerWidget::HandlePaintColorItemSelected(const FColorCatalogItem& Item)
+{
+	ApplyFinishToSelection(ARoomPlannerManager::MakePaintFinish(Item.Code, Item.Color));
+}
+
+void URoomPlannerWidget::HandlePaintCatalogClosed()
+{
+	if (ActivePlannerColorCatalog)
+	{
+		ActivePlannerColorCatalog->OnColorItemSelected.RemoveAll(this);
+		ActivePlannerColorCatalog->OnCatalogClosed.RemoveAll(this);
+	}
+	ActivePlannerColorCatalog = nullptr;
+	UpdateFinishUI();
+}
+
+bool URoomPlannerWidget::ApplyTileToSelection(FName TileID)
+{
+	if (!PlannerManager) return false;
+	FSurfaceFinish Finish;
+	if (!PlannerManager->MakeTileFinish(TileID, Finish))
+	{
+		HandleOperationRejected(FString::Printf(TEXT("Плитка '%s' не найдена в DT_PlannerTiles"), *TileID.ToString()));
+		return false;
+	}
+	return ApplyFinishToSelection(Finish);
+}
+
+bool URoomPlannerWidget::ApplyFinishToSelection(const FSurfaceFinish& Finish)
+{
+	if (!PlannerManager) return false;
+	AAwsTutorial_PlayerController* PC = GetPreviewController();
+	if (!PC) return false;
+
+	switch (PlannerManager->GetSelectionKind())
+	{
+	case EPlannerSelectionKind::Wall:
+		PC->Server_SetWallFinish(PlannerManager->SelectedSegmentID, Finish);
+		return true;
+	case EPlannerSelectionKind::Floor:
+		PC->Server_SetFloorFinish(PlannerManager->SelectedRoomID, Finish);
+		return true;
+	case EPlannerSelectionKind::Object:
+		if (Finish.Type == ESurfaceFinishType::Tile)
+		{
+			HandleOperationRejected(TEXT("Плитку можно назначить только стене или полу"));
+			return false;
+		}
+		PC->Server_SetPlacedObjectFinish(PlannerManager->SelectedObjectID, Finish);
+		return true;
+	default:
+		HandleOperationRejected(TEXT("Сначала выберите стену, пол или объект"));
+		return false;
+	}
+}
+
+void URoomPlannerWidget::ClearFinishOnSelection()
+{
+	ApplyFinishToSelection(FSurfaceFinish());
+}
+
+TArray<FPlannerCatalogEntry> URoomPlannerWidget::GetAvailableTiles() const
+{
+	return PlannerManager ? PlannerManager->GetAvailableTiles() : TArray<FPlannerCatalogEntry>();
+}
+
+bool URoomPlannerWidget::GetSelectedSurfaceFinish(FSurfaceFinish& OutFinish) const
+{
+	return PlannerManager ? PlannerManager->GetSelectedSurfaceFinish(OutFinish) : false;
+}
+
+FString URoomPlannerWidget::GetSelectedFinishText() const
+{
+	FSurfaceFinish F;
+	if (!GetSelectedSurfaceFinish(F) || !F.IsSet())
+	{
+		return TEXT("—");
+	}
+	if (F.Type == ESurfaceFinishType::Paint)
+	{
+		return FString::Printf(TEXT("Краска %s"), *F.GetKey());
+	}
+	return FString::Printf(TEXT("Плитка %s (%.0f см)"), *F.TileAssetID, F.TileSizeCm);
+}
+
+TArray<FFinishAreaEntry> URoomPlannerWidget::GetFinishAreas() const
+{
+	return PlannerManager ? PlannerManager->CalculateFinishAreas() : TArray<FFinishAreaEntry>();
+}
+
+FString URoomPlannerWidget::GetFinishAreaSummaryText() const
+{
+	return PlannerManager ? PlannerManager->GetFinishAreaSummaryText() : FString();
+}
+
+void URoomPlannerWidget::UpdateFinishUI()
+{
+	if (!PlannerManager) return;
+	const bool bCanFinish = PlannerManager->CanApplyFinishToSelection();
+	const ESlateVisibility Vis = bCanFinish ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	if (BtnFinishPaint) BtnFinishPaint->SetVisibility(Vis);
+	if (BtnClearFinish)
+	{
+		FSurfaceFinish F;
+		const bool bHasFinish = GetSelectedSurfaceFinish(F) && F.IsSet();
+		BtnClearFinish->SetVisibility(bHasFinish ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+	if (TxtFinishInfo)
+	{
+		TxtFinishInfo->SetText(FText::FromString(bCanFinish ? GetSelectedFinishText() : FString()));
+		TxtFinishInfo->SetVisibility(bCanFinish ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (TxtFinishAreas)
+	{
+		TxtFinishAreas->SetText(FText::FromString(GetFinishAreaSummaryText()));
+	}
+}
+
+void URoomPlannerWidget::OnFinishPaintClicked() { OpenPaintCatalogForSelection(); }
+void URoomPlannerWidget::OnClearFinishClicked() { ClearFinishOnSelection(); }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQ-17 / REQ-18: objects & cabinet sets
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TArray<FPlannerCatalogEntry> URoomPlannerWidget::GetAvailableObjects() const
+{
+	return PlannerManager ? PlannerManager->GetAvailableObjects() : TArray<FPlannerCatalogEntry>();
+}
+
+TArray<FPlannerCatalogEntry> URoomPlannerWidget::GetAvailableCabinetSets() const
+{
+	return PlannerManager ? PlannerManager->GetAvailableCabinetSets() : TArray<FPlannerCatalogEntry>();
+}
+
+void URoomPlannerWidget::BeginPlaceObject(const FString& AssetID)
+{
+	if (!PlannerManager) return;
+	if (CurrentViewMode != ERoomPlannerViewMode::View2D)
+	{
+		HandleOperationRejected(TEXT("Размещение объектов доступно только в 2D режиме"));
+		return;
+	}
+	PlannerManager->BeginPlaceObject(AssetID);
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		PC->UpdateRoomPlannerCameraToolMode(EPlannerToolMode::PlaceFurniture);
+	}
+	UpdateToolModeButtonStyles();
+	UpdateDynamicPropertiesPanel();
+}
+
+void URoomPlannerWidget::BeginPlaceCabinetSet(FName ProductID)
+{
+	if (!PlannerManager) return;
+	if (CurrentViewMode != ERoomPlannerViewMode::View2D)
+	{
+		HandleOperationRejected(TEXT("Размещение гарнитуров доступно только в 2D режиме"));
+		return;
+	}
+	PlannerManager->BeginPlaceCabinetSet(ProductID);
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		PC->UpdateRoomPlannerCameraToolMode(EPlannerToolMode::PlaceFurniture);
+	}
+	UpdateToolModeButtonStyles();
+	UpdateDynamicPropertiesPanel();
+}
+
+void URoomPlannerWidget::CancelPlacement()
+{
+	if (!PlannerManager) return;
+	PlannerManager->CancelPendingPlacement();
+	SetToolMode(EPlannerToolMode::Select);
+	UpdateDynamicPropertiesPanel();
+}
+
+void URoomPlannerWidget::RotateSelected(float DeltaYawDeg)
+{
+	if (!PlannerManager) return;
+	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // moving / rotating is a 2D workflow
+	AAwsTutorial_PlayerController* PC = GetPreviewController();
+	if (!PC) return;
+
+	if (!PlannerManager->SelectedObjectID.IsEmpty())
+	{
+		FPlacedFurnitureData D;
+		if (PlannerManager->GetPlacedObject(PlannerManager->SelectedObjectID, D))
+		{
+			D.Rotation.Yaw = FRotator::NormalizeAxis(D.Rotation.Yaw + DeltaYawDeg);
+			PlannerManager->MovePlacedObjectLocal(D.InstanceID, D.Location, D.Rotation);
+			PC->Server_MovePlacedObject(D.InstanceID, D.Location, D.Rotation, D.Scale);
+		}
+	}
+	else if (!PlannerManager->SelectedCabinetSetID.IsEmpty())
+	{
+		FPlacedCabinetSetData D;
+		if (PlannerManager->GetCabinetSet(PlannerManager->SelectedCabinetSetID, D))
+		{
+			D.Rotation.Yaw = FRotator::NormalizeAxis(D.Rotation.Yaw + DeltaYawDeg);
+			PlannerManager->MoveCabinetSetLocal(D.InstanceID, D.Location, D.Rotation);
+			PC->Server_MoveCabinetSet(D.InstanceID, D.Location, D.Rotation);
+		}
+	}
+}
+
+void URoomPlannerWidget::DeleteSelected()
+{
+	if (!PlannerManager) return;
+	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // deleting is a 2D workflow (matches the Delete key handling)
+	AAwsTutorial_PlayerController* PC = GetPreviewController();
+	if (!PC) return;
+
+	switch (PlannerManager->GetSelectionKind())
+	{
+	case EPlannerSelectionKind::Opening:
+		PC->Server_DeleteOpening(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex);
+		break;
+	case EPlannerSelectionKind::Wall:
+		PC->Server_DeleteWall(PlannerManager->SelectedSegmentID);
+		break;
+	case EPlannerSelectionKind::Object:
+		PC->Server_RemovePlacedObject(PlannerManager->SelectedObjectID);
+		break;
+	case EPlannerSelectionKind::CabinetSet:
+		PC->Server_RemoveCabinetSet(PlannerManager->SelectedCabinetSetID);
+		break;
+	default:
+		return;
+	}
+	PlannerManager->ClearAllSelection();
+	UpdateDynamicPropertiesPanel();
+}
+
+EPlannerSelectionKind URoomPlannerWidget::PickSurfaceUnderCursor()
+{
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		const EPlannerSelectionKind Kind = PC->PlannerPickUnderCursor();
+		UpdateDynamicPropertiesPanel();
+		return Kind;
+	}
+	return EPlannerSelectionKind::None;
+}
+
+void URoomPlannerWidget::OnRotateLeftClicked() { RotateSelected(-15.f); }
+void URoomPlannerWidget::OnRotateRightClicked() { RotateSelected(15.f); }
+void URoomPlannerWidget::OnCancelPlacementClicked() { CancelPlacement(); }
 

@@ -3,6 +3,7 @@
 #include "FurnitureConfigurator/UI/SaveSystemWidget.h"
 #include "FurnitureConfigurator/UI/SaveHistoryItemWidget.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
+#include "Constructor/RoomPlannerManager.h"
 #include "awsTutorial_PlayerController.h"
 #include "Components/Button.h"
 #include "Components/EditableTextBox.h"
@@ -171,6 +172,21 @@ void USaveSystemWidget::ExecuteSaveGame(const FString& InSaveId, const FString& 
     JsonObject->SetStringField(TEXT("date"), CurrentDate);
     JsonObject->SetStringField(TEXT("thumbnail"), Base64Thumbnail);
 
+    // Room Planner project state (walls, openings, finishes, objects, cabinet sets) — REQ-16.
+    // The manager's export is the same document that replicates to every client, so the
+    // client-side copy is authoritative enough to persist.
+    if (ARoomPlannerManager* Planner = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+    {
+        const FString PlannerJson = Planner->ExportLayoutToJSON();
+        TSharedPtr<FJsonObject> PlannerObj;
+        TSharedRef<TJsonReader<>> PlannerReader = TJsonReaderFactory<>::Create(PlannerJson);
+        if (FJsonSerializer::Deserialize(PlannerReader, PlannerObj) && PlannerObj.IsValid())
+        {
+            JsonObject->SetObjectField(TEXT("planner"), PlannerObj);
+            UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][POST] Planner state attached (%d chars)."), PlannerJson.Len());
+        }
+    }
+
     // Gather all Showroom Booth states currently in the level
     TArray<TSharedPtr<FJsonValue>> BoothStatesJsonArray;
     TArray<AActor*> FoundBooths;
@@ -185,6 +201,8 @@ void USaveSystemWidget::ExecuteSaveGame(const FString& InSaveId, const FString& 
         {
             TSharedPtr<FJsonObject> BoothJson = MakeShareable(new FJsonObject());
             BoothJson->SetStringField(TEXT("boothName"), Booth->GetName());
+            // Planner-placed cabinet sets are matched by this stable id on load (their actor names differ per session).
+            BoothJson->SetStringField(TEXT("plannerInstanceId"), Booth->PlannerInstanceID);
 
             TSharedPtr<FJsonObject> StateJson = MakeShareable(new FJsonObject());
             StateJson->SetStringField(TEXT("productID"), Booth->ActiveState.ProductID.ToString());
@@ -281,6 +299,27 @@ void USaveSystemWidget::HandleLoadSaveItem(FString SaveId)
 
     if (TargetSave.IsValid())
     {
+        APlayerController* OwnerPC = GetOwningPlayer();
+        AAwsTutorial_PlayerController* ProjectPC = Cast<AAwsTutorial_PlayerController>(OwnerPC);
+
+        // REQ-16: the whole record (planner layout + booth states, without the thumbnail) is restored
+        // by the server in one authoritative step. Planner-spawned cabinet sets are re-created there
+        // before their saved configuration is applied, so no client-side booth lookup is needed.
+        if (ProjectPC && (TargetSave->HasField(TEXT("planner")) || TargetSave->HasField(TEXT("boothStates"))))
+        {
+            TSharedPtr<FJsonObject> Record = MakeShareable(new FJsonObject());
+            Record->Values = TargetSave->Values;
+            Record->RemoveField(TEXT("thumbnail"));
+
+            FString RecordString;
+            TSharedRef<TJsonWriter<>> RecordWriter = TJsonWriterFactory<>::Create(&RecordString);
+            FJsonSerializer::Serialize(Record.ToSharedRef(), RecordWriter);
+
+            UE_LOG(LogTemp, Warning, TEXT("[SaveSystem][LOAD] Dispatching Server_LoadPlannerProject (%d chars)."), RecordString.Len());
+            ProjectPC->Server_LoadPlannerProject(RecordString);
+            return;
+        }
+
         const TArray<TSharedPtr<FJsonValue>>* BoothStatesArray;
         if (TargetSave->TryGetArrayField(TEXT("boothStates"), BoothStatesArray))
         {

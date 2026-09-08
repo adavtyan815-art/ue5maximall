@@ -9,6 +9,8 @@
 #include "ColorCatalogWidget.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnColorSelectedEvent, FLinearColor, SelectedColor, UMaterialInterface*, OverrideMaterial);
+/** Fired together with OnColorSelected but carries the full catalog item (code + name), so consumers can persist "RAL 3020" instead of only the RGB value. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnColorItemSelectedEvent, const FColorCatalogItem&, SelectedItem);
 
 class UTileView;
 class UEditableTextBox;
@@ -55,6 +57,14 @@ public:
 	/** Event fired when a color swatch is clicked for Live Preview. Bind to this for multiplayer! */
 	UPROPERTY(BlueprintAssignable, Category = "Color Catalog Controller")
 	FOnColorSelectedEvent OnColorSelected;
+
+	/** Same moment as OnColorSelected, with the full FColorCatalogItem (RAL/NCS code). Used by the Room Planner finishing (REQ-13). */
+	UPROPERTY(BlueprintAssignable, Category = "Color Catalog Controller")
+	FOnColorItemSelectedEvent OnColorItemSelected;
+
+	/** Returns the currently selected catalog item, if any. */
+	UFUNCTION(BlueprintPure, Category = "Color Catalog Controller")
+	bool GetActiveSelectedColorItem(FColorCatalogItem& OutItem) const;
 
 	/** Switch catalog tab (RAL vs NCS) */
 	UFUNCTION(BlueprintCallable, Category = "Color Catalog Controller")
