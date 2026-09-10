@@ -9,6 +9,7 @@
 #include "Net/UnrealNetwork.h"          // DOREPLIFETIME, DOREPLIFETIME_CONDITION
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "Constructor/RoomPlannerManager.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -1410,7 +1411,10 @@ void AShowroomBooth::OnRep_ActiveState()
             TEXT("[ShowroomBooth] OnRep: ProductID '%s' not found in catalog on client '%s'."),
             *ActiveState.ProductID.ToString(), *GetName());
     }
-    
+
+    // Planner-spawned cabinet set: the layout row becomes valid once the product is known on this client.
+    TryApplyPlannerLayout();
+
     // Re-apply custom colors
     OnRep_CustomColors();
 }
@@ -1613,8 +1617,184 @@ void AShowroomBooth::ApplyProductData(const FFurnitureProductRow& Data)
     // 8. Recalculate Sink + Faucet positions relative to Countertop
     RecalculateDependentTransforms(Data);
 
+    // Planner-spawned cabinet sets: meshes set in DT_CabinetSetLayouts win over the product catalog meshes.
+    ApplyPlannerLayoutMeshOverrides();
+
     // Re-apply all custom RAL/NCS color overrides so they are ALWAYS preserved across any model/size change!
     OnRep_CustomColors();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Planner cabinet-set layout (DT_CabinetSetLayouts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+UStaticMeshComponent* AShowroomBooth::GetPartComponent(FName PartName) const
+{
+    static const FName N_MainCabinet(TEXT("MainCabinet"));
+    static const FName N_DoorMeshSlot0(TEXT("DoorMeshSlot0"));
+    static const FName N_DoorMeshSlot1(TEXT("DoorMeshSlot1"));
+    static const FName N_CountertopMesh(TEXT("CountertopMesh"));
+    static const FName N_SinkMesh(TEXT("SinkMesh"));
+    static const FName N_FaucetMesh(TEXT("FaucetMesh"));
+    static const FName N_MirrorMesh(TEXT("MirrorMesh"));
+    static const FName N_ClosetMesh(TEXT("ClosetMesh"));
+    static const FName N_ClosetDoorMeshSlot0(TEXT("ClosetDoorMeshSlot0"));
+    static const FName N_ClosetDoorMeshSlot1(TEXT("ClosetDoorMeshSlot1"));
+
+    if (PartName == N_MainCabinet) return MainCabinet;
+    if (PartName == N_DoorMeshSlot0) return DoorMeshSlot0;
+    if (PartName == N_DoorMeshSlot1) return DoorMeshSlot1;
+    if (PartName == N_CountertopMesh) return CountertopMesh;
+    if (PartName == N_SinkMesh) return SinkMesh;
+    if (PartName == N_FaucetMesh) return FaucetMesh;
+    if (PartName == N_MirrorMesh) return MirrorMesh;
+    if (PartName == N_ClosetMesh) return ClosetMesh;
+    if (PartName == N_ClosetDoorMeshSlot0) return ClosetDoorMeshSlot0;
+    if (PartName == N_ClosetDoorMeshSlot1) return ClosetDoorMeshSlot1;
+    return nullptr;
+}
+
+void AShowroomBooth::ApplyPlannerLayout(const FCabinetSetLayoutRow& Row, bool bRecaptureBaseline)
+{
+    struct FPartRef { UStaticMeshComponent* Comp; const FCabinetSetPartData* Data; };
+    const FPartRef Parts[] = {
+        { MainCabinet.Get(),         &Row.MainCabinet },
+        { DoorMeshSlot0.Get(),       &Row.DoorMeshSlot0 },
+        { DoorMeshSlot1.Get(),       &Row.DoorMeshSlot1 },
+        { CountertopMesh.Get(),      &Row.CountertopMesh },
+        { SinkMesh.Get(),            &Row.SinkMesh },
+        { FaucetMesh.Get(),          &Row.FaucetMesh },
+        { MirrorMesh.Get(),          &Row.MirrorMesh },
+        { ClosetMesh.Get(),          &Row.ClosetMesh },
+        { ClosetDoorMeshSlot0.Get(), &Row.ClosetDoorMeshSlot0 },
+        { ClosetDoorMeshSlot1.Get(), &Row.ClosetDoorMeshSlot1 },
+    };
+
+    for (const FPartRef& Part : Parts)
+    {
+        if (!Part.Comp) continue;
+        Part.Comp->SetRelativeLocation(Part.Data->RelativeLocation);
+        // RotationZ is an ADDITIONAL yaw on top of the row's RelativeRotation.
+        FRotator Rot = Part.Data->RelativeRotation;
+        Rot.Yaw += Part.Data->RotationZ;
+        Part.Comp->SetRelativeRotation(Rot);
+        Part.Comp->SetRelativeScale3D(Part.Data->RelativeScale3D.IsNearlyZero() ? FVector::OneVector : Part.Data->RelativeScale3D);
+    }
+
+    AppliedPlannerLayoutProduct = ActiveState.ProductID.IsNone() ? InitialProductID : ActiveState.ProductID;
+
+    if (bRecaptureBaseline)
+    {
+        // The layout values are the new baseline the product offsets are applied against.
+        bBaselineTransformsCaptured = false;
+        EnsureBaselineTransformsCaptured();
+        RebuildBoothVisuals(); // ends in ApplyProductData → ApplyPlannerLayoutMeshOverrides
+    }
+    else
+    {
+        ApplyPlannerLayoutMeshOverrides();
+    }
+}
+
+void AShowroomBooth::ApplyPlannerLayoutMeshOverrides()
+{
+    if (PlannerInstanceID.IsEmpty()) return;
+    const FName Product = ActiveState.ProductID.IsNone() ? InitialProductID : ActiveState.ProductID;
+    const FCabinetSetLayoutRow* Row = ARoomPlannerManager::FindCabinetSetLayoutRow(GetWorld(), Product);
+    if (!Row) return;
+
+    struct FPartRef { UStaticMeshComponent* Comp; const FCabinetSetPartData* Data; };
+    const FPartRef Parts[] = {
+        { MainCabinet.Get(),         &Row->MainCabinet },
+        { DoorMeshSlot0.Get(),       &Row->DoorMeshSlot0 },
+        { DoorMeshSlot1.Get(),       &Row->DoorMeshSlot1 },
+        { CountertopMesh.Get(),      &Row->CountertopMesh },
+        { SinkMesh.Get(),            &Row->SinkMesh },
+        { FaucetMesh.Get(),          &Row->FaucetMesh },
+        { MirrorMesh.Get(),          &Row->MirrorMesh },
+        { ClosetMesh.Get(),          &Row->ClosetMesh },
+        { ClosetDoorMeshSlot0.Get(), &Row->ClosetDoorMeshSlot0 },
+        { ClosetDoorMeshSlot1.Get(), &Row->ClosetDoorMeshSlot1 },
+    };
+    for (const FPartRef& Part : Parts)
+    {
+        if (!Part.Comp || Part.Data->Mesh.IsNull()) continue;
+        if (UStaticMesh* Mesh = Part.Data->Mesh.LoadSynchronous())
+        {
+            if (Part.Comp->GetStaticMesh() != Mesh)
+            {
+                Part.Comp->SetStaticMesh(Mesh);
+            }
+        }
+    }
+}
+
+void AShowroomBooth::ApplyPlannerLayoutSpawnHeights()
+{
+    if (bPlannerLayoutHeightsApplied || PlannerInstanceID.IsEmpty()) return;
+    const FName Product = ActiveState.ProductID.IsNone() ? InitialProductID : ActiveState.ProductID;
+    const FCabinetSetLayoutRow* Row = ARoomPlannerManager::FindCabinetSetLayoutRow(GetWorld(), Product);
+    if (!Row) return;
+
+    struct FPartRef { UStaticMeshComponent* Comp; const FCabinetSetPartData* Data; };
+    const FPartRef Parts[] = {
+        { MainCabinet.Get(),         &Row->MainCabinet },
+        { DoorMeshSlot0.Get(),       &Row->DoorMeshSlot0 },
+        { DoorMeshSlot1.Get(),       &Row->DoorMeshSlot1 },
+        { CountertopMesh.Get(),      &Row->CountertopMesh },
+        { SinkMesh.Get(),            &Row->SinkMesh },
+        { FaucetMesh.Get(),          &Row->FaucetMesh },
+        { MirrorMesh.Get(),          &Row->MirrorMesh },
+        { ClosetMesh.Get(),          &Row->ClosetMesh },
+        { ClosetDoorMeshSlot0.Get(), &Row->ClosetDoorMeshSlot0 },
+        { ClosetDoorMeshSlot1.Get(), &Row->ClosetDoorMeshSlot1 },
+    };
+
+    // Parents first (MainCabinet, ClosetMesh) so child parts are measured against the final parent height.
+    bool bAny = false;
+    for (int32 Pass = 0; Pass < 2; ++Pass)
+    {
+        for (const FPartRef& Part : Parts)
+        {
+            if (!Part.Comp || FMath::IsNearlyZero(Part.Data->WorldLocationZ)) continue;
+            const bool bIsParentPart = (Part.Comp == MainCabinet.Get() || Part.Comp == ClosetMesh.Get());
+            if ((Pass == 0) != bIsParentPart) continue;
+            FVector World = Part.Comp->GetComponentLocation();
+            World.Z = Part.Data->WorldLocationZ;
+            Part.Comp->SetWorldLocation(World);
+            bAny = true;
+        }
+    }
+    bPlannerLayoutHeightsApplied = true;
+
+    if (bAny)
+    {
+        // Keep the spawn heights through later product rebuilds.
+        bBaselineTransformsCaptured = false;
+        EnsureBaselineTransformsCaptured();
+    }
+}
+
+void AShowroomBooth::TryApplyPlannerLayout()
+{
+    if (PlannerInstanceID.IsEmpty()) return;
+    const FName Product = ActiveState.ProductID.IsNone() ? InitialProductID : ActiveState.ProductID;
+    if (Product.IsNone() || Product == AppliedPlannerLayoutProduct) return;
+
+    if (const FCabinetSetLayoutRow* Row = ARoomPlannerManager::FindCabinetSetLayoutRow(GetWorld(), Product))
+    {
+        ApplyPlannerLayout(*Row, true);
+        ApplyPlannerLayoutSpawnHeights(); // clients: actor location is already final when RepNotifies run
+    }
+    else
+    {
+        AppliedPlannerLayoutProduct = Product; // no row: keep BP_Booth defaults, do not retry every OnRep
+    }
+}
+
+void AShowroomBooth::OnRep_PlannerInstanceID()
+{
+    TryApplyPlannerLayout();
 }
 
 void AShowroomBooth::ApplyComponentMeshAndMaterials(UStaticMeshComponent* Target,

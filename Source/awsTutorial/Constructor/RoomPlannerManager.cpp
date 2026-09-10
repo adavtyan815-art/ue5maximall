@@ -27,6 +27,9 @@
 #include "Kismet/GameplayStatics.h"
 #include "Misc/Guid.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/IConsoleManager.h"
 #include "awsTutorial_PlayerController.h"
 
 namespace PlannerJsonKeys
@@ -383,6 +386,9 @@ int32 ARoomPlannerManager::SplitWallSegment(int32 SegmentID, const FVector2D& Sp
 	Seg2.bLeftSideIsInterior = OldSeg.bLeftSideIsInterior;
 	Seg2.WallGuid = PlannerJsonKeys::NewInstanceID();
 
+	// Wall-attached items beyond the split point now belong to the new half.
+	RehomeAttachmentsAfterSplit(OldSeg.WallGuid, Seg2.WallGuid, SplitDist);
+
 	WallSegments.Add(Seg2ID, Seg2);
 	Nodes[JunctionNodeID].ConnectedSegmentIDs.AddUnique(Seg2ID);
 	Nodes[NodeB].ConnectedSegmentIDs.AddUnique(Seg2ID);
@@ -501,6 +507,9 @@ void ARoomPlannerManager::RemoveWall(int32 SegmentID)
 	{
 		return;
 	}
+
+	// Items attached to this wall stay where they are but are no longer bound to it.
+	DetachItemsFromWall(Seg.WallGuid);
 
 	if (SelectedSegmentID == SegmentID)
 	{
@@ -1545,6 +1554,10 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 		Obj->SetNumberField(TEXT("sz"), D.Scale.Z);
 		Obj->SetStringField(TEXT("material"), D.CustomMaterialID);
 		Obj->SetObjectField(TEXT("finish"), FinishToJson(D.Finish));
+		if (D.WallAttachment.IsAttached())
+		{
+			Obj->SetObjectField(TEXT("wall"), AttachmentToJson(D.WallAttachment));
+		}
 		ObjectsArray.Add(MakeShareable(new FJsonValueObject(Obj)));
 	}
 	RootObject->SetArrayField(TEXT("objects"), ObjectsArray);
@@ -1563,6 +1576,10 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 		Obj->SetNumberField(TEXT("pitch"), D.Rotation.Pitch);
 		Obj->SetNumberField(TEXT("yaw"), D.Rotation.Yaw);
 		Obj->SetNumberField(TEXT("roll"), D.Rotation.Roll);
+		if (D.WallAttachment.IsAttached())
+		{
+			Obj->SetObjectField(TEXT("wall"), AttachmentToJson(D.WallAttachment));
+		}
 		SetsArray.Add(MakeShareable(new FJsonValueObject(Obj)));
 	}
 	RootObject->SetArrayField(TEXT("cabinetSets"), SetsArray);
@@ -1737,6 +1754,11 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 			{
 				D.Finish = FinishFromJson(*FinishObj);
 			}
+			const TSharedPtr<FJsonObject>* WallObjPtr = nullptr;
+			if (Obj->TryGetObjectField(TEXT("wall"), WallObjPtr) && WallObjPtr)
+			{
+				D.WallAttachment = AttachmentFromJson(*WallObjPtr);
+			}
 			PlacedObjects.Add(D.InstanceID, D);
 		}
 	}
@@ -1757,6 +1779,11 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 			if (D.InstanceID.IsEmpty()) continue;
 			D.Location = FVector(Obj->GetNumberField(TEXT("x")), Obj->GetNumberField(TEXT("y")), Obj->GetNumberField(TEXT("z")));
 			D.Rotation = FRotator(Obj->GetNumberField(TEXT("pitch")), Obj->GetNumberField(TEXT("yaw")), Obj->GetNumberField(TEXT("roll")));
+			const TSharedPtr<FJsonObject>* WallObjPtr = nullptr;
+			if (Obj->TryGetObjectField(TEXT("wall"), WallObjPtr) && WallObjPtr)
+			{
+				D.WallAttachment = AttachmentFromJson(*WallObjPtr);
+			}
 			CabinetSets.Add(D.InstanceID, D);
 		}
 	}
@@ -2940,8 +2967,455 @@ bool ARoomPlannerManager::DeleteSelectedOpening()
 
 void ARoomPlannerManager::CommitStateAfterMutation()
 {
+	// Wall-attached items follow their wall (length / corner / thickness edits) before the state is published.
+	if (HasAuthority())
+	{
+		RefreshWallAttachedPlacements();
+	}
 	ReplicatedRoomJSON = ExportLayoutToJSON();
 	OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+}
+
+void ARoomPlannerManager::NotifyOperationRejected(const FString& Reason)
+{
+	BroadcastRejected(Reason);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Wall / floor drop placement
+// ═══════════════════════════════════════════════════════════════════════════════
+
+int32 ARoomPlannerManager::FindSegmentIDByGuid(const FString& Guid) const
+{
+	if (Guid.IsEmpty()) return -1;
+	for (const auto& Pair : WallSegments)
+	{
+		if (Pair.Value.WallGuid == Guid) return Pair.Key;
+	}
+	return -1;
+}
+
+int32 ARoomPlannerManager::FindSegmentIDForWallActor(const AProceduralWallActor* Actor) const
+{
+	if (!Actor) return -1;
+	for (const auto& Pair : WallActors)
+	{
+		if (Pair.Value == Actor) return Pair.Key;
+	}
+	return -1;
+}
+
+bool ARoomPlannerManager::GetSegmentGeometry(int32 SegmentID, FVector2D& OutStart, FVector2D& OutDir, FVector2D& OutLeftNormal, float& OutLength, float& OutHalfThickness) const
+{
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || !Nodes.Contains(Seg->StartNodeID) || !Nodes.Contains(Seg->EndNodeID)) return false;
+	const FVector2D P1 = Nodes[Seg->StartNodeID].Position;
+	const FVector2D P2 = Nodes[Seg->EndNodeID].Position;
+	OutLength = FVector2D::Distance(P1, P2);
+	if (OutLength < 1.f) return false;
+	OutStart = P1;
+	OutDir = (P2 - P1) / OutLength;
+	OutLeftNormal = FVector2D(-OutDir.Y, OutDir.X);
+	OutHalfThickness = Seg->Thickness * 0.5f;
+	return true;
+}
+
+FPlannerDropInfo ARoomPlannerManager::ResolveDropAtWorldPos2D(const FVector& WorldPos) const
+{
+	FPlannerDropInfo Info;
+	Info.WorldLocation = FVector(WorldPos.X, WorldPos.Y, 0.f);
+	const FVector2D P(WorldPos.X, WorldPos.Y);
+
+	// 1. Wall footprint (± 15 cm tolerance outside the faces)
+	int32 BestSeg = -1;
+	float BestPerp = TNumericLimits<float>::Max();
+	float BestAlong = 0.f;
+	bool bBestLeft = true;
+	for (const auto& Pair : WallSegments)
+	{
+		FVector2D P1, Dir, NLeft; float Len, Half;
+		if (!GetSegmentGeometry(Pair.Key, P1, Dir, NLeft, Len, Half)) continue;
+		const float Along = FVector2D::DotProduct(P - P1, Dir);
+		if (Along < 0.f || Along > Len) continue;
+		const float Perp = FVector2D::DotProduct(P - P1, NLeft);
+		const float AbsPerp = FMath::Abs(Perp);
+		if (AbsPerp <= Half + 15.f && AbsPerp < BestPerp)
+		{
+			BestPerp = AbsPerp;
+			BestSeg = Pair.Key;
+			BestAlong = Along;
+			// Dropped on the wall body → interior face (when known); dropped just outside a face → that face.
+			bBestLeft = (AbsPerp <= Half) ? Pair.Value.bLeftSideIsInterior : (Perp > 0.f);
+		}
+	}
+	if (BestSeg != -1)
+	{
+		Info.Target = EPlannerDropTarget::Wall;
+		Info.SegmentID = BestSeg;
+		Info.DistanceAlongWallCm = BestAlong;
+		Info.bLeftSide = bBestLeft;
+		Info.HeightCm = 0.f;
+		return Info;
+	}
+
+	// 2. Floor (inside a detected room)
+	const int32 RoomID = FindRoomAtWorldPos(WorldPos);
+	if (RoomID != -1)
+	{
+		Info.Target = EPlannerDropTarget::Floor;
+		Info.RoomID = RoomID;
+		return Info;
+	}
+
+	return Info; // invalid
+}
+
+FPlannerDropInfo ARoomPlannerManager::ResolveDropFromCursorRay2D(const FVector& RayOrigin, const FVector& RayDirection) const
+{
+	FPlannerDropInfo Info;
+	if (FMath::IsNearlyZero(RayDirection.Z)) return Info;
+
+	// 1. Wall tops: intersect the ray with each wall's own top plane and test that wall's footprint.
+	int32 BestSeg = -1;
+	float BestPerp = TNumericLimits<float>::Max();
+	float BestAlong = 0.f;
+	bool bBestLeft = true;
+	for (const auto& Pair : WallSegments)
+	{
+		FVector2D P1, Dir, NLeft; float Len, Half;
+		if (!GetSegmentGeometry(Pair.Key, P1, Dir, NLeft, Len, Half)) continue;
+
+		const float T = (Pair.Value.Height - RayOrigin.Z) / RayDirection.Z;
+		if (T < 0.f) continue;
+		const FVector Top = RayOrigin + RayDirection * T;
+		const FVector2D P(Top.X, Top.Y);
+
+		const float Along = FVector2D::DotProduct(P - P1, Dir);
+		if (Along < 0.f || Along > Len) continue;
+		const float Perp = FVector2D::DotProduct(P - P1, NLeft);
+		const float AbsPerp = FMath::Abs(Perp);
+		if (AbsPerp <= Half + 15.f && AbsPerp < BestPerp)
+		{
+			BestPerp = AbsPerp;
+			BestSeg = Pair.Key;
+			BestAlong = Along;
+			bBestLeft = (AbsPerp <= Half) ? Pair.Value.bLeftSideIsInterior : (Perp > 0.f);
+		}
+	}
+	if (BestSeg != -1)
+	{
+		Info.Target = EPlannerDropTarget::Wall;
+		Info.SegmentID = BestSeg;
+		Info.DistanceAlongWallCm = BestAlong;
+		Info.bLeftSide = bBestLeft;
+		Info.HeightCm = 0.f;
+		FVector2D P1, Dir, NLeft; float Len, Half;
+		if (GetSegmentGeometry(BestSeg, P1, Dir, NLeft, Len, Half))
+		{
+			const FVector2D Pt = P1 + Dir * BestAlong;
+			Info.WorldLocation = FVector(Pt.X, Pt.Y, 0.f);
+		}
+		return Info;
+	}
+
+	// 2. Ground plane (floor inside a room, or a wall footprint at floor level).
+	const float TGround = -RayOrigin.Z / RayDirection.Z;
+	if (TGround >= 0.f)
+	{
+		FVector Ground = RayOrigin + RayDirection * TGround;
+		Ground.Z = 0.f;
+		return ResolveDropAtWorldPos2D(Ground);
+	}
+	return Info;
+}
+
+FPlannerDropInfo ARoomPlannerManager::ResolveDropFromHit(const FHitResult& Hit) const
+{
+	FPlannerDropInfo Info;
+	Info.WorldLocation = Hit.ImpactPoint;
+
+	if (const AProceduralWallActor* Wall = Cast<AProceduralWallActor>(Hit.GetActor()))
+	{
+		const int32 SegID = FindSegmentIDForWallActor(Wall);
+		FVector2D P1, Dir, NLeft; float Len, Half;
+		if (SegID != -1 && GetSegmentGeometry(SegID, P1, Dir, NLeft, Len, Half))
+		{
+			const FVector2D P(Hit.ImpactPoint.X, Hit.ImpactPoint.Y);
+			Info.Target = EPlannerDropTarget::Wall;
+			Info.SegmentID = SegID;
+			Info.DistanceAlongWallCm = FMath::Clamp(FVector2D::DotProduct(P - P1, Dir), 0.f, Len);
+			const FVector2D N2(Hit.ImpactNormal.X, Hit.ImpactNormal.Y);
+			Info.bLeftSide = N2.IsNearlyZero() ? (FVector2D::DotProduct(P - P1, NLeft) > 0.f) : (FVector2D::DotProduct(N2, NLeft) > 0.f);
+			Info.HeightCm = FMath::Max(0.f, Hit.ImpactPoint.Z);
+			return Info;
+		}
+	}
+
+	if (Hit.GetComponent() && FloorProceduralMesh && Hit.GetComponent() == static_cast<UPrimitiveComponent*>(FloorProceduralMesh.Get()))
+	{
+		const int32 RoomID = FindRoomAtWorldPos(Hit.ImpactPoint);
+		if (RoomID != -1)
+		{
+			Info.Target = EPlannerDropTarget::Floor;
+			Info.RoomID = RoomID;
+			Info.WorldLocation = FVector(Hit.ImpactPoint.X, Hit.ImpactPoint.Y, 0.f);
+			return Info;
+		}
+	}
+
+	return Info; // invalid
+}
+
+bool ARoomPlannerManager::ComputeWallAttachedTransform(const FWallAttachment& Attachment, FVector& OutLocation, FRotator& OutRotation) const
+{
+	const int32 SegID = FindSegmentIDByGuid(Attachment.WallGuid);
+	FVector2D P1, Dir, NLeft; float Len, Half;
+	if (SegID == -1 || !GetSegmentGeometry(SegID, P1, Dir, NLeft, Len, Half)) return false;
+
+	const FVector2D N = Attachment.bLeftSide ? NLeft : -NLeft;
+	const float Dist = FMath::Clamp(Attachment.DistanceAlongWallCm, 0.f, Len);
+	const FVector2D Face = P1 + Dir * Dist + N * Half;
+	const FVector2D Pivot = Face + N * Attachment.DepthOffsetCm;
+
+	OutLocation = FVector(Pivot.X, Pivot.Y, Attachment.HeightCm);
+	OutRotation = FRotator(0.f, FMath::RadiansToDegrees(FMath::Atan2(N.Y, N.X)), 0.f); // faces away from the wall
+	return true;
+}
+
+void ARoomPlannerManager::MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const
+{
+	// Actor must already stand at the face point (DepthOffsetCm == 0) with the attached rotation.
+	if (!Actor) return;
+	const int32 SegID = FindSegmentIDByGuid(Attachment.WallGuid);
+	FVector2D P1, Dir, NLeft; float Len, Half;
+	if (SegID == -1 || !GetSegmentGeometry(SegID, P1, Dir, NLeft, Len, Half)) return;
+
+	const FVector2D N = Attachment.bLeftSide ? NLeft : -NLeft;
+	const FVector2D Face = P1 + Dir * FMath::Clamp(Attachment.DistanceAlongWallCm, 0.f, Len) + N * Half;
+
+	// Bounds of the VISIBLE meshes only. AActor::GetActorBounds would also include trigger / proximity
+	// shapes (BP_Booth carries one), which pushed cabinet sets metres away from the wall.
+	FBox MeshBox(ForceInit);
+	TArray<UStaticMeshComponent*> MeshComps;
+	Actor->GetComponents<UStaticMeshComponent>(MeshComps);
+	for (UStaticMeshComponent* Comp : MeshComps)
+	{
+		if (Comp && Comp->GetStaticMesh() && Comp->IsVisible())
+		{
+			MeshBox += Comp->Bounds.GetBox();
+		}
+	}
+	if (!MeshBox.IsValid || MeshBox.GetExtent().IsNearlyZero())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s has no visible mesh bounds yet; depth offset left at 0."), *Actor->GetName());
+		return;
+	}
+
+	const FVector Origin = MeshBox.GetCenter();
+	const FVector Extent = MeshBox.GetExtent();
+	const float ExtentAlongN = FMath::Abs(Extent.X * N.X) + FMath::Abs(Extent.Y * N.Y);
+	const float BackAlongN = FVector2D::DotProduct(FVector2D(Origin.X, Origin.Y), N) - ExtentAlongN;
+	const float FaceAlongN = FVector2D::DotProduct(Face, N);
+	Attachment.DepthOffsetCm = FaceAlongN - BackAlongN; // push out so the back touches the face
+	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s mesh extent (%.0f, %.0f, %.0f) → depth offset %.1f cm"), *Actor->GetName(), Extent.X, Extent.Y, Extent.Z, Attachment.DepthOffsetCm);
+}
+
+bool ARoomPlannerManager::SlideAttachmentTo(FWallAttachment& Attachment, const FVector& RequestedLocation) const
+{
+	const int32 SegID = FindSegmentIDByGuid(Attachment.WallGuid);
+	FVector2D P1, Dir, NLeft; float Len, Half;
+	if (SegID == -1 || !GetSegmentGeometry(SegID, P1, Dir, NLeft, Len, Half)) return false;
+	const FVector2D P(RequestedLocation.X, RequestedLocation.Y);
+	Attachment.DistanceAlongWallCm = FMath::Clamp(FVector2D::DotProduct(P - P1, Dir), 0.f, Len);
+	return true;
+}
+
+void ARoomPlannerManager::DetachItemsFromWall(const FString& WallGuid)
+{
+	if (WallGuid.IsEmpty()) return;
+	for (auto& Pair : PlacedObjects)
+	{
+		if (Pair.Value.WallAttachment.WallGuid == WallGuid) Pair.Value.WallAttachment = FWallAttachment();
+	}
+	for (auto& Pair : CabinetSets)
+	{
+		if (Pair.Value.WallAttachment.WallGuid == WallGuid) Pair.Value.WallAttachment = FWallAttachment();
+	}
+}
+
+void ARoomPlannerManager::RehomeAttachmentsAfterSplit(const FString& OldGuid, const FString& NewGuid, float SplitDistanceCm)
+{
+	auto Rehome = [&](FWallAttachment& Att)
+	{
+		if (Att.WallGuid == OldGuid && Att.DistanceAlongWallCm >= SplitDistanceCm)
+		{
+			Att.WallGuid = NewGuid;
+			Att.DistanceAlongWallCm -= SplitDistanceCm;
+		}
+	};
+	for (auto& Pair : PlacedObjects) Rehome(Pair.Value.WallAttachment);
+	for (auto& Pair : CabinetSets) Rehome(Pair.Value.WallAttachment);
+}
+
+TSharedPtr<FJsonObject> ARoomPlannerManager::AttachmentToJson(const FWallAttachment& Attachment)
+{
+	TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
+	Obj->SetStringField(TEXT("guid"), Attachment.WallGuid);
+	Obj->SetNumberField(TEXT("dist"), Attachment.DistanceAlongWallCm);
+	Obj->SetBoolField(TEXT("left"), Attachment.bLeftSide);
+	Obj->SetNumberField(TEXT("z"), Attachment.HeightCm);
+	Obj->SetNumberField(TEXT("depth"), Attachment.DepthOffsetCm);
+	return Obj;
+}
+
+FWallAttachment ARoomPlannerManager::AttachmentFromJson(const TSharedPtr<FJsonObject>& Obj)
+{
+	FWallAttachment Att;
+	if (!Obj.IsValid()) return Att;
+	Obj->TryGetStringField(TEXT("guid"), Att.WallGuid);
+	double V = 0.0;
+	if (Obj->TryGetNumberField(TEXT("dist"), V)) Att.DistanceAlongWallCm = (float)V;
+	Obj->TryGetBoolField(TEXT("left"), Att.bLeftSide);
+	if (Obj->TryGetNumberField(TEXT("z"), V)) Att.HeightCm = (float)V;
+	if (Obj->TryGetNumberField(TEXT("depth"), V)) Att.DepthOffsetCm = (float)V;
+	return Att;
+}
+
+FString ARoomPlannerManager::AddPlacedObjectOnWall(const FString& AssetID, int32 SegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm)
+{
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || AssetID.IsEmpty())
+	{
+		BroadcastRejected(TEXT("Стена для размещения не найдена"));
+		return FString();
+	}
+
+	FPlacedFurnitureData D;
+	D.InstanceID = PlannerJsonKeys::NewInstanceID();
+	D.AssetID = AssetID;
+	D.Scale = FVector::OneVector;
+	if (UDataTable* Catalog = ResolveObjectCatalog())
+	{
+		if (const FPlannerObjectRow* Row = Catalog->FindRow<FPlannerObjectRow>(FName(*AssetID), TEXT("AddPlacedObjectOnWall"), false))
+		{
+			D.Scale = Row->DefaultScale.IsNearlyZero() ? FVector::OneVector : Row->DefaultScale;
+		}
+	}
+	D.WallAttachment.WallGuid = Seg->WallGuid;
+	D.WallAttachment.DistanceAlongWallCm = DistanceAlongWallCm;
+	D.WallAttachment.bLeftSide = bLeftSide;
+	D.WallAttachment.HeightCm = FMath::Max(0.f, HeightCm);
+	D.WallAttachment.DepthOffsetCm = 0.f;
+
+	// Stand it on the face, measure its bounds, then push it out so the back touches the wall.
+	if (!ComputeWallAttachedTransform(D.WallAttachment, D.Location, D.Rotation)) return FString();
+	PlacedObjects.Add(D.InstanceID, D);
+	ApplyPlacedObjectActor(D);
+	if (APlannerPlacedObjectActor* Actor = FindPlacedObjectActor(D.InstanceID))
+	{
+		FPlacedFurnitureData& Stored = PlacedObjects[D.InstanceID];
+		MeasureAttachmentDepth(Actor, Stored.WallAttachment);
+		ComputeWallAttachedTransform(Stored.WallAttachment, Stored.Location, Stored.Rotation);
+		ApplyPlacedObjectActor(Stored);
+	}
+	CommitStateAfterMutation();
+	return D.InstanceID;
+}
+
+FString ARoomPlannerManager::AddCabinetSetOnWall(FName ProductID, int32 SegmentID, float DistanceAlongWallCm, bool bLeftSide)
+{
+	if (!HasAuthority() || ProductID.IsNone()) return FString();
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg)
+	{
+		BroadcastRejected(TEXT("Гарнитур можно разместить только у стены"));
+		return FString();
+	}
+
+	FPlacedCabinetSetData D;
+	D.InstanceID = PlannerJsonKeys::NewInstanceID();
+	D.ProductID = ProductID;
+	D.WallAttachment.WallGuid = Seg->WallGuid;
+	D.WallAttachment.DistanceAlongWallCm = DistanceAlongWallCm;
+	D.WallAttachment.bLeftSide = bLeftSide;
+	D.WallAttachment.HeightCm = 0.f; // floor-standing against the wall
+	D.WallAttachment.DepthOffsetCm = 0.f;
+	if (!ComputeWallAttachedTransform(D.WallAttachment, D.Location, D.Rotation)) return FString();
+
+	AShowroomBooth* Booth = SpawnCabinetSetActor(D);
+	if (!Booth)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[PlannerDrop] Cabinet set '%s' could not be spawned (booth class / product missing)."), *ProductID.ToString());
+		return FString();
+	}
+
+	MeasureAttachmentDepth(Booth, D.WallAttachment);
+	ComputeWallAttachedTransform(D.WallAttachment, D.Location, D.Rotation);
+	Booth->SetActorLocationAndRotation(D.Location, D.Rotation);
+	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Cabinet set %s (%s) → booth %s at (%.0f, %.0f, %.0f) yaw %.0f on wall seg %d"),
+		*D.InstanceID, *ProductID.ToString(), *Booth->GetName(), D.Location.X, D.Location.Y, D.Location.Z, D.Rotation.Yaw, SegmentID);
+
+	CabinetSets.Add(D.InstanceID, D);
+	CommitStateAfterMutation();
+	return D.InstanceID;
+}
+
+void ARoomPlannerManager::RefreshWallAttachedPlacements()
+{
+	for (auto& Pair : PlacedObjects)
+	{
+		FPlacedFurnitureData& D = Pair.Value;
+		if (!D.WallAttachment.IsAttached()) continue;
+		FVector Loc; FRotator Rot;
+		if (ComputeWallAttachedTransform(D.WallAttachment, Loc, Rot))
+		{
+			if (!D.Location.Equals(Loc, 0.01f) || !D.Rotation.Equals(Rot, 0.01f))
+			{
+				D.Location = Loc;
+				D.Rotation = Rot;
+				ApplyPlacedObjectActor(D);
+			}
+		}
+		else
+		{
+			D.WallAttachment = FWallAttachment(); // wall gone: keep the item where it is, detached
+		}
+	}
+	for (auto& Pair : CabinetSets)
+	{
+		FPlacedCabinetSetData& D = Pair.Value;
+		if (!D.WallAttachment.IsAttached()) continue;
+		FVector Loc; FRotator Rot;
+		if (ComputeWallAttachedTransform(D.WallAttachment, Loc, Rot))
+		{
+			if (!D.Location.Equals(Loc, 0.01f) || !D.Rotation.Equals(Rot, 0.01f))
+			{
+				D.Location = Loc;
+				D.Rotation = Rot;
+				if (AShowroomBooth* Booth = FindCabinetSetActor(Pair.Key))
+				{
+					Booth->SetActorLocationAndRotation(Loc, Rot);
+				}
+			}
+		}
+		else
+		{
+			D.WallAttachment = FWallAttachment();
+		}
+	}
+}
+
+bool ARoomPlannerManager::IsSelectionWallAttached() const
+{
+	if (!SelectedObjectID.IsEmpty())
+	{
+		if (const FPlacedFurnitureData* D = PlacedObjects.Find(SelectedObjectID)) return D->WallAttachment.IsAttached();
+	}
+	if (!SelectedCabinetSetID.IsEmpty())
+	{
+		if (const FPlacedCabinetSetData* D = CabinetSets.Find(SelectedCabinetSetID)) return D->WallAttachment.IsAttached();
+	}
+	return false;
 }
 
 void ARoomPlannerManager::NotifySelectionChanged()
@@ -4232,6 +4706,108 @@ UDataTable* ARoomPlannerManager::ResolveCabinetSetCatalog() const
 	return LoadObject<UDataTable>(nullptr, TEXT("/Game/DT/DT_FurnitureCatalog.DT_FurnitureCatalog"));
 }
 
+const FCabinetSetLayoutRow* ARoomPlannerManager::FindCabinetSetLayoutRow(UWorld* World, FName ProductID)
+{
+	if (ProductID.IsNone()) return nullptr;
+
+	UDataTable* Table = nullptr;
+	if (World)
+	{
+		for (TActorIterator<ARoomPlannerManager> It(World); It; ++It)
+		{
+			if (It->CabinetSetLayoutCatalog) { Table = It->CabinetSetLayoutCatalog; }
+			break;
+		}
+	}
+	if (!Table)
+	{
+		Table = LoadObject<UDataTable>(nullptr, TEXT("/Game/DT/DT_CabinetSetLayouts.DT_CabinetSetLayouts"));
+	}
+	if (!Table) return nullptr;
+	return Table->FindRow<FCabinetSetLayoutRow>(ProductID, TEXT("FindCabinetSetLayoutRow"), false);
+}
+
+FString ARoomPlannerManager::ExportCabinetSetLayoutsCSV()
+{
+#if WITH_EDITOR
+	UClass* BoothClass = ResolveCabinetSetActorClass();
+	const AShowroomBooth* CDO = BoothClass ? Cast<AShowroomBooth>(BoothClass->GetDefaultObject()) : nullptr;
+	if (!CDO)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[MaxiMallConstructor] ExportCabinetSetLayoutsCSV: booth class defaults not available."));
+		return FString();
+	}
+
+	// Read the actual relative transforms (and meshes, if assigned) from the booth class defaults.
+	FCabinetSetLayoutRow Template;
+	auto Capture = [&](FCabinetSetPartData& Part, const UStaticMeshComponent* Comp)
+	{
+		if (!Comp) return;
+		Part.RelativeLocation = Comp->GetRelativeLocation();
+		Part.RelativeRotation = Comp->GetRelativeRotation();
+		Part.RelativeScale3D = Comp->GetRelativeScale3D();
+		if (Comp->GetStaticMesh()) Part.Mesh = Comp->GetStaticMesh();
+	};
+	Capture(Template.MainCabinet, CDO->MainCabinet);
+	Capture(Template.DoorMeshSlot0, CDO->DoorMeshSlot0);
+	Capture(Template.DoorMeshSlot1, CDO->DoorMeshSlot1);
+	Capture(Template.CountertopMesh, CDO->CountertopMesh);
+	Capture(Template.SinkMesh, CDO->SinkMesh);
+	Capture(Template.FaucetMesh, CDO->FaucetMesh);
+	Capture(Template.MirrorMesh, CDO->MirrorMesh);
+	Capture(Template.ClosetMesh, CDO->ClosetMesh);
+	Capture(Template.ClosetDoorMeshSlot0, CDO->ClosetDoorMeshSlot0);
+	Capture(Template.ClosetDoorMeshSlot1, CDO->ClosetDoorMeshSlot1);
+
+	UDataTable* Temp = NewObject<UDataTable>(GetTransientPackage(), NAME_None, RF_Transient);
+	Temp->RowStruct = FCabinetSetLayoutRow::StaticStruct();
+
+	TArray<FName> Products;
+	if (UDataTable* Catalog = ResolveCabinetSetCatalog())
+	{
+		Products = Catalog->GetRowNames();
+	}
+	if (Products.Num() == 0)
+	{
+		Products.Add(FName(TEXT("Default")));
+	}
+	for (const FName& Product : Products)
+	{
+		Temp->AddRow(Product, Template);
+	}
+
+	const FString Csv = Temp->GetTableAsCSV();
+	const FString Path = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("PlannerExports"), TEXT("DT_CabinetSetLayouts.csv"));
+	if (FFileHelper::SaveStringToFile(Csv, *Path))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] Cabinet set layout CSV written: %s (%d rows)"), *Path, Products.Num());
+		return Path;
+	}
+	UE_LOG(LogTemp, Error, TEXT("[MaxiMallConstructor] Could not write %s"), *Path);
+	return FString();
+#else
+	UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] ExportCabinetSetLayoutsCSV is editor-only."));
+	return FString();
+#endif
+}
+
+#if WITH_EDITOR
+static FAutoConsoleCommandWithWorld GPlannerExportCabinetSetLayoutsCmd(
+	TEXT("planner.ExportCabinetSetLayoutsCSV"),
+	TEXT("Writes Saved/PlannerExports/DT_CabinetSetLayouts.csv from the BP_Booth part transforms (row struct CabinetSetLayoutRow)."),
+	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+	{
+		if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(World))
+		{
+			Manager->ExportCabinetSetLayoutsCSV();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[MaxiMallConstructor] planner.ExportCabinetSetLayoutsCSV: no planner manager in this world (run while playing)."));
+		}
+	}));
+#endif
+
 UClass* ARoomPlannerManager::ResolveCabinetSetActorClass() const
 {
 	if (CabinetSetActorClass) return CabinetSetActorClass;
@@ -4423,10 +4999,24 @@ UStaticMesh* ARoomPlannerManager::ResolveObjectMesh(const FString& AssetID) cons
 	}
 	if (AssetID.StartsWith(TEXT("/")))
 	{
-		return LoadObject<UStaticMesh>(nullptr, *AssetID);
+		if (UStaticMesh* PathMesh = LoadObject<UStaticMesh>(nullptr, *AssetID))
+		{
+			return PathMesh;
+		}
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] Object asset '%s' not found in DT_PlannerObjects and is not an asset path."), *AssetID);
-	return nullptr;
+
+	// Nothing usable: report precisely what was tried and fall back to a visible placeholder so the
+	// placement is never silently invisible.
+	FString RowMeshPath = TEXT("<row not found>");
+	if (UDataTable* Catalog = ResolveObjectCatalog())
+	{
+		if (const FPlannerObjectRow* Row = Catalog->FindRow<FPlannerObjectRow>(FName(*AssetID), TEXT("ResolveObjectMesh"), false))
+		{
+			RowMeshPath = Row->Mesh.IsNull() ? TEXT("<Mesh field is None>") : Row->Mesh.ToString();
+		}
+	}
+	UE_LOG(LogTemp, Error, TEXT("[PlannerDrop] No static mesh for object '%s' (row Mesh = %s). Using placeholder cube — fill the Mesh column in DT_PlannerObjects."), *AssetID, *RowMeshPath);
+	return LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
 }
 
 TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableObjects() const
@@ -4479,8 +5069,16 @@ bool ARoomPlannerManager::MovePlacedObject(const FString& InstanceID, const FVec
 {
 	FPlacedFurnitureData* D = PlacedObjects.Find(InstanceID);
 	if (!D) return false;
-	D->Location = Location;
-	D->Rotation = Rotation;
+	if (D->WallAttachment.IsAttached() && SlideAttachmentTo(D->WallAttachment, Location))
+	{
+		// Attached items slide along their wall; rotation stays fixed by the wall.
+		ComputeWallAttachedTransform(D->WallAttachment, D->Location, D->Rotation);
+	}
+	else
+	{
+		D->Location = Location;
+		D->Rotation = Rotation;
+	}
 	if (!Scale.IsNearlyZero()) D->Scale = Scale;
 	ApplyPlacedObjectActor(*D);
 	CommitStateAfterMutation();
@@ -4564,13 +5162,20 @@ void ARoomPlannerManager::MovePlacedObjectLocal(const FString& InstanceID, const
 {
 	FPlacedFurnitureData* D = PlacedObjects.Find(InstanceID);
 	if (!D) return;
-	D->Location = Location;
-	D->Rotation = Rotation;
+	if (D->WallAttachment.IsAttached() && SlideAttachmentTo(D->WallAttachment, Location))
+	{
+		ComputeWallAttachedTransform(D->WallAttachment, D->Location, D->Rotation);
+	}
+	else
+	{
+		D->Location = Location;
+		D->Rotation = Rotation;
+	}
 	if (APlannerPlacedObjectActor* A = FindPlacedObjectActor(InstanceID))
 	{
-		A->SetActorLocationAndRotation(Location, Rotation);
-		A->Data.Location = Location;
-		A->Data.Rotation = Rotation;
+		A->SetActorLocationAndRotation(D->Location, D->Rotation);
+		A->Data.Location = D->Location;
+		A->Data.Rotation = D->Rotation;
 	}
 }
 
@@ -4595,6 +5200,13 @@ void ARoomPlannerManager::ApplyPlacedObjectActor(const FPlacedFurnitureData& Dat
 		UMaterialInterface* ColorMat = Data.Finish.IsSet() ? ResolvePaintBaseMaterial() : nullptr;
 		Actor->ApplyData(Data, Mesh, ColorMat);
 		Actor->SetSelectedHighlight(Data.InstanceID == SelectedObjectID);
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Object %s (%s) → actor %s, mesh %s, at (%.0f, %.0f, %.0f)%s"),
+			*Data.InstanceID, *Data.AssetID, *Actor->GetName(), Mesh ? *Mesh->GetName() : TEXT("NONE"),
+			Data.Location.X, Data.Location.Y, Data.Location.Z, Data.WallAttachment.IsAttached() ? TEXT(" [wall]") : TEXT(" [floor]"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[PlannerDrop] Failed to spawn actor for object %s (%s)."), *Data.InstanceID, *Data.AssetID);
 	}
 }
 
@@ -4657,7 +5269,17 @@ AShowroomBooth* ARoomPlannerManager::SpawnCabinetSetActor(const FPlacedCabinetSe
 	Booth->PlannerInstanceID = Data.InstanceID;
 	Booth->SetReplicates(true);
 	Booth->SetReplicateMovement(true);
+
+	// DT_CabinetSetLayouts: part transforms become the baseline BeginPlay captures (server side; clients apply on OnRep).
+	if (const FCabinetSetLayoutRow* Layout = FindCabinetSetLayoutRow(GetWorld(), Data.ProductID))
+	{
+		Booth->ApplyPlannerLayout(*Layout, false);
+	}
+
 	Booth->FinishSpawning(SpawnTM);
+
+	// Once at spawn: WorldLocationZ per part (server; clients do the same when the booth replicates in).
+	Booth->ApplyPlannerLayoutSpawnHeights();
 
 	CabinetSetActorCache.Add(Data.InstanceID, Booth);
 	return Booth;
@@ -4710,11 +5332,18 @@ bool ARoomPlannerManager::MoveCabinetSet(const FString& InstanceID, const FVecto
 {
 	FPlacedCabinetSetData* D = CabinetSets.Find(InstanceID);
 	if (!D) return false;
-	D->Location = Location;
-	D->Rotation = Rotation;
+	if (D->WallAttachment.IsAttached() && SlideAttachmentTo(D->WallAttachment, Location))
+	{
+		ComputeWallAttachedTransform(D->WallAttachment, D->Location, D->Rotation);
+	}
+	else
+	{
+		D->Location = Location;
+		D->Rotation = Rotation;
+	}
 	if (AShowroomBooth* Booth = FindCabinetSetActor(InstanceID))
 	{
-		Booth->SetActorLocationAndRotation(Location, Rotation);
+		Booth->SetActorLocationAndRotation(D->Location, D->Rotation);
 	}
 	CommitStateAfterMutation();
 	return true;
@@ -4789,11 +5418,18 @@ void ARoomPlannerManager::MoveCabinetSetLocal(const FString& InstanceID, const F
 {
 	FPlacedCabinetSetData* D = CabinetSets.Find(InstanceID);
 	if (!D) return;
-	D->Location = Location;
-	D->Rotation = Rotation;
+	if (D->WallAttachment.IsAttached() && SlideAttachmentTo(D->WallAttachment, Location))
+	{
+		ComputeWallAttachedTransform(D->WallAttachment, D->Location, D->Rotation);
+	}
+	else
+	{
+		D->Location = Location;
+		D->Rotation = Rotation;
+	}
 	if (AShowroomBooth* Booth = FindCabinetSetActor(InstanceID))
 	{
-		Booth->SetActorLocationAndRotation(Location, Rotation);
+		Booth->SetActorLocationAndRotation(D->Location, D->Rotation);
 	}
 }
 

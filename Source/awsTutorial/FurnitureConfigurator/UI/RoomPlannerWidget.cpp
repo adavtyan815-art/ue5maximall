@@ -14,8 +14,11 @@
 #include "Kismet/GameplayStatics.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Components/Widget.h"
+#include "Components/PanelWidget.h"
 #include "Engine/HitResult.h"
+#include "Blueprint/DragDropOperation.h"
 #include "ColorCatalog/ColorCatalogWidget.h"
+#include "FurnitureConfigurator/UI/PlannerCatalogItemWidget.h"
 
 void URoomPlannerWidget::NativeConstruct()
 {
@@ -147,6 +150,9 @@ void URoomPlannerWidget::NativeConstruct()
 			if (W) W->SetVisibility(ESlateVisibility::Collapsed);
 		}
 	}
+
+	// Catalog sections: DT_PlannerObjects and DT_FurnitureCatalog cards (drag & drop onto the plan)
+	RefreshCatalogPanels();
 
 	// Automatically enter 2D Top-Down Drawing Mode on open
 	CurrentViewMode = ERoomPlannerViewMode::View3D;
@@ -1671,10 +1677,137 @@ void URoomPlannerWidget::CancelPlacement()
 	UpdateDynamicPropertiesPanel();
 }
 
+void URoomPlannerWidget::RefreshCatalogPanels()
+{
+	if (!PlannerManager)
+	{
+		BindManagerDelegates();
+	}
+
+	TSubclassOf<UPlannerCatalogItemWidget> CardClass = CatalogItemWidgetClass ? CatalogItemWidgetClass : TSubclassOf<UPlannerCatalogItemWidget>(UPlannerCatalogItemWidget::StaticClass());
+
+	auto Fill = [&](UPanelWidget* Panel, EPlannerPlacementKind Kind, const TArray<FPlannerCatalogEntry>& Entries)
+	{
+		if (!Panel) return;
+		Panel->ClearChildren();
+		for (const FPlannerCatalogEntry& Entry : Entries)
+		{
+			UPlannerCatalogItemWidget* Card = CreateWidget<UPlannerCatalogItemWidget>(this, CardClass);
+			if (!Card) continue;
+			Card->SetupCatalogItem(this, Kind, Entry);
+			Panel->AddChild(Card);
+		}
+	};
+
+	Fill(PanelPlannerObjects, EPlannerPlacementKind::Object, GetAvailableObjects());
+	Fill(PanelCabinetSets, EPlannerPlacementKind::CabinetSet, GetAvailableCabinetSets());
+}
+
+bool URoomPlannerWidget::IsScreenPositionOverCatalogPanels(const FVector2D& ScreenSpacePosition) const
+{
+	const UWidget* Panels[] = { PanelPlannerObjects.Get(), PanelCabinetSets.Get() };
+	for (const UWidget* Panel : Panels)
+	{
+		if (Panel && Panel->GetCachedGeometry().IsUnderLocation(ScreenSpacePosition))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void URoomPlannerWidget::HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition)
+{
+	if (IsScreenPositionOverCatalogPanels(ScreenSpacePosition))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Drag of '%s' released over the catalog panel — ignored."), *ItemID);
+		return; // dropped back onto the catalog: not a placement
+	}
+	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Drag-cancel path: '%s' (kind %d) released at screen (%.0f, %.0f)"), *ItemID, (int32)Kind, ScreenSpacePosition.X, ScreenSpacePosition.Y);
+	DropCatalogItemAtScreenPosition(Kind, ItemID, ScreenSpacePosition);
+}
+
+bool URoomPlannerWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+{
+	if (InOperation && Cast<UPlannerCatalogItemWidget>(InOperation->Payload))
+	{
+		return true;
+	}
+	return Super::NativeOnDragOver(InGeometry, InDragDropEvent, InOperation);
+}
+
+bool URoomPlannerWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+{
+	if (InOperation)
+	{
+		if (const UPlannerCatalogItemWidget* Card = Cast<UPlannerCatalogItemWidget>(InOperation->Payload))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] NativeOnDrop path: '%s' (kind %d) at screen (%.0f, %.0f)"), *Card->ItemID, (int32)Card->Kind, InDragDropEvent.GetScreenSpacePosition().X, InDragDropEvent.GetScreenSpacePosition().Y);
+			if (!IsScreenPositionOverCatalogPanels(InDragDropEvent.GetScreenSpacePosition()))
+			{
+				DropCatalogItemAtScreenPosition(Card->Kind, Card->ItemID, InDragDropEvent.GetScreenSpacePosition());
+			}
+			return true; // consumed either way: no cancel-path placement for this drop
+		}
+	}
+	return Super::NativeOnDrop(InGeometry, InDragDropEvent, InOperation);
+}
+
+bool URoomPlannerWidget::DropCatalogItemUnderCursor(EPlannerPlacementKind Kind, const FString& ItemID)
+{
+	if (!PlannerManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] DropCatalogItemUnderCursor: no PlannerManager"));
+		return false;
+	}
+	if (CurrentViewMode != ERoomPlannerViewMode::View2D)
+	{
+		HandleOperationRejected(TEXT("Размещение доступно только в 2D режиме"));
+		return false;
+	}
+	AAwsTutorial_PlayerController* PC = GetPreviewController();
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] DropCatalogItemUnderCursor: owning player is not AAwsTutorial_PlayerController"));
+		return false;
+	}
+	const bool bSent = PC->PlannerDropCatalogItemUnderCursor(Kind, ItemID);
+	UpdateDynamicPropertiesPanel();
+	return bSent;
+}
+
+bool URoomPlannerWidget::DropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition)
+{
+	if (!PlannerManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] DropCatalogItemAtScreenPosition: no PlannerManager"));
+		return false;
+	}
+	if (CurrentViewMode != ERoomPlannerViewMode::View2D)
+	{
+		HandleOperationRejected(TEXT("Размещение доступно только в 2D режиме"));
+		return false;
+	}
+	AAwsTutorial_PlayerController* PC = GetPreviewController();
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] DropCatalogItemAtScreenPosition: owning player is not AAwsTutorial_PlayerController"));
+		return false;
+	}
+	const bool bSent = PC->PlannerDropCatalogItemAtScreenPosition(Kind, ItemID, ScreenSpacePosition);
+	UpdateDynamicPropertiesPanel();
+	return bSent;
+}
+
 void URoomPlannerWidget::RotateSelected(float DeltaYawDeg)
 {
 	if (!PlannerManager) return;
 	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // moving / rotating is a 2D workflow
+	if (PlannerManager->IsSelectionWallAttached())
+	{
+		HandleOperationRejected(TEXT("Объект закреплён на стене: его поворот задаётся стеной"));
+		return;
+	}
 	AAwsTutorial_PlayerController* PC = GetPreviewController();
 	if (!PC) return;
 

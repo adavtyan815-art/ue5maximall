@@ -32,6 +32,7 @@
 #include "Engine/DataTable.h"
 #include "Engine/EngineTypes.h"
 #include "FurnitureConfigurator/Data/FurnitureTypes.h"
+#include "Constructor/RoomPlannerTypes.h"
 #include "ShowroomBooth.generated.h"
 
 class UStaticMeshComponent;
@@ -220,8 +221,29 @@ public:
      * Set by ARoomPlannerManager when this booth is a planner-placed cabinet set (REQ-18).
      * Empty for designer-placed showroom booths. Used to match saved states and for selection.
      */
-    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Booth | State")
+    UPROPERTY(ReplicatedUsing = OnRep_PlannerInstanceID, BlueprintReadOnly, Category = "Booth | State")
     FString PlannerInstanceID;
+
+    /**
+     * Applies a DT_CabinetSetLayouts row: relative transforms of the ten static-mesh parts (always) and their
+     * meshes (only where the row sets one). With bRecaptureBaseline the booth re-captures its baseline
+     * transforms from the new values and rebuilds; false is used at deferred spawn, before BeginPlay.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Booth | Planner")
+    void ApplyPlannerLayout(const FCabinetSetLayoutRow& Row, bool bRecaptureBaseline);
+
+    /** Static-mesh component by part name (MainCabinet, DoorMeshSlot0, ...). */
+    UFUNCTION(BlueprintPure, Category = "Booth | Planner")
+    UStaticMeshComponent* GetPartComponent(FName PartName) const;
+
+    /**
+     * Once per spawned cabinet set: sets each part's world Z to its row WorldLocationZ (parts with 0 are left
+     * untouched) and re-captures the baseline so later product rebuilds keep it. Runs on server and clients.
+     */
+    void ApplyPlannerLayoutSpawnHeights();
+
+    /** True after ApplyPlannerLayoutSpawnHeights ran for this booth. */
+    bool bPlannerLayoutHeightsApplied = false;
 
     // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // PUBLIC API (Blueprint Callable)
@@ -377,6 +399,19 @@ protected:
     /** Called on every client (and listen-server client) when DoorStates changes. */
     UFUNCTION()
     void OnRep_DoorStates();
+
+    /** Planner-spawned booth arrived on a client: apply its DT_CabinetSetLayouts row. */
+    UFUNCTION()
+    void OnRep_PlannerInstanceID();
+
+    /** Applies the layout row for the active product once per product (clients + server). */
+    void TryApplyPlannerLayout();
+
+    /** Re-applies the row's mesh overrides after ApplyProductData replaced the meshes from the product catalog. */
+    void ApplyPlannerLayoutMeshOverrides();
+
+    /** Product the planner layout was last applied for (avoids re-applying on every OnRep). */
+    FName AppliedPlannerLayoutProduct;
 
     // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // SERVER RPCs

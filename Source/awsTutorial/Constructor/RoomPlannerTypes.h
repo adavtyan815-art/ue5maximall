@@ -264,6 +264,76 @@ struct FFloorFinishRecord
 	FSurfaceFinish Finish;
 };
 
+/** Where a catalog item was dropped. */
+UENUM(BlueprintType)
+enum class EPlannerDropTarget : uint8
+{
+	None    UMETA(DisplayName = "Invalid"),
+	Wall    UMETA(DisplayName = "Wall"),
+	Floor   UMETA(DisplayName = "Floor")
+};
+
+/**
+ * Attachment of a placed item to a wall. Empty WallGuid = free (floor) placement.
+ * The item's world transform is derived from the wall: position DistanceAlongWallCm from the wall's
+ * start node, on the chosen face, pushed out by DepthOffsetCm so its back touches the face, facing away from the wall.
+ */
+USTRUCT(BlueprintType)
+struct FWallAttachment
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	FString WallGuid;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	float DistanceAlongWallCm = 0.f;
+
+	/** True = the wall's LEFT face (Normal = (-Dir.Y, Dir.X)), false = right face. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	bool bLeftSide = true;
+
+	/** Pivot height above the floor (0 = floor-standing). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	float HeightCm = 0.f;
+
+	/** Distance from the wall face to the item pivot along the face normal (measured from the item bounds). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	float DepthOffsetCm = 0.f;
+
+	bool IsAttached() const { return !WallGuid.IsEmpty(); }
+};
+
+/** Result of resolving a drop position against the plan (2D) or a cursor hit (3D). */
+USTRUCT(BlueprintType)
+struct FPlannerDropInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	EPlannerDropTarget Target = EPlannerDropTarget::None;
+
+	/** Wall hit (Target == Wall). */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	int32 SegmentID = -1;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	float DistanceAlongWallCm = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	bool bLeftSide = true;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	float HeightCm = 0.f;
+
+	/** Floor hit (Target == Floor): room and world point. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	int32 RoomID = -1;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FVector WorldLocation = FVector::ZeroVector;
+};
+
 /** One placed interior object (REQ-17). Serialized into the planner JSON. */
 USTRUCT(BlueprintType)
 struct FPlacedFurnitureData
@@ -272,6 +342,10 @@ struct FPlacedFurnitureData
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	FString InstanceID;
+
+	/** Wall attachment; empty WallGuid = floor placement. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	FWallAttachment WallAttachment;
 
 	/** Row name in the object catalog (DT_PlannerObjects) or a static mesh asset path. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
@@ -312,6 +386,10 @@ struct FPlacedCabinetSetData
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	FRotator Rotation = FRotator::ZeroRotator;
+
+	/** Cabinet sets are wall-only: always attached when placed through the drop flow. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	FWallAttachment WallAttachment;
 };
 
 /** A dimension / distance label to draw next to the selected element (REQ-02/04/06). */
@@ -412,6 +490,77 @@ struct FPlannerObjectRow : public FTableRowBase
 	/** If true the RAL/NCS colour catalog may recolour this object. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Object")
 	bool bAllowColorCatalog = true;
+};
+
+/** One static-mesh part of a cabinet set: mesh + relative transform to its parent component (see FCabinetSetLayoutRow). */
+USTRUCT(BlueprintType)
+struct FCabinetSetPartData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	TSoftObjectPtr<UStaticMesh> Mesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	FVector RelativeLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	FRotator RelativeRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	FVector RelativeScale3D = FVector::OneVector;
+
+	/** Editable world-space Z for this part (stored per part in DT_CabinetSetLayouts). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	float WorldLocationZ = 0.f;
+
+	/** Editable Z-axis rotation (yaw, degrees) for this part (stored per part in DT_CabinetSetLayouts). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	float RotationZ = 0.f;
+};
+
+/**
+ * Row of DT_CabinetSetLayouts. RowName = ProductID (same as DT_FurnitureCatalog).
+ * Static-mesh parts of a cabinet set spawned from the planner catalog, with their relative transforms.
+ * Parent hierarchy is fixed by AShowroomBooth:
+ *   MainCabinet -> BoothRoot; DoorMeshSlot0/1, CountertopMesh, SinkMesh, FaucetMesh -> MainCabinet;
+ *   MirrorMesh, ClosetMesh -> BoothRoot; ClosetDoorMeshSlot0/1 -> ClosetMesh.
+ * A part's Mesh left empty keeps the product catalog mesh; transforms are always applied.
+ */
+USTRUCT(BlueprintType)
+struct FCabinetSetLayoutRow : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData MainCabinet;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData DoorMeshSlot0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData DoorMeshSlot1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData CountertopMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData SinkMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData FaucetMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData MirrorMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData ClosetMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData ClosetDoorMeshSlot0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	FCabinetSetPartData ClosetDoorMeshSlot1;
 };
 
 /** Catalog entry exposed to the UI for building object / tile / cabinet-set lists. */

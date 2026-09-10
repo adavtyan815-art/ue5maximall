@@ -15,7 +15,10 @@ class UTextBlock;
 class UEditableTextBox;
 class UImage;
 class UWidget;
+class UPanelWidget;
 class UColorCatalogWidget;
+class UPlannerCatalogItemWidget;
+class UDragDropOperation;
 
 UENUM(BlueprintType)
 enum class ERoomPlannerViewMode : uint8
@@ -38,6 +41,10 @@ protected:
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+
+	/** Catalog cards dropped on this widget: resolved natively (wall / floor rules), no Blueprint nodes needed. */
+	virtual bool NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
+	virtual bool NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
 
 	bool bIsWidgetDrawingWall = false;
 
@@ -194,6 +201,48 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
 	void CancelPlacement();
+
+	/**
+	 * Drag-and-drop entry point (call from your OnDrop): places the item under the cursor.
+	 * Kind = Object (DT_PlannerObjects row name → wall or floor, decided by the drop target) or
+	 * CabinetSet (DT_FurnitureCatalog row name → walls only). Returns false and shows a message when invalid.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
+	bool DropCatalogItemUnderCursor(EPlannerPlacementKind Kind, const FString& ItemID);
+
+	/** Drop at an explicit Slate screen-space position (drag/drop event position). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
+	bool DropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
+	bool DropObjectUnderCursor(const FString& AssetID) { return DropCatalogItemUnderCursor(EPlannerPlacementKind::Object, AssetID); }
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
+	bool DropCabinetSetUnderCursor(FName ProductID) { return DropCatalogItemUnderCursor(EPlannerPlacementKind::CabinetSet, ProductID.ToString()); }
+
+	// ── Catalog sections (DT_PlannerObjects / DT_FurnitureCatalog) ─────────
+
+	/** Rebuilds both catalog panels from the DataTables (called automatically on construct). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
+	void RefreshCatalogPanels();
+
+	/** Card class used for catalog items. Defaults to the C++ UPlannerCatalogItemWidget (self-drawing). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Objects")
+	TSubclassOf<UPlannerCatalogItemWidget> CatalogItemWidgetClass;
+
+	/** Container filled with DT_PlannerObjects cards (WrapBox recommended). */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UPanelWidget> PanelPlannerObjects;
+
+	/** Container filled with DT_FurnitureCatalog cards (WrapBox recommended). */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UPanelWidget> PanelCabinetSets;
+
+	/** Called by a card when its drag was released without any widget accepting it (plan area). */
+	void HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition);
+
+	/** True when the screen-space point is over one of the catalog panels (a release there is not a placement). */
+	bool IsScreenPositionOverCatalogPanels(const FVector2D& ScreenSpacePosition) const;
 
 	/** Rotates the selected object / cabinet set around Z by DeltaYawDeg and commits it. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")

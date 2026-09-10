@@ -152,9 +152,35 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_LoadPlannerProject(const FString& SaveRecordJSON);
 
+	/**
+	 * Places a catalog item according to the resolved drop target. Objects: wall (WallSegmentID != -1) or floor.
+	 * Cabinet sets: wall only — a floor drop is ignored.
+	 */
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_PlaceCatalogItem(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation);
+
 	/** Performs the armed click-to-place (BeginPlaceObject / BeginPlaceCabinetSet) at a world position; returns true if a request was sent. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool PlannerPlacePendingAt(const FVector& WorldPos, float YawDeg = 0.f);
+
+	/** Sends a placement for an already resolved drop; refuses (with a message) when the target is invalid for the item kind. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool PlannerPlaceResolved(EPlannerPlacementKind Kind, const FString& ItemID, const FPlannerDropInfo& Drop);
+
+	/** Drag-and-drop entry point: resolves what is under the cursor (2D plan or 3D hit) and places the item there. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool PlannerDropCatalogItemUnderCursor(EPlannerPlacementKind Kind, const FString& ItemID);
+
+	/**
+	 * Same as PlannerDropCatalogItemUnderCursor but for an explicit Slate screen-space position (drag/drop
+	 * event position). Required for UMG drops: while a drag is active the game viewport's cached mouse
+	 * position is invalid, so DeprojectMousePositionToWorld fails.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	bool PlannerDropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition);
+
+	/** Converts an absolute Slate position into a world ray through this player's viewport. */
+	bool PlannerDeprojectScreenSpace(const FVector2D& ScreenSpacePosition, FVector& OutOrigin, FVector& OutDirection, FVector2D& OutViewportPixels) const;
 
 	/** Line-traces under the cursor and selects the planner wall / opening / floor / object / cabinet set hit (3D mode). */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")

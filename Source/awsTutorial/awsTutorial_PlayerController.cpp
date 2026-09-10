@@ -27,6 +27,7 @@
 #include "Widgets/SViewport.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/GameViewportClient.h"
+#include "Slate/SceneViewport.h"
 #include "IPixelStreamingModule.h"
 #include "PixelStreamingInputProtocol.h"
 #include "PixelStreamingInputComponent.h"
@@ -2439,9 +2440,148 @@ void AAwsTutorial_PlayerController::Server_AddCabinetSet_Implementation(FName Pr
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->AddCabinetSet(ProductID, Location, Rotation);
+		// Cabinet sets are wall-only: the location must resolve to a wall on the plan.
+		const FPlannerDropInfo Drop = Manager->ResolveDropAtWorldPos2D(Location);
+		if (Drop.Target == EPlannerDropTarget::Wall)
+		{
+			Manager->AddCabinetSetOnWall(ProductID, Drop.SegmentID, Drop.DistanceAlongWallCm, Drop.bLeftSide);
+			Manager->OnRep_ReplicatedRoomJSON();
+		}
+	}
+}
+
+void AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Implementation(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation)
+{
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+	if (!Manager) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Server_PlaceCatalogItem kind=%d item='%s' wallSeg=%d dist=%.0f left=%d z=%.0f floor=(%.0f, %.0f)"),
+		(int32)Kind, *ItemID, WallSegmentID, DistanceAlongWallCm, bLeftSide ? 1 : 0, HeightCm, FloorLocation.X, FloorLocation.Y);
+
+	bool bPlaced = false;
+	if (Kind == EPlannerPlacementKind::Object)
+	{
+		if (WallSegmentID != -1)
+		{
+			bPlaced = !Manager->AddPlacedObjectOnWall(ItemID, WallSegmentID, DistanceAlongWallCm, bLeftSide, HeightCm).IsEmpty();
+		}
+		else
+		{
+			bPlaced = !Manager->AddPlacedObject(ItemID, FVector(FloorLocation.X, FloorLocation.Y, 0.f), FRotator::ZeroRotator, FVector::OneVector).IsEmpty();
+		}
+	}
+	else if (Kind == EPlannerPlacementKind::CabinetSet && WallSegmentID != -1)
+	{
+		bPlaced = !Manager->AddCabinetSetOnWall(FName(*ItemID), WallSegmentID, DistanceAlongWallCm, bLeftSide).IsEmpty();
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Server_PlaceCatalogItem result: %s (objects=%d, cabinetSets=%d)"),
+		bPlaced ? TEXT("PLACED") : TEXT("NOT PLACED"), Manager->GetPlacedObjects().Num(), Manager->GetCabinetSets().Num());
+
+	if (bPlaced)
+	{
 		Manager->OnRep_ReplicatedRoomJSON();
 	}
+}
+bool AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Validate(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation) { return true; }
+
+bool AAwsTutorial_PlayerController::PlannerPlaceResolved(EPlannerPlacementKind Kind, const FString& ItemID, const FPlannerDropInfo& Drop)
+{
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+	if (!Manager || ItemID.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] PlannerPlaceResolved aborted: manager=%s item='%s'"), Manager ? TEXT("ok") : TEXT("NULL"), *ItemID);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Resolved drop: kind=%d item='%s' target=%d seg=%d dist=%.0f left=%d room=%d at (%.0f, %.0f)"),
+		(int32)Kind, *ItemID, (int32)Drop.Target, Drop.SegmentID, Drop.DistanceAlongWallCm, Drop.bLeftSide ? 1 : 0, Drop.RoomID, Drop.WorldLocation.X, Drop.WorldLocation.Y);
+
+	if (Drop.Target == EPlannerDropTarget::Wall)
+	{
+		Server_PlaceCatalogItem(Kind, ItemID, Drop.SegmentID, Drop.DistanceAlongWallCm, Drop.bLeftSide, Drop.HeightCm, Drop.WorldLocation);
+		return true;
+	}
+	if (Drop.Target == EPlannerDropTarget::Floor)
+	{
+		if (Kind == EPlannerPlacementKind::CabinetSet)
+		{
+			Manager->NotifyOperationRejected(TEXT("Гарнитур можно разместить только у стены"));
+			return false;
+		}
+		Server_PlaceCatalogItem(Kind, ItemID, -1, 0.f, true, 0.f, Drop.WorldLocation);
+		return true;
+	}
+
+	Manager->NotifyOperationRejected(Kind == EPlannerPlacementKind::CabinetSet
+		? TEXT("Гарнитур можно разместить только у стены")
+		: TEXT("Объект можно разместить только на стене или на полу комнаты"));
+	return false;
+}
+
+bool AAwsTutorial_PlayerController::PlannerDeprojectScreenSpace(const FVector2D& ScreenSpacePosition, FVector& OutOrigin, FVector& OutDirection, FVector2D& OutViewportPixels) const
+{
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP || !LP->ViewportClient) return false;
+	FSceneViewport* SceneViewport = LP->ViewportClient->GetGameViewport();
+	if (!SceneViewport) return false;
+
+	// Absolute Slate coordinates → viewport-local Slate units → viewport pixels.
+	const FGeometry& Geo = SceneViewport->GetCachedGeometry();
+	const FVector2D LocalSize = Geo.GetLocalSize();
+	if (LocalSize.X <= 0.f || LocalSize.Y <= 0.f) return false;
+	const FVector2D Local = Geo.AbsoluteToLocal(ScreenSpacePosition);
+	const FIntPoint SizePx = SceneViewport->GetSizeXY();
+	OutViewportPixels = FVector2D(Local.X * (SizePx.X / LocalSize.X), Local.Y * (SizePx.Y / LocalSize.Y));
+
+	return DeprojectScreenPositionToWorld(OutViewportPixels.X, OutViewportPixels.Y, OutOrigin, OutDirection);
+}
+
+bool AAwsTutorial_PlayerController::PlannerDropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition)
+{
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+	if (!Manager) return false;
+
+	FVector Origin, Dir;
+	FVector2D Pixels;
+	if (!PlannerDeprojectScreenSpace(ScreenSpacePosition, Origin, Dir, Pixels))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Screen-space deprojection failed for (%.0f, %.0f)"), ScreenSpacePosition.X, ScreenSpacePosition.Y);
+		Manager->NotifyOperationRejected(TEXT("Не удалось определить точку на плане"));
+		return false;
+	}
+
+	FPlannerDropInfo Drop;
+	if (Manager->Is2DModeActive())
+	{
+		if (!FMath::IsNearlyZero(Dir.Z))
+		{
+			// Wall tops first (the perspective top-down camera shows wall tops displaced from their footprint), then the ground.
+			Drop = Manager->ResolveDropFromCursorRay2D(Origin, Dir);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] 2D drop: screen (%.0f, %.0f) → viewport px (%.0f, %.0f) → target %d at (%.0f, %.0f), walls=%d"),
+			ScreenSpacePosition.X, ScreenSpacePosition.Y, Pixels.X, Pixels.Y, (int32)Drop.Target, Drop.WorldLocation.X, Drop.WorldLocation.Y, Manager->GetWallCount());
+	}
+	else
+	{
+		FHitResult Hit;
+		if (GetHitResultAtScreenPosition(Pixels, ECC_Visibility, true, Hit) && Hit.GetActor())
+		{
+			Drop = Manager->ResolveDropFromHit(Hit);
+		}
+	}
+	return PlannerPlaceResolved(Kind, ItemID, Drop);
+}
+
+bool AAwsTutorial_PlayerController::PlannerDropCatalogItemUnderCursor(EPlannerPlacementKind Kind, const FString& ItemID)
+{
+	// Slate's cursor position stays valid during and after a drag; the viewport's cached mouse position does not.
+	FVector2D CursorPos = FVector2D::ZeroVector;
+	if (FSlateApplication::IsInitialized())
+	{
+		CursorPos = FSlateApplication::Get().GetCursorPos();
+	}
+	return PlannerDropCatalogItemAtScreenPosition(Kind, ItemID, CursorPos);
 }
 bool AAwsTutorial_PlayerController::Server_AddCabinetSet_Validate(FName ProductID, FVector Location, FRotator Rotation) { return true; }
 
@@ -2483,20 +2623,11 @@ bool AAwsTutorial_PlayerController::PlannerPlacePendingAt(const FVector& WorldPo
 		return false;
 	}
 
-	const FVector Location(WorldPos.X, WorldPos.Y, 0.f);
-	const FRotator Rotation(0.f, YawDeg, 0.f);
-
-	if (Manager->PendingPlacementKind == EPlannerPlacementKind::Object)
+	// Same drop-target rules as drag-and-drop: objects on a wall or the floor, cabinet sets on walls only.
+	const FPlannerDropInfo Drop = Manager->ResolveDropAtWorldPos2D(FVector(WorldPos.X, WorldPos.Y, 0.f));
+	if (!PlannerPlaceResolved(Manager->PendingPlacementKind, Manager->PendingPlacementAssetID, Drop))
 	{
-		Server_AddPlacedObject(Manager->PendingPlacementAssetID, Location, Rotation, FVector::OneVector);
-	}
-	else if (Manager->PendingPlacementKind == EPlannerPlacementKind::CabinetSet)
-	{
-		Server_AddCabinetSet(FName(*Manager->PendingPlacementAssetID), Location, Rotation);
-	}
-	else
-	{
-		return false;
+		return false; // stays armed so the user can click a valid spot
 	}
 
 	Manager->CancelPendingPlacement();

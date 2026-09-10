@@ -163,6 +163,22 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Catalogs")
 	TObjectPtr<UDataTable> CabinetSetCatalog;
 
+	/** Cabinet set layouts (rows: FCabinetSetLayoutRow, RowName = ProductID). Falls back to /Game/DT/DT_CabinetSetLayouts. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Catalogs")
+	TObjectPtr<UDataTable> CabinetSetLayoutCatalog;
+
+	/** Layout row for a product, from the manager's table if one exists, else from /Game/DT/DT_CabinetSetLayouts. Null when absent. */
+	static const FCabinetSetLayoutRow* FindCabinetSetLayoutRow(UWorld* World, FName ProductID);
+
+	/**
+	 * Editor helper: writes Saved/PlannerExports/DT_CabinetSetLayouts.csv with one row per DT_FurnitureCatalog
+	 * product, filled with the ACTUAL relative transforms (and meshes, if any) of the ten parts in the booth
+	 * class defaults (BP_Booth). Import it as a DataTable with row struct CabinetSetLayoutRow.
+	 * Console: planner.ExportCabinetSetLayoutsCSV
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Catalogs")
+	FString ExportCabinetSetLayoutsCSV();
+
 	/** Booth class spawned for cabinet sets. Falls back to /Game/BP_Booth, then AShowroomBooth. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Catalogs")
 	TSubclassOf<AShowroomBooth> CabinetSetActorClass;
@@ -578,6 +594,44 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|CabinetSets")
 	void MoveCabinetSetLocal(const FString& InstanceID, const FVector& Location, const FRotator& Rotation);
 
+	// ── Drop placement: walls / floor (DT_FurnitureCatalog = wall-only, DT_PlannerObjects = wall or floor) ──
+
+	/** 2D plan: wall when the point lies on a wall footprint (± tolerance), floor when inside a room, else invalid. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Placement")
+	FPlannerDropInfo ResolveDropAtWorldPos2D(const FVector& WorldPos) const;
+
+	/** 3D: wall when the cursor hit a wall actor, floor when it hit the floor mesh, else invalid. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Placement")
+	FPlannerDropInfo ResolveDropFromHit(const FHitResult& Hit) const;
+
+	/**
+	 * 2D plan under the perspective top-down camera: the cursor ray is intersected with each wall's TOP plane
+	 * (Z = wall height) so a drop on the visible wall top counts as that wall, then with the ground plane
+	 * for the floor. Avoids the parallax miss of projecting straight to Z = 0.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Placement")
+	FPlannerDropInfo ResolveDropFromCursorRay2D(const FVector& RayOrigin, const FVector& RayDirection) const;
+
+	/** Server: places an interior object against a wall face. Returns the InstanceID (empty on failure). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Placement")
+	FString AddPlacedObjectOnWall(const FString& AssetID, int32 SegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm);
+
+	/** Server: places a cabinet set against a wall face (the only valid placement for DT_FurnitureCatalog items). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Placement")
+	FString AddCabinetSetOnWall(FName ProductID, int32 SegmentID, float DistanceAlongWallCm, bool bLeftSide);
+
+	/** Server: recomputes the transform of every wall-attached item from the current wall geometry (called on every commit). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Placement")
+	void RefreshWallAttachedPlacements();
+
+	/** True when the selected object / cabinet set is attached to a wall (rotation is then fixed by the wall). */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Placement")
+	bool IsSelectionWallAttached() const;
+
+	/** Lets UI / controller code surface a refusal through OnOperationRejected. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	void NotifyOperationRejected(const FString& Reason);
+
 	// ── REQ-16: project save / load ─────────────────────────────────────────
 
 	/**
@@ -697,6 +751,18 @@ private:
 
 	/** Re-points every wall of NodeID to TargetNodeID and deletes NodeID. Refused if a wall would collapse or duplicate another. */
 	bool MergeNodeInto(int32 NodeID, int32 TargetNodeID);
+
+	// Wall attachment helpers
+	int32 FindSegmentIDByGuid(const FString& Guid) const;
+	int32 FindSegmentIDForWallActor(const AProceduralWallActor* Actor) const;
+	bool GetSegmentGeometry(int32 SegmentID, FVector2D& OutStart, FVector2D& OutDir, FVector2D& OutLeftNormal, float& OutLength, float& OutHalfThickness) const;
+	bool ComputeWallAttachedTransform(const FWallAttachment& Attachment, FVector& OutLocation, FRotator& OutRotation) const;
+	void MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const;
+	bool SlideAttachmentTo(FWallAttachment& Attachment, const FVector& RequestedLocation) const;
+	void DetachItemsFromWall(const FString& WallGuid);
+	void RehomeAttachmentsAfterSplit(const FString& OldGuid, const FString& NewGuid, float SplitDistanceCm);
+	static TSharedPtr<FJsonObject> AttachmentToJson(const FWallAttachment& Attachment);
+	static FWallAttachment AttachmentFromJson(const TSharedPtr<FJsonObject>& Obj);
 
 	/** After a node move: joins the node to a coincident node, or splits a wall it landed on and joins the junction. */
 	bool TryConnectMovedNode(int32 NodeID);
