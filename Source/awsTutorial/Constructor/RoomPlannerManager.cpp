@@ -2283,6 +2283,7 @@ void ARoomPlannerManager::ClearWallSelection()
 {
 	SelectedSegmentID = -1;
 	SelectedOpeningIndex = -1;
+	bSelectionHighlightSuppressed = false;
 	for (auto& Pair : WallActors)
 	{
 		if (Pair.Value)
@@ -2355,6 +2356,7 @@ int32 ARoomPlannerManager::SelectWallAtWorldPos(const FVector& WorldPos)
 		SelectedCabinetSetID.Empty();
 	}
 
+	bSelectionHighlightSuppressed = false; // an explicit pick always shows the normal highlight again
 	SelectedSegmentID = ClosestSegID;
 	SelectedOpeningIndex = -1;
 	float LengthMeters = 0.f;
@@ -2391,13 +2393,25 @@ int32 ARoomPlannerManager::SelectWallAtWorldPos(const FVector& WorldPos)
 	return SelectedSegmentID;
 }
 
+void ARoomPlannerManager::SetSelectionHighlightSuppressed(bool bSuppressed)
+{
+	if (bSelectionHighlightSuppressed != bSuppressed)
+	{
+		bSelectionHighlightSuppressed = bSuppressed;
+		UpdateSelectionVisuals();
+	}
+}
+
 void ARoomPlannerManager::UpdateSelectionVisuals()
 {
+	// Visual-only switch: the logical selection is unchanged, only the highlight is hidden while suppressed.
+	const bool bShowHighlight = !bSelectionHighlightSuppressed;
+
 	for (auto& Pair : WallActors)
 	{
 		if (Pair.Value)
 		{
-			bool bIsWallSelected = (Pair.Key == SelectedSegmentID);
+			bool bIsWallSelected = (Pair.Key == SelectedSegmentID) && bShowHighlight;
 			bool bHighlightWall = bIsWallSelected;
 			bool bHighlightOpening = false;
 
@@ -2427,7 +2441,7 @@ void ARoomPlannerManager::UpdateSelectionVisuals()
 			if (SectionIdx < 0 || SectionIdx >= NumSections) continue;
 
 			UMaterialInterface* Mat = nullptr;
-			if (Pair.Key == SelectedRoomID && WallSelectionMaterial)
+			if (Pair.Key == SelectedRoomID && bShowHighlight && WallSelectionMaterial)
 			{
 				Mat = WallSelectionMaterial;
 			}
@@ -2447,7 +2461,7 @@ void ARoomPlannerManager::UpdateSelectionVisuals()
 	{
 		if (Pair.Value)
 		{
-			Pair.Value->SetSelectedHighlight(Pair.Key == SelectedObjectID);
+			Pair.Value->SetSelectedHighlight(Pair.Key == SelectedObjectID && bShowHighlight);
 		}
 	}
 
@@ -2456,7 +2470,7 @@ void ARoomPlannerManager::UpdateSelectionVisuals()
 	{
 		if (AShowroomBooth* Booth = FindCabinetSetActor(Pair.Key))
 		{
-			const bool bSel = (Pair.Key == SelectedCabinetSetID);
+			const bool bSel = (Pair.Key == SelectedCabinetSetID) && bShowHighlight;
 			TArray<UPrimitiveComponent*> Prims;
 			Booth->GetComponents<UPrimitiveComponent>(Prims);
 			for (UPrimitiveComponent* Prim : Prims)
@@ -3819,6 +3833,7 @@ int32 ARoomPlannerManager::SelectFloorAtWorldPos(const FVector& WorldPos)
 {
 	const int32 RoomID = FindRoomAtWorldPos(WorldPos);
 
+	bSelectionHighlightSuppressed = false;
 	SelectedSegmentID = -1;
 	SelectedOpeningIndex = -1;
 	SelectedObjectID.Empty();
@@ -3835,6 +3850,7 @@ int32 ARoomPlannerManager::SelectFloorAtWorldPos(const FVector& WorldPos)
 bool ARoomPlannerManager::SelectPlacedObject(const FString& InstanceID)
 {
 	if (!PlacedObjects.Contains(InstanceID)) return false;
+	bSelectionHighlightSuppressed = false;
 	SelectedSegmentID = -1;
 	SelectedOpeningIndex = -1;
 	SelectedRoomID = -1;
@@ -3850,6 +3866,7 @@ bool ARoomPlannerManager::SelectPlacedObject(const FString& InstanceID)
 bool ARoomPlannerManager::SelectCabinetSet(const FString& InstanceID)
 {
 	if (!CabinetSets.Contains(InstanceID)) return false;
+	bSelectionHighlightSuppressed = false;
 	SelectedSegmentID = -1;
 	SelectedOpeningIndex = -1;
 	SelectedRoomID = -1;
@@ -3928,6 +3945,7 @@ EPlannerSelectionKind ARoomPlannerManager::SelectSurfaceFromHit(const FHitResult
 				}
 			}
 
+			bSelectionHighlightSuppressed = false;
 			SelectedRoomID = -1;
 			SelectedObjectID.Empty();
 			SelectedCabinetSetID.Empty();

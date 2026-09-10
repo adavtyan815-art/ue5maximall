@@ -394,6 +394,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Selection")
 	void ClearAllSelection();
 
+	/**
+	 * When true the selection stays logically active but its visual highlight (selection material / outline)
+	 * is not drawn. Set after a catalog colour is applied so the new finish is visible; reset automatically
+	 * by the next explicit pick or clear. Local only, never replicated.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner|Selection")
+	bool bSelectionHighlightSuppressed = false;
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Selection")
+	void SetSelectionHighlightSuppressed(bool bSuppressed);
+
 	/** 2D pick: object → cabinet set → wall/opening → floor. Returns what was selected. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Selection")
 	EPlannerSelectionKind SelectAtWorldPos2D(const FVector& WorldPos);

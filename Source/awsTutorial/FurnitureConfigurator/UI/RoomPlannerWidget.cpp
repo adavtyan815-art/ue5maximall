@@ -1477,7 +1477,12 @@ void URoomPlannerWidget::OpenPaintCatalogForSelection()
 
 void URoomPlannerWidget::HandlePaintColorItemSelected(const FColorCatalogItem& Item)
 {
-	ApplyFinishToSelection(ARoomPlannerManager::MakePaintFinish(Item.Code, Item.Color));
+	if (ApplyFinishToSelection(ARoomPlannerManager::MakePaintFinish(Item.Code, Item.Color)) && PlannerManager)
+	{
+		// Colour applied: hide the blue selection highlight so the new finish is visible. The selection itself
+		// stays active (further swatch clicks, finish info, delete etc. keep working); the next pick restores it.
+		PlannerManager->SetSelectionHighlightSuppressed(true);
+	}
 }
 
 void URoomPlannerWidget::HandlePaintCatalogClosed()
