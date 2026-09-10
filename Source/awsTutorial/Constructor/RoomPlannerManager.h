@@ -757,6 +757,8 @@ private:
 	int32 FindSegmentIDForWallActor(const AProceduralWallActor* Actor) const;
 	bool GetSegmentGeometry(int32 SegmentID, FVector2D& OutStart, FVector2D& OutDir, FVector2D& OutLeftNormal, float& OutLength, float& OutHalfThickness) const;
 	bool ComputeWallAttachedTransform(const FWallAttachment& Attachment, FVector& OutLocation, FRotator& OutRotation) const;
+	/** Wall-attached transform of a cabinet set plus the row-level RotationZ (added yaw) from DT_CabinetSetLayouts. */
+	bool ComputeCabinetSetTransform(const FPlacedCabinetSetData& Data, FVector& OutLocation, FRotator& OutRotation) const;
 	void MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const;
 	bool SlideAttachmentTo(FWallAttachment& Attachment, const FVector& RequestedLocation) const;
 	void DetachItemsFromWall(const FString& WallGuid);

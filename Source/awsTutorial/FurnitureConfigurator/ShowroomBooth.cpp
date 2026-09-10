@@ -1674,10 +1674,7 @@ void AShowroomBooth::ApplyPlannerLayout(const FCabinetSetLayoutRow& Row, bool bR
     {
         if (!Part.Comp) continue;
         Part.Comp->SetRelativeLocation(Part.Data->RelativeLocation);
-        // RotationZ is an ADDITIONAL yaw on top of the row's RelativeRotation.
-        FRotator Rot = Part.Data->RelativeRotation;
-        Rot.Yaw += Part.Data->RotationZ;
-        Part.Comp->SetRelativeRotation(Rot);
+        Part.Comp->SetRelativeRotation(Part.Data->RelativeRotation);
         Part.Comp->SetRelativeScale3D(Part.Data->RelativeScale3D.IsNearlyZero() ? FVector::OneVector : Part.Data->RelativeScale3D);
     }
 
@@ -1729,52 +1726,6 @@ void AShowroomBooth::ApplyPlannerLayoutMeshOverrides()
     }
 }
 
-void AShowroomBooth::ApplyPlannerLayoutSpawnHeights()
-{
-    if (bPlannerLayoutHeightsApplied || PlannerInstanceID.IsEmpty()) return;
-    const FName Product = ActiveState.ProductID.IsNone() ? InitialProductID : ActiveState.ProductID;
-    const FCabinetSetLayoutRow* Row = ARoomPlannerManager::FindCabinetSetLayoutRow(GetWorld(), Product);
-    if (!Row) return;
-
-    struct FPartRef { UStaticMeshComponent* Comp; const FCabinetSetPartData* Data; };
-    const FPartRef Parts[] = {
-        { MainCabinet.Get(),         &Row->MainCabinet },
-        { DoorMeshSlot0.Get(),       &Row->DoorMeshSlot0 },
-        { DoorMeshSlot1.Get(),       &Row->DoorMeshSlot1 },
-        { CountertopMesh.Get(),      &Row->CountertopMesh },
-        { SinkMesh.Get(),            &Row->SinkMesh },
-        { FaucetMesh.Get(),          &Row->FaucetMesh },
-        { MirrorMesh.Get(),          &Row->MirrorMesh },
-        { ClosetMesh.Get(),          &Row->ClosetMesh },
-        { ClosetDoorMeshSlot0.Get(), &Row->ClosetDoorMeshSlot0 },
-        { ClosetDoorMeshSlot1.Get(), &Row->ClosetDoorMeshSlot1 },
-    };
-
-    // Parents first (MainCabinet, ClosetMesh) so child parts are measured against the final parent height.
-    bool bAny = false;
-    for (int32 Pass = 0; Pass < 2; ++Pass)
-    {
-        for (const FPartRef& Part : Parts)
-        {
-            if (!Part.Comp || FMath::IsNearlyZero(Part.Data->WorldLocationZ)) continue;
-            const bool bIsParentPart = (Part.Comp == MainCabinet.Get() || Part.Comp == ClosetMesh.Get());
-            if ((Pass == 0) != bIsParentPart) continue;
-            FVector World = Part.Comp->GetComponentLocation();
-            World.Z = Part.Data->WorldLocationZ;
-            Part.Comp->SetWorldLocation(World);
-            bAny = true;
-        }
-    }
-    bPlannerLayoutHeightsApplied = true;
-
-    if (bAny)
-    {
-        // Keep the spawn heights through later product rebuilds.
-        bBaselineTransformsCaptured = false;
-        EnsureBaselineTransformsCaptured();
-    }
-}
-
 void AShowroomBooth::TryApplyPlannerLayout()
 {
     if (PlannerInstanceID.IsEmpty()) return;
@@ -1784,7 +1735,6 @@ void AShowroomBooth::TryApplyPlannerLayout()
     if (const FCabinetSetLayoutRow* Row = ARoomPlannerManager::FindCabinetSetLayoutRow(GetWorld(), Product))
     {
         ApplyPlannerLayout(*Row, true);
-        ApplyPlannerLayoutSpawnHeights(); // clients: actor location is already final when RepNotifies run
     }
     else
     {

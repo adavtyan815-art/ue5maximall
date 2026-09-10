@@ -3182,6 +3182,16 @@ bool ARoomPlannerManager::ComputeWallAttachedTransform(const FWallAttachment& At
 	return true;
 }
 
+bool ARoomPlannerManager::ComputeCabinetSetTransform(const FPlacedCabinetSetData& Data, FVector& OutLocation, FRotator& OutRotation) const
+{
+	if (!ComputeWallAttachedTransform(Data.WallAttachment, OutLocation, OutRotation)) return false;
+	if (const FCabinetSetLayoutRow* Row = FindCabinetSetLayoutRow(GetWorld(), Data.ProductID))
+	{
+		OutRotation.Yaw = FRotator::NormalizeAxis(OutRotation.Yaw + Row->RotationZ); // whole-set RotationZ is additive
+	}
+	return true;
+}
+
 void ARoomPlannerManager::MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const
 {
 	// Actor must already stand at the face point (DepthOffsetCm == 0) with the attached rotation.
@@ -3340,7 +3350,12 @@ FString ARoomPlannerManager::AddCabinetSetOnWall(FName ProductID, int32 SegmentI
 	D.WallAttachment.bLeftSide = bLeftSide;
 	D.WallAttachment.HeightCm = 0.f; // floor-standing against the wall
 	D.WallAttachment.DepthOffsetCm = 0.f;
-	if (!ComputeWallAttachedTransform(D.WallAttachment, D.Location, D.Rotation)) return FString();
+	// Whole-set WorldLocationZ from DT_CabinetSetLayouts: applied once, at spawn, as the actor's Z.
+	if (const FCabinetSetLayoutRow* Layout = FindCabinetSetLayoutRow(GetWorld(), ProductID))
+	{
+		D.WallAttachment.HeightCm = Layout->WorldLocationZ;
+	}
+	if (!ComputeCabinetSetTransform(D, D.Location, D.Rotation)) return FString();
 
 	AShowroomBooth* Booth = SpawnCabinetSetActor(D);
 	if (!Booth)
@@ -3350,7 +3365,7 @@ FString ARoomPlannerManager::AddCabinetSetOnWall(FName ProductID, int32 SegmentI
 	}
 
 	MeasureAttachmentDepth(Booth, D.WallAttachment);
-	ComputeWallAttachedTransform(D.WallAttachment, D.Location, D.Rotation);
+	ComputeCabinetSetTransform(D, D.Location, D.Rotation);
 	Booth->SetActorLocationAndRotation(D.Location, D.Rotation);
 	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Cabinet set %s (%s) → booth %s at (%.0f, %.0f, %.0f) yaw %.0f on wall seg %d"),
 		*D.InstanceID, *ProductID.ToString(), *Booth->GetName(), D.Location.X, D.Location.Y, D.Location.Z, D.Rotation.Yaw, SegmentID);
@@ -3386,7 +3401,7 @@ void ARoomPlannerManager::RefreshWallAttachedPlacements()
 		FPlacedCabinetSetData& D = Pair.Value;
 		if (!D.WallAttachment.IsAttached()) continue;
 		FVector Loc; FRotator Rot;
-		if (ComputeWallAttachedTransform(D.WallAttachment, Loc, Rot))
+		if (ComputeCabinetSetTransform(D, Loc, Rot))
 		{
 			if (!D.Location.Equals(Loc, 0.01f) || !D.Rotation.Equals(Rot, 0.01f))
 			{
@@ -5278,9 +5293,6 @@ AShowroomBooth* ARoomPlannerManager::SpawnCabinetSetActor(const FPlacedCabinetSe
 
 	Booth->FinishSpawning(SpawnTM);
 
-	// Once at spawn: WorldLocationZ per part (server; clients do the same when the booth replicates in).
-	Booth->ApplyPlannerLayoutSpawnHeights();
-
 	CabinetSetActorCache.Add(Data.InstanceID, Booth);
 	return Booth;
 }
@@ -5334,7 +5346,7 @@ bool ARoomPlannerManager::MoveCabinetSet(const FString& InstanceID, const FVecto
 	if (!D) return false;
 	if (D->WallAttachment.IsAttached() && SlideAttachmentTo(D->WallAttachment, Location))
 	{
-		ComputeWallAttachedTransform(D->WallAttachment, D->Location, D->Rotation);
+		ComputeCabinetSetTransform(*D, D->Location, D->Rotation);
 	}
 	else
 	{
@@ -5420,7 +5432,7 @@ void ARoomPlannerManager::MoveCabinetSetLocal(const FString& InstanceID, const F
 	if (!D) return;
 	if (D->WallAttachment.IsAttached() && SlideAttachmentTo(D->WallAttachment, Location))
 	{
-		ComputeWallAttachedTransform(D->WallAttachment, D->Location, D->Rotation);
+		ComputeCabinetSetTransform(*D, D->Location, D->Rotation);
 	}
 	else
 	{

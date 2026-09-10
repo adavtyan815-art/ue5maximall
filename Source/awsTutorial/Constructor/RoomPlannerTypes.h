@@ -509,14 +509,6 @@ struct FCabinetSetPartData
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
 	FVector RelativeScale3D = FVector::OneVector;
-
-	/** Editable world-space Z for this part (stored per part in DT_CabinetSetLayouts). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
-	float WorldLocationZ = 0.f;
-
-	/** Editable Z-axis rotation (yaw, degrees) for this part (stored per part in DT_CabinetSetLayouts). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
-	float RotationZ = 0.f;
 };
 
 /**
@@ -561,6 +553,14 @@ struct FCabinetSetLayoutRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
 	FCabinetSetPartData ClosetDoorMeshSlot1;
+
+	/** Whole set: world-space Z of the booth actor, applied once when the set is spawned from the planner catalog. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	float WorldLocationZ = 0.f;
+
+	/** Whole set: additional yaw (degrees) ADDED to the booth actor's placement rotation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cabinet Set Layout")
+	float RotationZ = 0.f;
 };
 
 /** Catalog entry exposed to the UI for building object / tile / cabinet-set lists. */
