@@ -9,14 +9,14 @@
 #include "Components/Border.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Components/ScaleBox.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Engine/Texture2D.h"
-#include "Framework/Application/SlateApplication.h"
 
 TSharedRef<SWidget> UPlannerCatalogItemWidget::RebuildWidget()
 {
-	// Pure C++ card: build SizeBox → Border → VerticalBox(Image, Text) when no Blueprint design exists.
+	// Pure C++ card: SizeBox → Border → VerticalBox(ScaleBox(Image), Text) when no Blueprint design exists.
 	if (WidgetTree && !WidgetTree->RootWidget)
 	{
 		USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("CardSize"));
@@ -24,14 +24,20 @@ TSharedRef<SWidget> UPlannerCatalogItemWidget::RebuildWidget()
 		Size->SetHeightOverride(CardHeight);
 
 		UBorder* Border = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CardBorder"));
-		Border->SetPadding(FMargin(4.f));
-		Border->SetBrushColor(ObjectCardColor);
+		Border->SetPadding(CardPadding);
+		Border->SetBrushColor(NormalColor);
 
 		UVerticalBox* Box = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("CardBox"));
 
+		UScaleBox* Scale = WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), TEXT("CardScale"));
+		Scale->SetStretch(ImageStretch);
+		Scale->SetVisibility(ESlateVisibility::HitTestInvisible);
+
 		UImage* Img = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("ImgThumbnail"));
 		Img->SetVisibility(ESlateVisibility::HitTestInvisible);
-		if (UVerticalBoxSlot* ImgSlot = Box->AddChildToVerticalBox(Img))
+		Scale->AddChild(Img);
+
+		if (UVerticalBoxSlot* ImgSlot = Box->AddChildToVerticalBox(Scale))
 		{
 			ImgSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			ImgSlot->SetHorizontalAlignment(HAlign_Fill);
@@ -42,9 +48,17 @@ TSharedRef<SWidget> UPlannerCatalogItemWidget::RebuildWidget()
 		Txt->SetVisibility(ESlateVisibility::HitTestInvisible);
 		Txt->SetJustification(ETextJustify::Center);
 		Txt->SetAutoWrapText(true);
-		FSlateFontInfo Font = Txt->GetFont();
-		Font.Size = 9;
-		Txt->SetFont(Font);
+		if (TextFont.HasValidFont())
+		{
+			Txt->SetFont(TextFont);
+		}
+		else
+		{
+			FSlateFontInfo Font = Txt->GetFont();
+			Font.Size = 9;
+			Txt->SetFont(Font);
+		}
+		Txt->SetColorAndOpacity(FSlateColor(TextColor));
 		if (UVerticalBoxSlot* TxtSlot = Box->AddChildToVerticalBox(Txt))
 		{
 			TxtSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
@@ -86,6 +100,11 @@ void UPlannerCatalogItemWidget::ApplyVisuals()
 	if (TxtName)
 	{
 		TxtName->SetText(DisplayName);
+		TxtName->SetColorAndOpacity(FSlateColor(TextColor));
+		if (TextFont.HasValidFont())
+		{
+			TxtName->SetFont(TextFont);
+		}
 	}
 	if (ImgThumbnail)
 	{
@@ -101,23 +120,55 @@ void UPlannerCatalogItemWidget::ApplyVisuals()
 			ImgThumbnail->SetColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, 0.25f));
 		}
 	}
+	ApplyStateTint();
+}
+
+void UPlannerCatalogItemWidget::ApplyStateTint()
+{
 	if (CardBorder)
 	{
-		CardBorder->SetBrushColor(Kind == EPlannerPlacementKind::CabinetSet ? CabinetSetCardColor : ObjectCardColor);
+		CardBorder->SetBrushColor(bPressed ? PressedColor : (bHovered ? HoveredColor : NormalColor));
 	}
+}
+
+void UPlannerCatalogItemWidget::NativeOnMouseEnter(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	Super::NativeOnMouseEnter(InGeometry, InMouseEvent);
+	bHovered = true;
+	ApplyStateTint();
+}
+
+void UPlannerCatalogItemWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
+{
+	Super::NativeOnMouseLeave(InMouseEvent);
+	bHovered = false;
+	bPressed = false;
+	ApplyStateTint();
 }
 
 FReply UPlannerCatalogItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && !ItemID.IsEmpty())
 	{
+		bPressed = true;
+		ApplyStateTint();
 		return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, this, EKeys::LeftMouseButton).NativeReply;
 	}
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
+FReply UPlannerCatalogItemWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	bPressed = false;
+	ApplyStateTint();
+	return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
 void UPlannerCatalogItemWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
 {
+	bPressed = false;
+	ApplyStateTint();
+
 	UDragDropOperation* Op = UWidgetBlueprintLibrary::CreateDragDropOperation(UDragDropOperation::StaticClass());
 	if (!Op)
 	{
@@ -129,9 +180,18 @@ void UPlannerCatalogItemWidget::NativeOnDragDetected(const FGeometry& InGeometry
 	Op->Tag = ItemID;
 	Op->Pivot = EDragPivot::CenterCenter;
 
-	// Drag visual: a second card with the same data.
+	// Drag visual: a second card with the same data and style.
 	if (UPlannerCatalogItemWidget* Visual = CreateWidget<UPlannerCatalogItemWidget>(GetOwningPlayer(), GetClass()))
 	{
+		Visual->CardWidth = CardWidth;
+		Visual->CardHeight = CardHeight;
+		Visual->CardPadding = CardPadding;
+		Visual->ImageStretch = ImageStretch;
+		Visual->NormalColor = NormalColor;
+		Visual->HoveredColor = HoveredColor;
+		Visual->PressedColor = PressedColor;
+		Visual->TextColor = TextColor;
+		Visual->TextFont = TextFont;
 		FPlannerCatalogEntry Entry;
 		Entry.ID = ItemID;
 		Entry.DisplayName = DisplayName;
@@ -151,7 +211,7 @@ void UPlannerCatalogItemWidget::NativeOnDragCancelled(const FDragDropEvent& InDr
 
 	// Released over something that did not accept the drop (typically the plan itself when the planner
 	// root is not hit-testable). Let the planner resolve the drop at the cursor; it ignores releases
-	// over its own catalog panels.
+	// over its own catalog area.
 	if (URoomPlannerWidget* Planner = OwnerPlanner.Get())
 	{
 		Planner->HandleCatalogDragReleased(Kind, ItemID, InDragDropEvent.GetScreenSpacePosition());

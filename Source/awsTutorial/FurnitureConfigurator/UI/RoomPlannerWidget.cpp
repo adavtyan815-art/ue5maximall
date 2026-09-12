@@ -15,6 +15,10 @@
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Components/Widget.h"
 #include "Components/PanelWidget.h"
+#include "Components/ScrollBox.h"
+#include "Components/SizeBox.h"
+#include "Components/UniformGridPanel.h"
+#include "Components/UniformGridSlot.h"
 #include "Engine/HitResult.h"
 #include "Blueprint/DragDropOperation.h"
 #include "ColorCatalog/ColorCatalogWidget.h"
@@ -80,13 +84,24 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnClose) { BtnClose->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCloseClicked); }
 	if (BtnBack) { BtnBack->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCloseClicked); }
 
-	// Set descriptive tooltips on tools and actions
-	if (Btn2DView) Btn2DView->SetToolTipText(FText::FromString(TEXT("2D Вид: Режим черчения стен")));
-	if (Btn_2DView) Btn_2DView->SetToolTipText(FText::FromString(TEXT("2D Вид: Режим черчения стен")));
-	if (Btn3DView) Btn3DView->SetToolTipText(FText::FromString(TEXT("3D Вид: Осмотр созданной комнаты")));
-	if (Btn_3DView) Btn_3DView->SetToolTipText(FText::FromString(TEXT("3D Вид: Осмотр созданной комнаты")));
-	if (BtnPresetRoom) BtnPresetRoom->SetToolTipText(FText::FromString(TEXT("Построить готовую квадратную комнату 4х4 метра")));
-	if (BtnClearLayout) BtnClearLayout->SetToolTipText(FText::FromString(TEXT("Очистить все стены и проёмы")));
+	if (BtnHelp) { BtnHelp->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnHelpShowClicked); }
+	if (BtnHideHelp) { BtnHideHelp->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnHelpHideClicked); }
+	if (HorizontalBox_3) HorizontalBox_3->SetVisibility(bHelpBarHidden ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+	if (SelectionHeaderRow) SelectionHeaderRow->SetVisibility(ESlateVisibility::Collapsed);
+
+	// Set descriptive tooltips on tools and actions (every tooltip describes the button's current action)
+	if (Btn2DView) Btn2DView->SetToolTipText(FText::FromString(TEXT("2D вид: черчение стен и редактирование плана")));
+	if (Btn_2DView) Btn_2DView->SetToolTipText(FText::FromString(TEXT("2D вид: черчение стен и редактирование плана")));
+	if (Btn3DView) Btn3DView->SetToolTipText(FText::FromString(TEXT("3D вид: осмотр комнаты и подбор отделки")));
+	if (Btn_3DView) Btn_3DView->SetToolTipText(FText::FromString(TEXT("3D вид: осмотр комнаты и подбор отделки")));
+	if (BtnPresetRoom) BtnPresetRoom->SetToolTipText(FText::FromString(TEXT("Построить готовую комнату 4×4 м")));
+	if (BtnClearLayout) BtnClearLayout->SetToolTipText(FText::FromString(TEXT("Очистить весь план")));
+	if (BtnApplyProperties) BtnApplyProperties->SetToolTipText(FText::FromString(TEXT("Применить введённые размеры (см) к выбранному элементу")));
+	if (BtnRotateLeft) BtnRotateLeft->SetToolTipText(FText::FromString(TEXT("Повернуть объект на 90° против часовой стрелки")));
+	if (BtnRotateRight) BtnRotateRight->SetToolTipText(FText::FromString(TEXT("Повернуть объект на 90° по часовой стрелке")));
+	if (BtnCancelPlacement) BtnCancelPlacement->SetToolTipText(FText::FromString(TEXT("Отменить размещение объекта")));
+	if (BtnHelp) BtnHelp->SetToolTipText(FText::FromString(TEXT("Показать подсказки")));
+	if (BtnHideHelp) BtnHideHelp->SetToolTipText(FText::FromString(TEXT("Скрыть подсказки")));
 	if (BtnToggleCeiling) BtnToggleCeiling->SetToolTipText(FText::FromString(TEXT("Включить / скрыть потолок в 3D виде")));
 	if (Btn_ToggleCeiling) Btn_ToggleCeiling->SetToolTipText(FText::FromString(TEXT("Включить / скрыть потолок в 3D виде")));
 	if (BtnCeiling) BtnCeiling->SetToolTipText(FText::FromString(TEXT("Включить / скрыть потолок в 3D виде")));
@@ -112,6 +127,9 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnDeleteTool) BtnDeleteTool->SetVisibility(ESlateVisibility::Collapsed);
 	if (Image_2) Image_2->SetVisibility(ESlateVisibility::Collapsed);
 	if (SnapIndicator) SnapIndicator->SetVisibility(ESlateVisibility::Collapsed);
+	if (Border_wall_size) Border_wall_size->SetVisibility(ESlateVisibility::Collapsed);
+	if (Border_AddDoor) Border_AddDoor->SetVisibility(ESlateVisibility::Collapsed);
+	if (Border_AddWindow) Border_AddWindow->SetVisibility(ESlateVisibility::Collapsed);
 
 	if (TxtGuidanceHint)
 	{
@@ -137,7 +155,7 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnSwingRight) BtnSwingRight->SetToolTipText(FText::FromString(TEXT("Петли справа (вид изнутри комнаты)")));
 	if (BtnSwingInward) BtnSwingInward->SetToolTipText(FText::FromString(TEXT("Открывается внутрь комнаты")));
 	if (BtnSwingOutward) BtnSwingOutward->SetToolTipText(FText::FromString(TEXT("Открывается наружу")));
-	if (BtnFinishPaint) BtnFinishPaint->SetToolTipText(FText::FromString(TEXT("Покрасить выбранную стену / пол цветом RAL / NCS")));
+	if (BtnFinishPaint) BtnFinishPaint->SetToolTipText(FText::FromString(TEXT("Выбрать отделку (краска RAL / NCS) для выбранной поверхности")));
 	if (BtnClearFinish) BtnClearFinish->SetToolTipText(FText::FromString(TEXT("Убрать отделку с выбранной поверхности")));
 
 	{
@@ -152,7 +170,15 @@ void URoomPlannerWidget::NativeConstruct()
 	}
 
 	// Catalog sections: DT_PlannerObjects and DT_FurnitureCatalog cards (drag & drop onto the plan)
+	if (BtnCatalogInterior) { BtnCatalogInterior->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCatalogInteriorClicked); }
+	if (BtnCatalogCabinets) { BtnCatalogCabinets->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCatalogCabinetsClicked); }
+	if (BtnCatalogInterior) BtnCatalogInterior->SetToolTipText(FText::FromString(TEXT("Объекты интерьера: перетащите на пол или на стену")));
+	if (BtnCatalogCabinets) BtnCatalogCabinets->SetToolTipText(FText::FromString(TEXT("Комплекты тумб: перетащите к стене")));
+	ActiveCatalogTab = (DefaultCatalogTab == EPlannerPlacementKind::CabinetSet) ? EPlannerPlacementKind::CabinetSet : EPlannerPlacementKind::Object;
+	CollectSeparatorLines();
 	RefreshCatalogPanels();
+	UpdateCatalogTabStyles();
+	ApplyCatalogSectionVisibility();
 
 	// Automatically enter 2D Top-Down Drawing Mode on open
 	CurrentViewMode = ERoomPlannerViewMode::View3D;
@@ -392,10 +418,9 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	if (bIsWidgetDrawingWall)
-	{
-		UpdateMouseCursorPosition();
-	}
+	// Every tick: keeps the drawing cursor / live-length label in sync for both the widget-driven and the
+	// manager-driven drawing paths (the label must fold the moment drawing ends).
+	UpdateMouseCursorPosition();
 
 	if (!PlannerManager && GetWorld())
 	{
@@ -412,6 +437,9 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 
 	// REQ-02 / REQ-04 / REQ-06: keep the dimension labels next to the selected object every frame.
 	UpdateSelectionLabelsUI();
+
+	// Separator lines follow every section visibility change, wherever it was made.
+	UpdateSeparatorLines();
 
 	if (TxtOperationMessage && OperationMessageClearTime > 0.f && GetWorld() && GetWorld()->GetTimeSeconds() > OperationMessageClearTime)
 	{
@@ -444,18 +472,23 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 			SetToolMode(EPlannerToolMode::DrawWall);
 		}
 
-		// Logic for Door/Window tools (visible only if a wall is selected)
-		bool bHasSelection = PlannerManager->SelectedSegmentID != -1;
+		// Logic for Door/Window tools (visible only if a wall is selected, 2D only: openings are edited in 2D)
+		bool bHasSelection = bIs2D && PlannerManager->SelectedSegmentID != -1;
 		ESlateVisibility DoorWinVis = bHasSelection ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 
 		if (BtnAddDoor) BtnAddDoor->SetVisibility(DoorWinVis);
 		if (BtnAddWindow) BtnAddWindow->SetVisibility(DoorWinVis);
 		if (EditableTxtOpeningWidth) EditableTxtOpeningWidth->SetVisibility(DoorWinVis);
 		if (EditableTxtOpeningHeight) EditableTxtOpeningHeight->SetVisibility(DoorWinVis);
-		
+
 		if (EditableTxtOpeningWidth_1) EditableTxtOpeningWidth_1->SetVisibility(DoorWinVis);
 		if (EditableTxtOpeningHeight_1) EditableTxtOpeningHeight_1->SetVisibility(DoorWinVis);
 		if (EditableTxtOpeningSillHeight) EditableTxtOpeningSillHeight->SetVisibility(DoorWinVis);
+
+		// The Borders that frame the door / window creation groups follow their content, so the
+		// selection section becomes truly empty (and its separators fold) when nothing is selected.
+		if (Border_AddDoor) Border_AddDoor->SetVisibility(DoorWinVis);
+		if (Border_AddWindow) Border_AddWindow->SetVisibility(DoorWinVis);
 
 		UpdateGuidanceHintText();
 	}
@@ -515,7 +548,7 @@ void URoomPlannerWidget::UpdateToolModeButtonStyles()
 		else
 		{
 			BtnSelectTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Select ? ActiveColor : InactiveColor);
-			BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Выделение: кликните стену или проём для редактирования")));
+			BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Выделение: кликните стену, проём, пол или объект")));
 		}
 	}
 	if (BtnDrawWallTool)
@@ -526,7 +559,7 @@ void URoomPlannerWidget::UpdateToolModeButtonStyles()
 	if (BtnDeleteTool)
 	{
 		BtnDeleteTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Erase ? ActiveColor : InactiveColor);
-		BtnDeleteTool->SetToolTipText(FText::FromString(TEXT("Удалить выбранный элемент или войти в режим удаления")));
+		BtnDeleteTool->SetToolTipText(FText::FromString(TEXT("Удалить выбранный элемент (клавиша Delete)")));
 	}
 
 	UpdateGuidanceHintText();
@@ -555,8 +588,149 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 	if (BtnPresetRoom) BtnPresetRoom->SetVisibility(ToolsVis);
 	if (Image_1) Image_1->SetVisibility(ToolsVis);
 
+	// Catalog area (tabs, sections, separators) is a 2D-only workflow like placement itself.
+	ApplyCatalogSectionVisibility();
+	UpdateSummaryStatsUI();
+
 	UpdateGuidanceHintText();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Catalog tabs «Интерьер» / «Тумбы»
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void URoomPlannerWidget::SetActiveCatalogTab(EPlannerPlacementKind Tab)
+{
+	const EPlannerPlacementKind NewTab = (Tab == EPlannerPlacementKind::CabinetSet) ? EPlannerPlacementKind::CabinetSet : EPlannerPlacementKind::Object;
+	const bool bChanged = (NewTab != ActiveCatalogTab);
+	ActiveCatalogTab = NewTab;
+	if (bChanged)
+	{
+		RefreshCatalogPanels(); // the single content area is re-populated with the other catalog's cards
+	}
+	UpdateCatalogTabStyles();
+	ApplyCatalogSectionVisibility();
+}
+
+void URoomPlannerWidget::UpdateCatalogTabStyles()
+{
+	// Identical to UColorCatalogWidget::UpdateTabButtonStyles (RAL / NCS): active = ActiveTabColor, other = InactiveTabColor.
+	const bool bObjects = (ActiveCatalogTab == EPlannerPlacementKind::Object);
+	if (BtnCatalogInterior) BtnCatalogInterior->SetBackgroundColor(bObjects ? ActiveTabColor : InactiveTabColor);
+	if (BtnCatalogCabinets) BtnCatalogCabinets->SetBackgroundColor(!bObjects ? ActiveTabColor : InactiveTabColor);
+}
+
+void URoomPlannerWidget::ApplyCatalogSectionVisibility()
+{
+	const bool bIs2D = (CurrentViewMode == ERoomPlannerViewMode::View2D);
+	const ESlateVisibility Vis = bIs2D ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	if (CatalogTabBar) CatalogTabBar->SetVisibility(Vis);
+	if (BtnCatalogInterior && !CatalogTabBar) BtnCatalogInterior->SetVisibility(Vis);
+	if (BtnCatalogCabinets && !CatalogTabBar) BtnCatalogCabinets->SetVisibility(Vis);
+	if (Catalog_Container) Catalog_Container->SetVisibility(Vis);
+	UpdateSeparatorLines();
+}
+
+void URoomPlannerWidget::CollectSeparatorLines()
+{
+	SeparatorLines.Reset();
+	if (!WidgetTree) return;
+	WidgetTree->ForEachWidget([this](UWidget* W)
+	{
+		if (W && W->GetName().StartsWith(TEXT("Image_line"), ESearchCase::IgnoreCase))
+		{
+			SeparatorLines.Add(W);
+		}
+	});
+}
+
+namespace PlannerSeparatorRule
+{
+	static bool IsOwnVisibilityShown(const UWidget* W)
+	{
+		const ESlateVisibility V = W->GetVisibility();
+		return V != ESlateVisibility::Collapsed && V != ESlateVisibility::Hidden;
+	}
+
+	/** A widget is effectively visible when it is shown itself and, for panels, at least one descendant leaf is shown. */
+	static bool HasVisibleLeaf(const UWidget* W)
+	{
+		if (!W || !IsOwnVisibilityShown(W)) return false;
+		const UPanelWidget* Panel = Cast<UPanelWidget>(W);
+		if (!Panel)
+		{
+			// A TextBlock with no text draws nothing and must not keep a section (and its lines) alive.
+			if (const UTextBlock* Txt = Cast<UTextBlock>(W)) return !Txt->GetText().IsEmpty();
+			return true; // leaf (Image, Button, EditableTextBox, user widget ...)
+		}
+		const int32 N = Panel->GetChildrenCount();
+		if (N == 0) return false; // empty container adds nothing to a section
+		for (int32 i = 0; i < N; ++i)
+		{
+			if (HasVisibleLeaf(Panel->GetChildAt(i))) return true;
+		}
+		return false;
+	}
+}
+
+void URoomPlannerWidget::UpdateSeparatorLines()
+{
+	using namespace PlannerSeparatorRule;
+	if (SeparatorLines.Num() == 0) return;
+
+	// Group the lines by their parent panel; each panel is handled on its own (so lines nested inside a
+	// section, e.g. under SelectionHeaderRow, work with the same rule).
+	TSet<UPanelWidget*> Parents;
+	for (const TWeakObjectPtr<UWidget>& LinePtr : SeparatorLines)
+	{
+		if (UWidget* Line = LinePtr.Get())
+		{
+			if (UPanelWidget* Parent = Line->GetParent()) Parents.Add(Parent);
+		}
+	}
+
+	for (UPanelWidget* Parent : Parents)
+	{
+		// Rule: walking the children in order, a line is shown only when a visible section precedes it and
+		// another visible section follows it, and it is the first line between those two sections. Every
+		// other line (edges of the stack, lines next to collapsed sections, consecutive lines) is collapsed.
+		TArray<UWidget*> LinesToShow;
+		UWidget* PendingLine = nullptr;      // first line seen since the last visible section
+		bool bHaveVisibleAbove = false;      // a visible section has been seen already
+
+		const int32 Count = Parent->GetChildrenCount();
+		for (int32 i = 0; i < Count; ++i)
+		{
+			UWidget* Child = Parent->GetChildAt(i);
+			if (!Child) continue;
+			const bool bIsLine = SeparatorLines.ContainsByPredicate([Child](const TWeakObjectPtr<UWidget>& P) { return P.Get() == Child; });
+			if (bIsLine)
+			{
+				if (bHaveVisibleAbove && !PendingLine) PendingLine = Child;
+			}
+			else if (HasVisibleLeaf(Child))
+			{
+				if (PendingLine) { LinesToShow.Add(PendingLine); PendingLine = nullptr; }
+				bHaveVisibleAbove = true;
+			}
+		}
+
+		for (int32 i = 0; i < Count; ++i)
+		{
+			UWidget* Child = Parent->GetChildAt(i);
+			if (!Child) continue;
+			const bool bIsLine = SeparatorLines.ContainsByPredicate([Child](const TWeakObjectPtr<UWidget>& P) { return P.Get() == Child; });
+			if (!bIsLine) continue;
+			const bool bShow = LinesToShow.Contains(Child);
+			const bool bCurrentlyShown = IsOwnVisibilityShown(Child);
+			if (bShow && !bCurrentlyShown) Child->SetVisibility(ESlateVisibility::HitTestInvisible);
+			else if (!bShow && bCurrentlyShown) Child->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+}
+
+void URoomPlannerWidget::OnCatalogInteriorClicked() { SetActiveCatalogTab(EPlannerPlacementKind::Object); }
+void URoomPlannerWidget::OnCatalogCabinetsClicked() { SetActiveCatalogTab(EPlannerPlacementKind::CabinetSet); }
 
 void URoomPlannerWidget::UpdateGuidanceHintText()
 {
@@ -801,14 +975,16 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 					if (EditableTxtProp3)
 					{
 						EditableTxtProp3->SetVisibility(ESlateVisibility::Visible);
-						EditableTxtProp3->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), S_cm)));
-					}
-					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер окна")));
+					EditableTxtProp3->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), S_cm)));
+				}
+				if (LblWallSize) LblWallSize->SetText(FText::FromString(TEXT("Окно, см: ширина · высота · высота от пола")));
+				if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Применить")));
 				}
 				else // It's a door
 				{
 					if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
-					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер двери")));
+					if (LblWallSize) LblWallSize->SetText(FText::FromString(TEXT("Дверь, см: ширина · высота")));
+					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Применить")));
 				}
 			}
 		}
@@ -835,20 +1011,23 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 				EditableTxtProp3->SetVisibility(ESlateVisibility::Visible);
 				EditableTxtProp3->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), bHaveSeg ? SelSeg.Thickness : 20.f)));
 			}
-			if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Изменить размер стены")));
+			if (LblWallSize) LblWallSize->SetText(FText::FromString(TEXT("Стена, см: длина · высота · толщина")));
+			if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Применить")));
 		}
 
 		if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Visible);
 		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(ESlateVisibility::Visible);
 		if (Image_2) Image_2->SetVisibility(ESlateVisibility::Visible);
+		if (Border_wall_size) Border_wall_size->SetVisibility(ESlateVisibility::Visible);
 	}
 	else
 	{
 		// No wall / opening selected (nothing, or a floor / object / cabinet set)
+		if (Border_wall_size) Border_wall_size->SetVisibility(ESlateVisibility::Collapsed);
 		if (EditableTxtProp1) EditableTxtProp1->SetVisibility(ESlateVisibility::Hidden);
 		if (EditableTxtProp2) EditableTxtProp2->SetVisibility(ESlateVisibility::Hidden);
 		if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
-		if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Размер стены")));
+		if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Применить")));
 
 		// Editing (delete / rotate / swing / placement) is a 2D-only workflow, matching the existing panel logic.
 		const bool bOtherSelection = (CurrentViewMode == ERoomPlannerViewMode::View2D) && (PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None);
@@ -866,6 +1045,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 	if (BtnSwingRight) BtnSwingRight->SetVisibility(SwingVis);
 	if (BtnSwingInward) BtnSwingInward->SetVisibility(SwingVis);
 	if (BtnSwingOutward) BtnSwingOutward->SetVisibility(SwingVis);
+	if (SwingRow) SwingRow->SetVisibility(SwingVis == ESlateVisibility::Visible ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 	if (Kind == EPlannerSelectionKind::Opening)
 	{
 		EOpeningSwingSide Side; EOpeningSwingDirection Dir;
@@ -883,9 +1063,81 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 	const ESlateVisibility RotVis = (bIs2DPanel && (Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet)) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 	if (BtnRotateLeft) BtnRotateLeft->SetVisibility(RotVis);
 	if (BtnRotateRight) BtnRotateRight->SetVisibility(RotVis);
+	if (RotateRow) RotateRow->SetVisibility(RotVis == ESlateVisibility::Visible ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+
+	// Selection header: "<type / name>   [Delete]". Exists only while something is selected in 2D (editing is 2D-only).
+	{
+		const FString Title = bIs2DPanel ? GetSelectionTitleText() : FString();
+		const bool bShowHeader = !Title.IsEmpty();
+		if (TxtSelectionTitle)
+		{
+			TxtSelectionTitle->SetText(FText::FromString(Title));
+			TxtSelectionTitle->SetVisibility(bShowHeader ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		}
+		if (SelectionHeaderRow) SelectionHeaderRow->SetVisibility(bShowHeader ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(bShowHeader ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
 	if (BtnCancelPlacement) BtnCancelPlacement->SetVisibility((bIs2DPanel && PlannerManager->HasPendingPlacement()) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 
 	UpdateFinishUI();
+}
+
+FString URoomPlannerWidget::GetSelectionTitleText() const
+{
+	if (!PlannerManager) return FString();
+	switch (PlannerManager->GetSelectionKind())
+	{
+	case EPlannerSelectionKind::Wall:
+		return TEXT("Стена");
+	case EPlannerSelectionKind::Opening:
+	{
+		float W = 0.f, H = 0.f, Sill = 0.f;
+		const bool bOk = PlannerManager->GetOpeningDetails(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, W, H, Sill);
+		return (bOk && Sill * 100.f > 1.f) ? TEXT("Окно") : TEXT("Дверь");
+	}
+	case EPlannerSelectionKind::Floor:
+		return TEXT("Пол");
+	case EPlannerSelectionKind::Object:
+	{
+		FString AssetID;
+		for (const FPlacedFurnitureData& Obj : PlannerManager->GetPlacedObjects())
+		{
+			if (Obj.InstanceID == PlannerManager->SelectedObjectID) { AssetID = Obj.AssetID; break; }
+		}
+		for (const FPlannerCatalogEntry& Entry : PlannerManager->GetAvailableObjects())
+		{
+			if (Entry.ID == AssetID && !Entry.DisplayName.IsEmpty()) return Entry.DisplayName.ToString();
+		}
+		return AssetID.IsEmpty() ? FString(TEXT("Объект")) : AssetID;
+	}
+	case EPlannerSelectionKind::CabinetSet:
+	{
+		FString ProductID;
+		for (const FPlacedCabinetSetData& Set : PlannerManager->GetCabinetSets())
+		{
+			if (Set.InstanceID == PlannerManager->SelectedCabinetSetID) { ProductID = Set.ProductID.ToString(); break; }
+		}
+		for (const FPlannerCatalogEntry& Entry : PlannerManager->GetAvailableCabinetSets())
+		{
+			if (Entry.ID == ProductID && !Entry.DisplayName.IsEmpty()) return Entry.DisplayName.ToString();
+		}
+		return ProductID.IsEmpty() ? FString(TEXT("Тумбы")) : ProductID;
+	}
+	default:
+		return FString();
+	}
+}
+
+void URoomPlannerWidget::OnHelpShowClicked()
+{
+	bHelpBarHidden = false;
+	if (HorizontalBox_3) HorizontalBox_3->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+}
+
+void URoomPlannerWidget::OnHelpHideClicked()
+{
+	bHelpBarHidden = true;
+	if (HorizontalBox_3) HorizontalBox_3->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 void URoomPlannerWidget::OnApplyPropertiesClicked()
@@ -1056,31 +1308,31 @@ void URoomPlannerWidget::UpdateMouseCursorPosition()
 	{
 		mouse_cursor = Cast<UImage>(GetWidgetFromName(TEXT("mouse_cursor")));
 	}
-	if (!mouse_cursor)
-	{
-		return;
-	}
 
-	bool bIsDrawing = (bIsWidgetDrawingWall || (PlannerManager && PlannerManager->IsWallDrawingActive()));
+	const bool bIsDrawing = (bIsWidgetDrawingWall || (PlannerManager && PlannerManager->IsWallDrawingActive()));
+
+	// Project the current drag end point once; the drawing cursor and the live length label share it.
+	FVector2D ScreenPos = FVector2D::ZeroVector;
+	bool bHaveScreenPos = false;
 	if (bIsDrawing && PlannerManager)
 	{
-		mouse_cursor->SetVisibility(ESlateVisibility::HitTestInvisible);
-
 		APlayerController* PC = GetPreviewController();
 		if (!PC) PC = GetOwningPlayer();
-
-		if (PC)
+		if (PC && PC->ProjectWorldLocationToScreen(PlannerManager->GetDragCurrentPoint(), ScreenPos))
 		{
-			FVector EndPointWorld = PlannerManager->GetDragCurrentPoint();
-			FVector2D ScreenPos;
-			if (PC->ProjectWorldLocationToScreen(EndPointWorld, ScreenPos))
-			{
-				float DPIScale = UWidgetLayoutLibrary::GetViewportScale(this);
-				if (DPIScale > 0.001f)
-				{
-					ScreenPos /= DPIScale;
-				}
+			const float DPIScale = UWidgetLayoutLibrary::GetViewportScale(this);
+			if (DPIScale > 0.001f) ScreenPos /= DPIScale;
+			bHaveScreenPos = true;
+		}
+	}
 
+	if (mouse_cursor)
+	{
+		if (bIsDrawing && PlannerManager)
+		{
+			mouse_cursor->SetVisibility(ESlateVisibility::HitTestInvisible);
+			if (bHaveScreenPos)
+			{
 				if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(mouse_cursor->Slot))
 				{
 					CanvasSlot->SetPosition(ScreenPos);
@@ -1092,10 +1344,35 @@ void URoomPlannerWidget::UpdateMouseCursorPosition()
 				}
 			}
 		}
+		else
+		{
+			mouse_cursor->SetVisibility(ESlateVisibility::Collapsed);
+		}
 	}
-	else
+
+	// Live length label: same anchor point as the drawing cursor, small offset up-right; visible only while drawing.
+	UWidget* LenWidget = LiveLengthPanel ? LiveLengthPanel.Get() : Cast<UWidget>(TxtLiveLength.Get());
+	if (LenWidget)
 	{
-		mouse_cursor->SetVisibility(ESlateVisibility::Collapsed);
+		const ESlateVisibility LenVis = (bIsDrawing && bHaveScreenPos) ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
+		if (LenWidget->GetVisibility() != LenVis) LenWidget->SetVisibility(LenVis);
+		if (LenVis != ESlateVisibility::Collapsed)
+		{
+			static const FVector2D LiveLengthOffset(18.f, -12.f);
+			const FVector2D Pos = ScreenPos + LiveLengthOffset;
+			if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(LenWidget->Slot))
+			{
+				CanvasSlot->SetAnchors(FAnchors(0.f, 0.f));
+				CanvasSlot->SetAlignment(FVector2D(0.f, 1.f)); // bottom-left corner of the label sits at the offset point
+				CanvasSlot->SetAutoSize(true);
+				CanvasSlot->SetPosition(Pos);
+				LenWidget->SetRenderTranslation(FVector2D::ZeroVector);
+			}
+			else
+			{
+				LenWidget->SetRenderTranslation(Pos);
+			}
+		}
 	}
 }
 
@@ -1148,6 +1425,20 @@ void URoomPlannerWidget::UpdateSummaryStatsUI()
 	if (TxtPerimeter)
 	{
 		TxtPerimeter->SetText(FText::FromString(FString::Printf(TEXT("%.2f м"), GetPerimeterLengthM())));
+	}
+
+	// Floor area / perimeter are plan-editing information: 2D only, and only once at least one wall exists.
+	const bool bHasWalls = PlannerManager && PlannerManager->GetWallCount() > 0;
+	const bool bShowTotals = bHasWalls && CurrentViewMode == ERoomPlannerViewMode::View2D;
+	const ESlateVisibility TotalsVis = bShowTotals ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed;
+	if (TotalsBox)
+	{
+		if (TotalsBox->GetVisibility() != TotalsVis) TotalsBox->SetVisibility(TotalsVis);
+	}
+	else
+	{
+		if (TxtFloorArea) TxtFloorArea->SetVisibility(bShowTotals ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		if (TxtPerimeter) TxtPerimeter->SetVisibility(bShowTotals ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 }
 
@@ -1614,7 +1905,8 @@ void URoomPlannerWidget::UpdateFinishUI()
 	}
 	if (TxtFinishAreas)
 	{
-		TxtFinishAreas->SetText(FText::FromString(GetFinishAreaSummaryText()));
+		const bool bHasWalls = PlannerManager && PlannerManager->GetWallCount() > 0;
+		TxtFinishAreas->SetText(FText::FromString(bHasWalls ? GetFinishAreaSummaryText() : FString()));
 	}
 }
 
@@ -1683,37 +1975,102 @@ void URoomPlannerWidget::RefreshCatalogPanels()
 	{
 		BindManagerDelegates();
 	}
+	if (!Catalog_Container || !WidgetTree)
+	{
+		return;
+	}
 
+	// Same construction as WBP_PreviewWindow's Size_Container: ScrollBox (height-limited by a SizeBox)
+	// → UniformGridPanel → one SizeBox-wrapped item per cell, all driven by the root "UI Sizing - Catalog" values.
+	float SavedScrollOffset = 0.f;
+	bool bHasSavedOffset = false;
+	for (int32 ChildIdx = 0; ChildIdx < Catalog_Container->GetChildrenCount(); ++ChildIdx)
+	{
+		if (USizeBox* Wrapper = Cast<USizeBox>(Catalog_Container->GetChildAt(ChildIdx)))
+		{
+			if (UScrollBox* Inner = Cast<UScrollBox>(Wrapper->GetContent()))
+			{
+				SavedScrollOffset = Inner->GetScrollOffset();
+				bHasSavedOffset = true;
+			}
+		}
+	}
+	Catalog_Container->ClearChildren();
+
+	const EPlannerPlacementKind Kind = ActiveCatalogTab;
+	const TArray<FPlannerCatalogEntry> Entries = (Kind == EPlannerPlacementKind::CabinetSet) ? GetAvailableCabinetSets() : GetAvailableObjects();
 	TSubclassOf<UPlannerCatalogItemWidget> CardClass = CatalogItemWidgetClass ? CatalogItemWidgetClass : TSubclassOf<UPlannerCatalogItemWidget>(UPlannerCatalogItemWidget::StaticClass());
 
-	auto Fill = [&](UPanelWidget* Panel, EPlannerPlacementKind Kind, const TArray<FPlannerCatalogEntry>& Entries)
+	UScrollBox* ScrollBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+	UUniformGridPanel* GridPanel = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
+	if (!ScrollBox || !GridPanel)
 	{
-		if (!Panel) return;
-		Panel->ClearChildren();
-		for (const FPlannerCatalogEntry& Entry : Entries)
-		{
-			UPlannerCatalogItemWidget* Card = CreateWidget<UPlannerCatalogItemWidget>(this, CardClass);
-			if (!Card) continue;
-			Card->SetupCatalogItem(this, Kind, Entry);
-			Panel->AddChild(Card);
-		}
-	};
+		return;
+	}
+	ScrollBox->SetVisibility(ESlateVisibility::Visible);
+	ScrollBox->SetScrollBarVisibility(ESlateVisibility::Visible);
+	ScrollBox->SetAnimateWheelScrolling(true);
+	GridPanel->SetVisibility(ESlateVisibility::Visible);
+	GridPanel->SetMinDesiredSlotWidth(0.f);
+	GridPanel->SetMinDesiredSlotHeight(0.f);
+	GridPanel->SetSlotPadding(FMargin(CatalogGridSlotPadding));
 
-	Fill(PanelPlannerObjects, EPlannerPlacementKind::Object, GetAvailableObjects());
-	Fill(PanelCabinetSets, EPlannerPlacementKind::CabinetSet, GetAvailableCabinetSets());
+	const int32 Columns = CatalogColumns > 0 ? CatalogColumns : 2;
+	for (int32 i = 0; i < Entries.Num(); ++i)
+	{
+		UPlannerCatalogItemWidget* Card = CreateWidget<UPlannerCatalogItemWidget>(this, CardClass);
+		if (!Card) continue;
+
+		// Root-level "UI Sizing - Catalog" values forwarded to the card (self-drawing when no Blueprint design exists).
+		Card->CardWidth = CatalogButtonWidth;
+		Card->CardHeight = CatalogButtonHeight;
+		Card->CardPadding = CatalogButtonPadding;
+		Card->ImageStretch = CatalogImageStretch;
+		Card->NormalColor = CatalogButtonNormalColor.GetSpecifiedColor();
+		Card->HoveredColor = CatalogButtonHoveredColor.GetSpecifiedColor();
+		Card->PressedColor = CatalogButtonPressedColor.GetSpecifiedColor();
+		Card->TextColor = CatalogTextColor.GetSpecifiedColor();
+		Card->TextFont = CatalogTextFont;
+		Card->SetupCatalogItem(this, Kind, Entries[i]);
+
+		USizeBox* SizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		if (!SizeBox) continue;
+		SizeBox->SetWidthOverride(CatalogButtonWidth);
+		SizeBox->SetHeightOverride(CatalogButtonHeight);
+		SizeBox->AddChild(Card);
+
+		if (UUniformGridSlot* GridSlot = GridPanel->AddChildToUniformGrid(SizeBox, i / Columns, i % Columns))
+		{
+			GridSlot->SetHorizontalAlignment(HAlign_Fill);
+			GridSlot->SetVerticalAlignment(VAlign_Fill);
+		}
+	}
+
+	ScrollBox->AddChild(GridPanel);
+	if (bHasSavedOffset)
+	{
+		ScrollBox->SetScrollOffset(SavedScrollOffset);
+	}
+
+	USizeBox* ScrollLimitBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+	if (ScrollLimitBox)
+	{
+		if (CatalogContainerHeight > 0.f)
+		{
+			ScrollLimitBox->SetMaxDesiredHeight(CatalogContainerHeight);
+		}
+		ScrollLimitBox->AddChild(ScrollBox);
+		Catalog_Container->AddChild(ScrollLimitBox);
+	}
+	else
+	{
+		Catalog_Container->AddChild(ScrollBox);
+	}
 }
 
 bool URoomPlannerWidget::IsScreenPositionOverCatalogPanels(const FVector2D& ScreenSpacePosition) const
 {
-	const UWidget* Panels[] = { PanelPlannerObjects.Get(), PanelCabinetSets.Get() };
-	for (const UWidget* Panel : Panels)
-	{
-		if (Panel && Panel->GetCachedGeometry().IsUnderLocation(ScreenSpacePosition))
-		{
-			return true;
-		}
-	}
-	return false;
+	return Catalog_Container && Catalog_Container->GetCachedGeometry().IsUnderLocation(ScreenSpacePosition);
 }
 
 void URoomPlannerWidget::HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition)

@@ -6,6 +6,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Constructor/RoomPlannerTypes.h"
 #include "ColorCatalog/ColorCatalogTypes.h"
+#include "Widgets/Layout/SScaleBox.h"
 #include "RoomPlannerWidget.generated.h"
 
 class ARoomPlannerManager;
@@ -220,9 +221,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
 	bool DropCabinetSetUnderCursor(FName ProductID) { return DropCatalogItemUnderCursor(EPlannerPlacementKind::CabinetSet, ProductID.ToString()); }
 
-	// ── Catalog sections (DT_PlannerObjects / DT_FurnitureCatalog) ─────────
+	// ── Catalog: one content area, tabs «Интерьер» (DT_PlannerObjects) / «Тумбы» (DT_FurnitureCatalog) ──
 
-	/** Rebuilds both catalog panels from the DataTables (called automatically on construct). */
+	/** Rebuilds the catalog content area for the active tab (called on construct and on every tab switch). */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
 	void RefreshCatalogPanels();
 
@@ -230,18 +231,97 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Objects")
 	TSubclassOf<UPlannerCatalogItemWidget> CatalogItemWidgetClass;
 
-	/** Container filled with DT_PlannerObjects cards (WrapBox recommended). */
+	/** THE common catalog content area (same role as Size_Container in WBP_PreviewWindow). C++ builds a scrollable grid of cards inside it. */
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
-	TObjectPtr<UPanelWidget> PanelPlannerObjects;
+	TObjectPtr<UPanelWidget> Catalog_Container;
 
-	/** Container filled with DT_FurnitureCatalog cards (WrapBox recommended). */
+	/** Optional container of the two tab buttons (hidden in 3D together with the content area). */
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
-	TObjectPtr<UPanelWidget> PanelCabinetSets;
+	TObjectPtr<UWidget> CatalogTabBar;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnCatalogInterior;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnCatalogCabinets;
+
+	// ── Root-level styling, same pattern as WBP_PreviewWindow's "UI Sizing - Size" (ConfiguratorMainWidget) ──
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	EPlannerPlacementKind DefaultCatalogTab = EPlannerPlacementKind::Object;
+
+	/** Tab button colours — same semantics and defaults as the RAL / NCS selector (UColorCatalogWidget). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	FLinearColor ActiveTabColor = FLinearColor(0.04f, 0.52f, 1.0f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	FLinearColor InactiveTabColor = FLinearColor(0.07f, 0.11f, 0.18f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	float CatalogButtonWidth = 100.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	float CatalogButtonHeight = 110.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	FMargin CatalogButtonPadding = FMargin(4.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	TEnumAsByte<EStretch::Type> CatalogImageStretch = EStretch::ScaleToFit;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	float CatalogGridSlotPadding = 5.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	int32 CatalogColumns = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	float CatalogContainerHeight = 255.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	FSlateColor CatalogButtonNormalColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.05f));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	FSlateColor CatalogButtonHoveredColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.15f));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	FSlateColor CatalogButtonPressedColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.25f));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	FSlateColor CatalogTextColor = FSlateColor(FLinearColor::White);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	FSlateFontInfo CatalogTextFont;
+
+	/** Switches the catalog content (Object = «Интерьер», CabinetSet = «Тумбы») and the tab button styles. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
+	void SetActiveCatalogTab(EPlannerPlacementKind Tab);
+
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Objects")
+	EPlannerPlacementKind GetActiveCatalogTab() const { return ActiveCatalogTab; }
+
+	/** Shows / hides the tab bar and content area for the current view mode (2D only), then updates the separators. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
+	void ApplyCatalogSectionVisibility();
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
+	void UpdateCatalogTabStyles();
+
+	/**
+	 * Global separator rule for every panel that contains Image_line* widgets. Every run of children between
+	 * two consecutive lines (plus the run above the first and below the last line) is one section. A section
+	 * is visible when any descendant leaf is effectively visible (Collapsed and Hidden both count as not
+	 * visible). Every visible section requires the line directly above and below it; a required line whose
+	 * nearest visible predecessor is another line is dropped, so there is never a doubled or dangling line.
+	 * Runs every tick (cheap) so it also covers visibility changes made anywhere else.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|UI")
+	void UpdateSeparatorLines();
 
 	/** Called by a card when its drag was released without any widget accepting it (plan area). */
 	void HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition);
 
-	/** True when the screen-space point is over one of the catalog panels (a release there is not a placement). */
+	/** True when the screen-space point is over the catalog content area (a release there is not a placement). */
 	bool IsScreenPositionOverCatalogPanels(const FVector2D& ScreenSpacePosition) const;
 
 	/** Rotates the selected object / cabinet set around Z by DeltaYawDeg and commits it. */
@@ -346,6 +426,10 @@ public:
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UTextBlock> TxtLiveLength;
 
+	/** Optional frame around TxtLiveLength; shown only while a wall is being drawn. */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> LiveLengthPanel;
+
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UTextBlock> TxtFloorArea;
 
@@ -379,6 +463,24 @@ public:
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UTextBlock> TxtApplyProperties; // Text inside BtnApplyProperties
 
+	// --- Section containers of the selection block (collapsed together with their content so the section can empty) ---
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> Border_wall_size;
+
+	/** Caption above EditableTxtProp1..3; text follows the selection (wall / door / window). */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UTextBlock> LblWallSize;
+
+	/** Container of the floor-area / perimeter rows; shown only in 2D and only when at least one wall exists. */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> TotalsBox;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> Border_AddDoor;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> Border_AddWindow;
+
 	// --- Creation Tools ---
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UEditableTextBox> EditableTxtOpeningWidth;
@@ -405,6 +507,24 @@ public:
 	/** Container positioned at the selected object's screen position (e.g. a VerticalBox with the TxtSel* blocks). */
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UWidget> SelectionLabelPanel;
+
+	/** First row of the selection section: TxtSelectionTitle (left) + BtnDeleteTool (right). Shown only while something is selected in 2D. */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> SelectionHeaderRow;
+
+	/** Type / name of the current selection (wall, door, window, floor, object or cabinet-set name). */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UTextBlock> TxtSelectionTitle;
+
+	/** Help bar (TxtGuidanceHint + BtnHideHelp). Hidden by BtnHideHelp, shown again by BtnHelp. */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> HorizontalBox_3;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnHelp;
+
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnHideHelp;
 
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UTextBlock> TxtSelectedDims;   // "2.45 м" wall length / "0.90 × 2.10 м" opening / area
@@ -433,6 +553,14 @@ public:
 
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UButton> BtnSwingOutward;
+
+	/** Optional row (caption + swing buttons); follows the swing buttons' visibility so its caption folds with them. */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> SwingRow;
+
+	/** Optional row (caption + rotate buttons); follows the rotate buttons' visibility. */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> RotateRow;
 
 	// --- REQ-13 / REQ-14: finishing controls ---
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
@@ -529,6 +657,22 @@ private:
 	UFUNCTION() void OnRotateLeftClicked();
 	UFUNCTION() void OnRotateRightClicked();
 	UFUNCTION() void OnCancelPlacementClicked();
+	UFUNCTION() void OnCatalogInteriorClicked();
+	UFUNCTION() void OnCatalogCabinetsClicked();
+	UFUNCTION() void OnHelpShowClicked();
+	UFUNCTION() void OnHelpHideClicked();
+
+	/** Wall / door / window / floor / object or cabinet-set display name; empty when nothing is selected. */
+	FString GetSelectionTitleText() const;
+
+	/** True after BtnHideHelp until BtnHelp is pressed again. */
+	bool bHelpBarHidden = false;
+
+	EPlannerPlacementKind ActiveCatalogTab = EPlannerPlacementKind::Object;
+
+	/** Image_line_* widgets found in the tree at construct, grouped by their parent panel. */
+	TArray<TWeakObjectPtr<UWidget>> SeparatorLines;
+	void CollectSeparatorLines();
 
 	UFUNCTION()
 	void OnApplyPropertiesClicked();
