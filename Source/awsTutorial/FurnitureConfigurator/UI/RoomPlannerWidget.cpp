@@ -213,6 +213,7 @@ void URoomPlannerWidget::NativeDestruct()
 		UnbindManagerDelegates();
 		PlannerManager->bPlannerUIOpen = false;
 		PlannerManager->CancelPendingPlacement();
+		PlannerManager->SetPlannerSessionActive(false); // release the exposure override before leaving 3D
 		PlannerManager->SetViewMode(false);
 	}
 
@@ -427,6 +428,7 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 		BindManagerDelegates();
 		if (PlannerManager)
 		{
+			PlannerManager->SetPlannerSessionActive(true); // enables the planner's bounded exposure while open in 3D
 			PlannerManager->SetViewMode(CurrentViewMode == ERoomPlannerViewMode::View2D);
 			UpdateSummaryStatsUI();
 			UpdateViewModeButtonStyles();
@@ -1515,6 +1517,9 @@ void URoomPlannerWidget::BindManagerDelegates()
 	PlannerManager->OnOperationRejected.AddUniqueDynamic(this, &URoomPlannerWidget::HandleOperationRejected);
 	PlannerManager->OnSelectionChanged.AddUniqueDynamic(this, &URoomPlannerWidget::HandleSelectionChanged);
 	PlannerManager->bPlannerUIOpen = true;
+	// The manager binds here (NativeConstruct), not in the tick fallback, so the session flag that drives the
+	// planner's bounded 3D exposure must be raised here as well.
+	PlannerManager->SetPlannerSessionActive(true);
 	bManagerDelegatesBound = true;
 }
 

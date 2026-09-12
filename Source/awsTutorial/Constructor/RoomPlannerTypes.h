@@ -246,6 +246,10 @@ struct FRoomData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	FString CeilingMaterialID = TEXT("DefaultCeiling");
 
+	/** Ceiling plane height (cm) = tallest wall of this room; drives the automatic ceiling lights. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	float CeilingHeightCm = 280.f;
+
 	/** Applied floor finishing (REQ-13). */
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
 	FSurfaceFinish FloorFinish;
