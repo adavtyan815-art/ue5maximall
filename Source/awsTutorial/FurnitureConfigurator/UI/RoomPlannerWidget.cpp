@@ -259,8 +259,8 @@ FReply URoomPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, 
 					}
 					else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Select)
 					{
-						// 1. Wall control point → corner drag (REQ-02)
-						const int32 NodeID = PlannerManager->FindNodeAtWorldPos(GroundPos, 25.f);
+						// 1. Wall control point → corner drag (REQ-02). Ray test: the handle is on the wall top.
+						const int32 NodeID = PlannerManager->FindNodeAtCursorRay(WorldOrigin, WorldDirection, 25.f);
 						if (NodeID != -1 && PlannerManager->StartNodeDrag(NodeID))
 						{
 							bIsWidgetDraggingNode = true;
@@ -287,7 +287,7 @@ FReply URoomPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, 
 					}
 					else if (PlannerManager->ActiveToolMode == EPlannerToolMode::PlaceFurniture)
 					{
-						PC->PlannerPlacePendingAt(GroundPos);
+						PC->PlannerPlacePendingAtCursorRay(WorldOrigin, WorldDirection);
 						UpdateToolModeButtonStyles();
 						return FReply::Handled();
 					}
@@ -341,7 +341,16 @@ FReply URoomPlannerWidget::NativeOnMouseMove(const FGeometry& InGeometry, const 
 					}
 					else if (bIsWidgetDraggingNode)
 					{
-						PlannerManager->UpdateNodeDrag(GroundPos);
+						FVector DragPos = GroundPos;
+						if (AAwsTutorial_PlayerController* DragPC = GetPreviewController())
+						{
+							FVector O, D;
+							if (DragPC->DeprojectMousePositionToWorld(O, D))
+							{
+								PlannerManager->ProjectCursorRayToNodeHandlePlane(PlannerManager->GetDraggingNodeID(), O, D, DragPos);
+							}
+						}
+						PlannerManager->UpdateNodeDrag(DragPos);
 						return FReply::Handled();
 					}
 					else if (!WidgetDraggedObjectID.IsEmpty() && InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton))

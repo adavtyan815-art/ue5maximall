@@ -609,6 +609,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Nodes")
 	int32 FindNodeAtWorldPos(const FVector& WorldPos, float RadiusCm = 25.f) const;
 
+	/** Z of a node's red handle disc: 1 cm above the top of the tallest wall meeting at that node (280 + 1 when none). */
+	float GetNodeHandleZ(int32 NodeID) const;
+
+	/**
+	 * Handle hit test against the cursor RAY: for every node the ray is intersected with that node's own handle
+	 * plane (GetNodeHandleZ) and the XY distance is tested there. This is what makes the visible disc and the
+	 * clickable area identical under the tilted 2D camera; a ground-plane test would be displaced by parallax.
+	 */
+	int32 FindNodeAtCursorRay(const FVector& RayOrigin, const FVector& RayDirection, float RadiusCm = 25.f) const;
+
+	/** Cursor ray → point on NodeID's handle plane, returned with Z = 0 (planner 2D space). False if the ray is parallel. */
+	bool ProjectCursorRayToNodeHandlePlane(int32 NodeID, const FVector& RayOrigin, const FVector& RayDirection, FVector& OutWorldPos) const;
+
+	/** How far outside a wall face (cm) a drop / click still counts as "on that wall" (drag-drop and click-to-place, 2D). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Placement", meta = (ClampMin = "0"))
+	float WallDropSnapToleranceCm = 30.f;
+
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Nodes")
 	bool GetNodePosition(int32 NodeID, FVector2D& OutPosition) const;
 

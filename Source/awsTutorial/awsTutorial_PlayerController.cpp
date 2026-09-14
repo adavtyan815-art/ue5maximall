@@ -342,8 +342,8 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                 {
                     if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
                     {
-                        // 1. Wall control point under the cursor → start a corner drag (REQ-02)
-                        const int32 NodeID = PlannerManager->FindNodeAtWorldPos(GroundPos, 25.f);
+                        // 1. Wall control point under the cursor → start a corner drag (REQ-02). Ray test: the handle is on the wall top.
+                        const int32 NodeID = PlannerManager->FindNodeAtCursorRay(WorldOrigin, WorldDirection, 25.f);
                         if (NodeID != -1 && PlannerManager->StartNodeDrag(NodeID))
                         {
                             bIs2DDraggingNode = true;
@@ -371,7 +371,9 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                     {
                         if (bIs2DDraggingNode)
                         {
-                            PlannerManager->UpdateNodeDrag(GroundPos);
+                            FVector DragPos = GroundPos;
+                            PlannerManager->ProjectCursorRayToNodeHandlePlane(PlannerManager->GetDraggingNodeID(), WorldOrigin, WorldDirection, DragPos);
+                            PlannerManager->UpdateNodeDrag(DragPos);
                         }
                         else if (!Dragged2DObjectID.IsEmpty())
                         {
@@ -424,7 +426,7 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                     // Click-to-place armed by BeginPlaceObject / BeginPlaceCabinetSet (REQ-17 / REQ-18)
                     if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
                     {
-                        PlannerPlacePendingAt(GroundPos);
+                        PlannerPlacePendingAtCursorRay(WorldOrigin, WorldDirection);
                     }
                 }
                 else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Erase)
@@ -2622,6 +2624,28 @@ void AAwsTutorial_PlayerController::Server_LoadPlannerProject_Implementation(con
 	}
 }
 bool AAwsTutorial_PlayerController::Server_LoadPlannerProject_Validate(const FString& SaveRecordJSON) { return true; }
+
+bool AAwsTutorial_PlayerController::PlannerPlacePendingAtCursorRay(const FVector& RayOrigin, const FVector& RayDirection, float YawDeg)
+{
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+	if (!Manager || !Manager->HasPendingPlacement() || FMath::IsNearlyZero(RayDirection.Z))
+	{
+		return false;
+	}
+
+	// Same resolver as drag-and-drop: a click on a wall TOP (displaced from its footprint by the tilted 2D
+	// camera) is resolved in that wall's own plane; otherwise the ground plane (floor / wall footprint).
+	const FPlannerDropInfo Drop = Manager->ResolveDropFromCursorRay2D(RayOrigin, RayDirection);
+	if (!PlannerPlaceResolved(Manager->PendingPlacementKind, Manager->PendingPlacementAssetID, Drop))
+	{
+		return false; // stays armed so the user can click a valid spot
+	}
+
+	Manager->CancelPendingPlacement();
+	Manager->SetToolMode(EPlannerToolMode::Select);
+	UpdateRoomPlannerCameraToolMode(EPlannerToolMode::Select);
+	return true;
+}
 
 bool AAwsTutorial_PlayerController::PlannerPlacePendingAt(const FVector& WorldPos, float YawDeg)
 {

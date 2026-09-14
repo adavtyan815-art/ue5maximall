@@ -163,6 +163,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool PlannerPlacePendingAt(const FVector& WorldPos, float YawDeg = 0.f);
 
+	/** Click-to-place using the cursor RAY (2D): wall tops are tested in their own plane, then the ground. */
+	bool PlannerPlacePendingAtCursorRay(const FVector& RayOrigin, const FVector& RayDirection, float YawDeg = 0.f);
+
 	/** Sends a placement for an already resolved drop; refuses (with a message) when the target is invalid for the item kind. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool PlannerPlaceResolved(EPlannerPlacementKind Kind, const FString& ItemID, const FPlannerDropInfo& Drop);

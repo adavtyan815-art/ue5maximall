@@ -2349,28 +2349,17 @@ void ARoomPlannerManager::TickLocalNodeDrag()
 	const bool bJustReleased = !bLMBDown && bPrevLMBDownForNodeDrag;
 	bPrevLMBDownForNodeDrag = bLMBDown;
 
-	FVector GroundPos = FVector::ZeroVector;
-	bool bHasGround = false;
-	{
-		FVector Origin, Dir;
-		if (LocalPC->DeprojectMousePositionToWorld(Origin, Dir) && !FMath::IsNearlyZero(Dir.Z))
-		{
-			const float T = -Origin.Z / Dir.Z;
-			if (T >= 0.f)
-			{
-				GroundPos = Origin + T * Dir;
-				GroundPos.Z = 0.f;
-				bHasGround = true;
-			}
-		}
-	}
+	// Cursor ray; the handle test and the drag position both use the dragged node's handle plane (wall top),
+	// so the disc stays under the cursor and the clickable area equals the visible disc.
+	FVector RayOrigin = FVector::ZeroVector, RayDir = FVector::ZeroVector;
+	const bool bHasRay = LocalPC->DeprojectMousePositionToWorld(RayOrigin, RayDir) && !FMath::IsNearlyZero(RayDir.Z);
 
 	if (DraggingNodeID == -1)
 	{
 		// Start: LMB pressed this frame over a corner handle (whatever click path is live).
-		if (bJustPressed && bHasGround && !bIsDrawingWall)
+		if (bJustPressed && bHasRay && !bIsDrawingWall)
 		{
-			const int32 NodeID = FindNodeAtWorldPos(GroundPos, 25.f);
+			const int32 NodeID = FindNodeAtCursorRay(RayOrigin, RayDir, 25.f);
 			if (NodeID != -1)
 			{
 				StartNodeDrag(NodeID);
@@ -2381,9 +2370,10 @@ void ARoomPlannerManager::TickLocalNodeDrag()
 
 	if (bLMBDown)
 	{
-		if (bHasGround)
+		FVector DragPos;
+		if (bHasRay && ProjectCursorRayToNodeHandlePlane(DraggingNodeID, RayOrigin, RayDir, DragPos))
 		{
-			UpdateNodeDrag(GroundPos);
+			UpdateNodeDrag(DragPos);
 		}
 	}
 	else if (bJustReleased || !bLMBDown)
@@ -2430,7 +2420,23 @@ int32 ARoomPlannerManager::SelectWallAtWorldPos(const FVector& WorldPos)
 		{
 			return SelectedSegmentID;
 		}
-		const int32 HandleNodeID = FindNodeAtWorldPos(WorldPos, 25.f);
+		// The handle lives on the wall top: test the cursor ray against the handle planes. The ground-XY test
+		// is only a fallback for callers without a local cursor (never the case in-game).
+		int32 HandleNodeID = -1;
+		bool bRayTested = false;
+		if (UWorld* World = GetWorld())
+		{
+			if (APlayerController* LocalPC = World->GetFirstPlayerController())
+			{
+				FVector O, D;
+				if (LocalPC->DeprojectMousePositionToWorld(O, D) && !FMath::IsNearlyZero(D.Z))
+				{
+					HandleNodeID = FindNodeAtCursorRay(O, D, 25.f);
+					bRayTested = true;
+				}
+			}
+		}
+		if (!bRayTested) HandleNodeID = FindNodeAtWorldPos(WorldPos, 25.f);
 		if (HandleNodeID != -1)
 		{
 			StartNodeDrag(HandleNodeID);
@@ -3118,7 +3124,7 @@ FPlannerDropInfo ARoomPlannerManager::ResolveDropAtWorldPos2D(const FVector& Wor
 	Info.WorldLocation = FVector(WorldPos.X, WorldPos.Y, 0.f);
 	const FVector2D P(WorldPos.X, WorldPos.Y);
 
-	// 1. Wall footprint (± 15 cm tolerance outside the faces)
+	// 1. Wall footprint (± WallDropSnapToleranceCm outside the faces)
 	int32 BestSeg = -1;
 	float BestPerp = TNumericLimits<float>::Max();
 	float BestAlong = 0.f;
@@ -3131,7 +3137,7 @@ FPlannerDropInfo ARoomPlannerManager::ResolveDropAtWorldPos2D(const FVector& Wor
 		if (Along < 0.f || Along > Len) continue;
 		const float Perp = FVector2D::DotProduct(P - P1, NLeft);
 		const float AbsPerp = FMath::Abs(Perp);
-		if (AbsPerp <= Half + 15.f && AbsPerp < BestPerp)
+		if (AbsPerp <= Half + WallDropSnapToleranceCm && AbsPerp < BestPerp)
 		{
 			BestPerp = AbsPerp;
 			BestSeg = Pair.Key;
@@ -3186,7 +3192,7 @@ FPlannerDropInfo ARoomPlannerManager::ResolveDropFromCursorRay2D(const FVector& 
 		if (Along < 0.f || Along > Len) continue;
 		const float Perp = FVector2D::DotProduct(P - P1, NLeft);
 		const float AbsPerp = FMath::Abs(Perp);
-		if (AbsPerp <= Half + 15.f && AbsPerp < BestPerp)
+		if (AbsPerp <= Half + WallDropSnapToleranceCm && AbsPerp < BestPerp)
 		{
 			BestPerp = AbsPerp;
 			BestSeg = Pair.Key;
@@ -3295,31 +3301,47 @@ void ARoomPlannerManager::MeasureAttachmentDepth(AActor* Actor, FWallAttachment&
 	const FVector2D N = Attachment.bLeftSide ? NLeft : -NLeft;
 	const FVector2D Face = P1 + Dir * FMath::Clamp(Attachment.DistanceAlongWallCm, 0.f, Len) + N * Half;
 
-	// Bounds of the VISIBLE meshes only. AActor::GetActorBounds would also include trigger / proximity
-	// shapes (BP_Booth carries one), which pushed cabinet sets metres away from the wall.
-	FBox MeshBox(ForceInit);
+	// Back face of the object measured ALONG THE WALL NORMAL from the oriented mesh bounds: every visible
+	// static mesh's local bounding box is taken through its world transform (the actor already carries the
+	// wall-aligned rotation) and each corner is projected onto N; the smallest projection is the object's
+	// rearmost point in the wall's own frame. This is exact for any wall angle.
+	//
+	// The previous code used Comp->Bounds.GetBox(), the world-space AXIS-ALIGNED box of the rotated mesh, and
+	// projected that box's X/Y extents onto N. For axis-aligned walls the AABB equals the real footprint, so it
+	// was exact; for a wall at angle θ the AABB of a rotated w×d box grows to (w·cosθ + d·sinθ) × (w·sinθ + d·cosθ)
+	// and its support along N over-estimates the true half depth, pushing the object away from the wall by the
+	// difference (largest at 45°). Only visible meshes are used: AActor::GetActorBounds would also include
+	// trigger / proximity shapes (BP_Booth carries one), which pushed cabinet sets metres away from the wall.
+	float BackAlongN = TNumericLimits<float>::Max();
+	bool bAnyMesh = false;
 	TArray<UStaticMeshComponent*> MeshComps;
 	Actor->GetComponents<UStaticMeshComponent>(MeshComps);
 	for (UStaticMeshComponent* Comp : MeshComps)
 	{
-		if (Comp && Comp->GetStaticMesh() && Comp->IsVisible())
+		if (!Comp || !Comp->GetStaticMesh() || !Comp->IsVisible()) continue;
+		const FBox Local = Comp->GetStaticMesh()->GetBoundingBox();
+		if (!Local.IsValid) continue;
+		const FTransform& TM = Comp->GetComponentTransform();
+		for (int32 Corner = 0; Corner < 8; ++Corner)
 		{
-			MeshBox += Comp->Bounds.GetBox();
+			const FVector LocalCorner(
+				(Corner & 1) ? Local.Max.X : Local.Min.X,
+				(Corner & 2) ? Local.Max.Y : Local.Min.Y,
+				(Corner & 4) ? Local.Max.Z : Local.Min.Z);
+			const FVector World = TM.TransformPosition(LocalCorner);
+			BackAlongN = FMath::Min(BackAlongN, FVector2D::DotProduct(FVector2D(World.X, World.Y), N));
+			bAnyMesh = true;
 		}
 	}
-	if (!MeshBox.IsValid || MeshBox.GetExtent().IsNearlyZero())
+	if (!bAnyMesh)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s has no visible mesh bounds yet; depth offset left at 0."), *Actor->GetName());
 		return;
 	}
 
-	const FVector Origin = MeshBox.GetCenter();
-	const FVector Extent = MeshBox.GetExtent();
-	const float ExtentAlongN = FMath::Abs(Extent.X * N.X) + FMath::Abs(Extent.Y * N.Y);
-	const float BackAlongN = FVector2D::DotProduct(FVector2D(Origin.X, Origin.Y), N) - ExtentAlongN;
 	const float FaceAlongN = FVector2D::DotProduct(Face, N);
-	Attachment.DepthOffsetCm = FaceAlongN - BackAlongN; // push out so the back touches the face
-	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s mesh extent (%.0f, %.0f, %.0f) → depth offset %.1f cm"), *Actor->GetName(), Extent.X, Extent.Y, Extent.Z, Attachment.DepthOffsetCm);
+	Attachment.DepthOffsetCm = FaceAlongN - BackAlongN; // push out along N so the rearmost point touches the face
+	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s rear point along wall normal %.1f, face %.1f → depth offset %.1f cm"), *Actor->GetName(), BackAlongN, FaceAlongN, Attachment.DepthOffsetCm);
 }
 
 bool ARoomPlannerManager::SlideAttachmentTo(FWallAttachment& Attachment, const FVector& RequestedLocation) const
@@ -3890,6 +3912,50 @@ int32 ARoomPlannerManager::FindNodeAtWorldPos(const FVector& WorldPos, float Rad
 	return Best;
 }
 
+float ARoomPlannerManager::GetNodeHandleZ(int32 NodeID) const
+{
+	float MaxHeight = 0.f;
+	if (const FWallNode* Node = Nodes.Find(NodeID))
+	{
+		for (int32 SegID : Node->ConnectedSegmentIDs)
+		{
+			if (const FWallSegment* Seg = WallSegments.Find(SegID)) MaxHeight = FMath::Max(MaxHeight, Seg->Height);
+		}
+	}
+	if (MaxHeight <= 0.f) MaxHeight = 280.f;
+	return MaxHeight + 1.f; // just above the wall top so the disc is never z-fighting with it
+}
+
+int32 ARoomPlannerManager::FindNodeAtCursorRay(const FVector& RayOrigin, const FVector& RayDirection, float RadiusCm) const
+{
+	if (FMath::IsNearlyZero(RayDirection.Z)) return -1;
+	int32 Best = -1;
+	float BestDistSq = RadiusCm * RadiusCm;
+	for (const auto& Pair : Nodes)
+	{
+		const float T = (GetNodeHandleZ(Pair.Key) - RayOrigin.Z) / RayDirection.Z;
+		if (T < 0.f) continue;
+		const FVector OnPlane = RayOrigin + RayDirection * T;
+		const float D = FVector2D::DistSquared(FVector2D(OnPlane.X, OnPlane.Y), Pair.Value.Position);
+		if (D <= BestDistSq)
+		{
+			BestDistSq = D;
+			Best = Pair.Key;
+		}
+	}
+	return Best;
+}
+
+bool ARoomPlannerManager::ProjectCursorRayToNodeHandlePlane(int32 NodeID, const FVector& RayOrigin, const FVector& RayDirection, FVector& OutWorldPos) const
+{
+	if (FMath::IsNearlyZero(RayDirection.Z)) return false;
+	const float T = (GetNodeHandleZ(NodeID) - RayOrigin.Z) / RayDirection.Z;
+	if (T < 0.f) return false;
+	const FVector OnPlane = RayOrigin + RayDirection * T;
+	OutWorldPos = FVector(OnPlane.X, OnPlane.Y, 0.f);
+	return true;
+}
+
 bool ARoomPlannerManager::GetNodePosition(int32 NodeID, FVector2D& OutPosition) const
 {
 	if (const FWallNode* Node = Nodes.Find(NodeID))
@@ -3988,15 +4054,16 @@ void ARoomPlannerManager::RefreshNodeHandles()
 	for (const auto& Pair : Nodes)
 	{
 		const bool bActive = (Pair.Key == DraggingNodeID);
-		// Floor-level handle: drawn just above the floor slab and wider than the thickest wall at the node,
-		// so a ring stays visible around the wall footprint from the top-down camera.
+		// Handle on the wall TOP (see GetNodeHandleZ) and wider than the thickest wall at the node, so the disc
+		// sits clearly above the wall and a ring stays visible around its footprint. Hit testing uses the same
+		// plane (FindNodeAtCursorRay), so what is seen is exactly what is dragged.
 		float MaxHalfThickness = 10.f;
 		for (int32 SegID : Pair.Value.ConnectedSegmentIDs)
 		{
 			if (const FWallSegment* Seg = WallSegments.Find(SegID)) MaxHalfThickness = FMath::Max(MaxHalfThickness, Seg->Thickness * 0.5f);
 		}
 		const float Radius = FMath::Max(bActive ? 16.f : 12.f, MaxHalfThickness + (bActive ? 10.f : 6.f));
-		const float Z = 2.f;
+		const float Z = GetNodeHandleZ(Pair.Key);
 
 		TArray<FVector> V; TArray<int32> T; TArray<FVector> N; TArray<FVector2D> UV;
 		const FVector2D C = Pair.Value.Position;
