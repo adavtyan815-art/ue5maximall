@@ -35,9 +35,13 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "PlannerObject")
 	FPlacedFurnitureData Data;
 
-	/** Applies mesh, transform, scale and colour override from Data. */
+	/**
+	 * Applies mesh, transform, scale and colour override from Data. MaterialOverrides (DT_PlannerObjects row)
+	 * are applied to the freshly set mesh, per slot index, before the "original" materials are captured, so a
+	 * finish colour can still be applied over them and cleared back to them.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "PlannerObject")
-	void ApplyData(const FPlacedFurnitureData& InData, UStaticMesh* ResolvedMesh, UMaterialInterface* ColorOverrideMaterial);
+	void ApplyData(const FPlacedFurnitureData& InData, UStaticMesh* ResolvedMesh, UMaterialInterface* ColorOverrideMaterial, const TArray<FPlannerMaterialOverride>& MaterialOverrides);
 
 	/** Enables / disables the selection outline (custom depth stencil). */
 	UFUNCTION(BlueprintCallable, Category = "PlannerObject")

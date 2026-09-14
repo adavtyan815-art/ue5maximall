@@ -2224,7 +2224,15 @@ void AAwsTutorial_PlayerController::Server_BuildPreset4x4mRoom_Implementation()
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->BuildPreset4x4mRoom();
+		// Centre the preset on the controlled pawn's current world X/Y (server-authoritative position) instead
+		// of the world origin. Without a pawn the previous origin behaviour is kept.
+		FVector2D CenterCm = FVector2D::ZeroVector;
+		if (const APawn* ControlledPawn = GetPawn())
+		{
+			const FVector PawnLoc = ControlledPawn->GetActorLocation();
+			CenterCm = FVector2D(PawnLoc.X, PawnLoc.Y);
+		}
+		Manager->BuildPreset4x4mRoom(CenterCm);
 		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }

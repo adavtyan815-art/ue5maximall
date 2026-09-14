@@ -450,7 +450,14 @@ public:
 	FVector CurrentHoverSnapWorldPos;
 
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
-	bool bHasActiveHoverSnap;
+	bool bHasActiveHoverSnap = false;
+
+	/** Frame of the last CheckHoverSnapHint call; a hover snap is only "fresh" while that call keeps coming every frame. */
+	uint64 HoverSnapFrame = 0;
+
+	/** True while the Draw Wall hover preview is snapped to a wall endpoint AND was updated this frame or last. */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner")
+	bool HasFreshHoverSnap() const { return bHasActiveHoverSnap && (GFrameCounter - HoverSnapFrame) <= 2; }
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "RoomPlanner")
 	bool IsWallDrawingActive() const { return bIsDrawingWall; }
@@ -515,8 +522,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool AddWindowToWall(int32 SegmentID, float WidthMeters = 1.2f, float HeightMeters = 1.2f, float SillHeightMeters = 0.9f, float DistFromStartCm = -1.f);
 
+	/** Builds the 4 × 4 m preset room centred on CenterCm (world X/Y, cm). Geometry, size and Z logic are unchanged. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
-	void BuildPreset4x4mRoom();
+	void BuildPreset4x4mRoom(FVector2D CenterCm);
 
 	/** Free numeric sizing (REQ-08). Values are validated against the wall (REQ-09): the opening must fit, must not overlap a neighbour, and sill+height must not exceed the wall height. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
@@ -963,6 +971,9 @@ private:
 	UDataTable* ResolveCabinetSetCatalog() const;
 	UClass* ResolveCabinetSetActorClass() const;
 	UStaticMesh* ResolveObjectMesh(const FString& AssetID) const;
+
+	/** DT_PlannerObjects row → Material Overrides (empty when the row has none or is not found). */
+	TArray<FPlannerMaterialOverride> ResolveObjectMaterialOverrides(const FString& AssetID) const;
 
 	// Objects / cabinet sets
 	void RebuildPlacedObjectActors();

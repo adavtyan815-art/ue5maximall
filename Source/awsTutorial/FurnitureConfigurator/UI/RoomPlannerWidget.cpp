@@ -423,6 +423,14 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	// manager-driven drawing paths (the label must fold the moment drawing ends).
 	UpdateMouseCursorPosition();
 
+	// The snap marker may only exist while the Draw Wall hover preview is being refreshed every frame. Any other
+	// state (tool switched, cursor over the UI, drag released, drawing started) leaves no marker behind.
+	if (SnapIndicator && SnapIndicator->GetVisibility() != ESlateVisibility::Collapsed
+		&& (!PlannerManager || !PlannerManager->HasFreshHoverSnap() || PlannerManager->IsNodeDragActive() || PlannerManager->IsWallDrawingActive()))
+	{
+		SnapIndicator->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
 	if (!PlannerManager && GetWorld())
 	{
 		BindManagerDelegates();
@@ -1393,7 +1401,10 @@ void URoomPlannerWidget::HandleWallDragProgress(float LengthMeters, FVector Midp
 
 	if (SnapIndicator)
 	{
-		bool bShowSnapIndicator = bIsSnapped && PlannerManager && !PlannerManager->IsWallDrawingActive();
+		// The snap marker is the Draw Wall hover preview (cursor snapped to a wall endpoint). It must never follow
+		// a corner drag: UpdateNodeDrag reports the dragged WALL's midpoint with the node's snap flag, which used to
+		// park this marker in the middle of the wall whenever the last drag update was snapped.
+		bool bShowSnapIndicator = bIsSnapped && PlannerManager && !PlannerManager->IsWallDrawingActive() && !PlannerManager->IsNodeDragActive();
 		SnapIndicator->SetVisibility(bShowSnapIndicator ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 		if (bShowSnapIndicator)
 		{

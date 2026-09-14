@@ -22,7 +22,7 @@ APlannerPlacedObjectActor::APlannerPlacedObjectActor()
 	MeshComponent->SetCastShadow(true);
 }
 
-void APlannerPlacedObjectActor::ApplyData(const FPlacedFurnitureData& InData, UStaticMesh* ResolvedMesh, UMaterialInterface* ColorOverrideMaterial)
+void APlannerPlacedObjectActor::ApplyData(const FPlacedFurnitureData& InData, UStaticMesh* ResolvedMesh, UMaterialInterface* ColorOverrideMaterial, const TArray<FPlannerMaterialOverride>& MaterialOverrides)
 {
 	const bool bMeshChanged = (MeshComponent && MeshComponent->GetStaticMesh() != ResolvedMesh);
 	Data = InData;
@@ -36,7 +36,30 @@ void APlannerPlacedObjectActor::ApplyData(const FPlacedFurnitureData& InData, US
 		OriginalMaterials.Reset();
 		if (ResolvedMesh)
 		{
+			// DT_PlannerObjects → Material Overrides: replace the listed slots on the freshly set mesh.
+			// Bad slot indices and materials that fail to load are skipped so spawning never breaks.
 			const int32 NumMats = MeshComponent->GetNumMaterials();
+			for (const FPlannerMaterialOverride& Override : MaterialOverrides)
+			{
+				if (Override.SlotIndex < 0 || Override.SlotIndex >= NumMats)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Object %s: material override slot %d ignored (mesh %s has %d slots)."),
+						*Data.AssetID, Override.SlotIndex, *ResolvedMesh->GetName(), NumMats);
+					continue;
+				}
+				if (Override.Material.IsNull()) continue;
+				if (UMaterialInterface* Mat = Override.Material.LoadSynchronous())
+				{
+					MeshComponent->SetMaterial(Override.SlotIndex, Mat);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Object %s: material override for slot %d could not load '%s'."),
+						*Data.AssetID, Override.SlotIndex, *Override.Material.ToString());
+				}
+			}
+
+			// Captured AFTER the overrides: clearing a finish colour restores the overridden materials.
 			for (int32 i = 0; i < NumMats; ++i)
 			{
 				OriginalMaterials.Add(MeshComponent->GetMaterial(i));

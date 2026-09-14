@@ -7,6 +7,8 @@
 #include "Engine/DataTable.h"
 #include "RoomPlannerTypes.generated.h"
 
+class UMaterialInterface;
+
 UENUM(BlueprintType)
 enum class EPlannerToolMode : uint8
 {
@@ -471,6 +473,21 @@ struct FPlannerTileRow : public FTableRowBase
 };
 
 /** Row of the interior object catalog DataTable (DT_PlannerObjects). */
+/** One material slot replacement for a planner object mesh (DT_PlannerObjects → Material Overrides). */
+USTRUCT(BlueprintType)
+struct FPlannerMaterialOverride
+{
+	GENERATED_BODY()
+
+	/** Material slot on the row's Mesh (0-based, as listed on the static mesh). Out-of-range indices are ignored. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Material Override", meta = (ClampMin = "0"))
+	int32 SlotIndex = 0;
+
+	/** Material assigned to that slot when the object is spawned. Empty = slot keeps the mesh's own material. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Material Override")
+	TSoftObjectPtr<UMaterialInterface> Material;
+};
+
 USTRUCT(BlueprintType)
 struct FPlannerObjectRow : public FTableRowBase
 {
@@ -494,6 +511,13 @@ struct FPlannerObjectRow : public FTableRowBase
 	/** If true the RAL/NCS colour catalog may recolour this object. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Object")
 	bool bAllowColorCatalog = true;
+
+	/**
+	 * Per-slot material replacements applied to Mesh when the object is spawned (empty = mesh materials as
+	 * authored). Each element: Slot Index + Material. Invalid slots or unloadable materials are skipped.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Object")
+	TArray<FPlannerMaterialOverride> MaterialOverrides;
 };
 
 /** One static-mesh part of a cabinet set: mesh + relative transform to its parent component (see FCabinetSetLayoutRow). */

@@ -2116,6 +2116,7 @@ void ARoomPlannerManager::CheckHoverSnapHint(const FVector& WorldPos)
 
 	bHasActiveHoverSnap = bSnapped;
 	CurrentHoverSnapWorldPos = SnapPointWorld;
+	HoverSnapFrame = GFrameCounter;
 	OnInteractiveWallDragProgress.Broadcast(0.f, SnapPointWorld, 0.f, bSnapped);
 }
 
@@ -2311,6 +2312,10 @@ void ARoomPlannerManager::SetToolMode(EPlannerToolMode NewToolMode)
 	if (bChanged && DraggingNodeID != -1)
 	{
 		DraggingNodeID = -1;
+	}
+	if (bChanged)
+	{
+		bHasActiveHoverSnap = false; // the Draw Wall hover preview belongs to that tool only
 	}
 	RefreshNodeHandles();
 }
@@ -2815,14 +2820,15 @@ bool ARoomPlannerManager::AddWindowToSelectedWall(float WidthMeters, float Heigh
 	return AddWindowToWall(SelectedSegmentID, WidthMeters, HeightMeters, SillHeightMeters, -1.f);
 }
 
-void ARoomPlannerManager::BuildPreset4x4mRoom()
+void ARoomPlannerManager::BuildPreset4x4mRoom(FVector2D CenterCm)
 {
 	ClearLayout();
 
-	int32 N1 = AddNode(FVector2D(-200.f, -200.f));
-	int32 N2 = AddNode(FVector2D(200.f, -200.f));
-	int32 N3 = AddNode(FVector2D(200.f, 200.f));
-	int32 N4 = AddNode(FVector2D(-200.f, 200.f));
+	// Same 4 × 4 m square as before, offset by the requested centre (previously fixed at the world origin).
+	int32 N1 = AddNode(CenterCm + FVector2D(-200.f, -200.f));
+	int32 N2 = AddNode(CenterCm + FVector2D(200.f, -200.f));
+	int32 N3 = AddNode(CenterCm + FVector2D(200.f, 200.f));
+	int32 N4 = AddNode(CenterCm + FVector2D(-200.f, 200.f));
 
 	AddWall(N1, N2);
 	AddWall(N2, N3);
@@ -5120,6 +5126,19 @@ UStaticMesh* ARoomPlannerManager::ResolveObjectMesh(const FString& AssetID) cons
 	return LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
 }
 
+TArray<FPlannerMaterialOverride> ARoomPlannerManager::ResolveObjectMaterialOverrides(const FString& AssetID) const
+{
+	if (AssetID.IsEmpty()) return {};
+	if (UDataTable* Catalog = ResolveObjectCatalog())
+	{
+		if (const FPlannerObjectRow* Row = Catalog->FindRow<FPlannerObjectRow>(FName(*AssetID), TEXT("ResolveObjectMaterialOverrides"), false))
+		{
+			return Row->MaterialOverrides;
+		}
+	}
+	return {};
+}
+
 TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableObjects() const
 {
 	TArray<FPlannerCatalogEntry> Out;
@@ -5299,7 +5318,7 @@ void ARoomPlannerManager::ApplyPlacedObjectActor(const FPlacedFurnitureData& Dat
 	{
 		UStaticMesh* Mesh = ResolveObjectMesh(Data.AssetID);
 		UMaterialInterface* ColorMat = Data.Finish.IsSet() ? ResolvePaintBaseMaterial() : nullptr;
-		Actor->ApplyData(Data, Mesh, ColorMat);
+		Actor->ApplyData(Data, Mesh, ColorMat, ResolveObjectMaterialOverrides(Data.AssetID));
 		Actor->SetSelectedHighlight(Data.InstanceID == SelectedObjectID);
 		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Object %s (%s) → actor %s, mesh %s, at (%.0f, %.0f, %.0f)%s"),
 			*Data.InstanceID, *Data.AssetID, *Actor->GetName(), Mesh ? *Mesh->GetName() : TEXT("NONE"),
@@ -5341,6 +5360,7 @@ TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableCabinetSets() cons
 	{
 		const FFurnitureProductRow* Row = reinterpret_cast<const FFurnitureProductRow*>(Pair.Value);
 		if (!Row) continue;
+		if (!Row->ShowInConstructor) continue; // DT_FurnitureCatalog → "Show In Constructor" unticked: hidden from the catalog
 		FPlannerCatalogEntry E;
 		E.ID = Pair.Key.ToString();
 		E.DisplayName = FText::FromName(Pair.Key);
@@ -5349,6 +5369,12 @@ TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableCabinetSets() cons
 			const FFurnitureColorOption& First = Row->CabinetOptions.Colors[0];
 			if (!First.ProductName.IsEmpty()) E.DisplayName = First.ProductName;
 			E.Thumbnail = First.Thumbnail;
+		}
+		// Row-level preview image (DT_FurnitureCatalog → "Constructor Preview Image") wins; otherwise the
+		// first colour option's Thumbnail as before; otherwise the card draws its neutral placeholder.
+		if (!Row->ConstructorPreviewImage.IsNull())
+		{
+			E.Thumbnail = Row->ConstructorPreviewImage;
 		}
 		E.Category = TEXT("CabinetSet");
 		Out.Add(E);

@@ -645,6 +645,26 @@ struct FFurnitureProductRow : public FTableRowBase
 {
     GENERATED_BODY()
 
+    // ── Constructor (Room Planner) catalog ────────────────────────────────
+
+    /**
+     * Whether this furniture item is offered in the Constructor catalog («Тумбы» tab).
+     * false = the row is completely hidden there. Display only: it does not affect the showroom
+     * configurator, spawning, meshes, materials or cabinet options. Defaults to true so existing rows
+     * keep appearing without any manual change.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Constructor", meta = (DisplayName = "Show In Constructor"))
+    bool ShowInConstructor = true;
+
+    /**
+     * Preview image shown for this furniture item in the Constructor catalog («Тумбы» tab).
+     * Optional: when empty, the card falls back to the first cabinet colour option's Thumbnail,
+     * and to the neutral placeholder if that is empty too. Used for display only — it has no
+     * effect on meshes, spawning, materials or configuration.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product | Constructor", meta = (DisplayName = "Constructor Preview Image"))
+    TSoftObjectPtr<UTexture2D> ConstructorPreviewImage;
+
     // ── Cabinet Body ──────────────────────────────────────────────────────
 
     /** Main cabinet body options. */
