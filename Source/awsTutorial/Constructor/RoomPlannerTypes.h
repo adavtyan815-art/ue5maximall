@@ -52,6 +52,15 @@ enum class EOpeningSwingDirection : uint8
 	Outward  UMETA(DisplayName = "Outward (opens out of the room)")
 };
 
+/** Look of the unlit exterior view seen through the planner's doors and windows in 3D. */
+UENUM(BlueprintType)
+enum class EPlannerExteriorLook : uint8
+{
+	Day       UMETA(DisplayName = "Day"),
+	Overcast  UMETA(DisplayName = "Overcast"),
+	Evening   UMETA(DisplayName = "Evening")
+};
+
 /** Kind of finishing applied to a wall or floor surface. */
 UENUM(BlueprintType)
 enum class ESurfaceFinishType : uint8
@@ -180,6 +189,10 @@ struct FWallOpening
 	/** Opens into the room or out of it (REQ-07). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	EOpeningSwingDirection SwingDirection = EOpeningSwingDirection::Inward;
+
+	/** Look of the door / window / archway (PlannerOpeningStyles ID, serialized as "style"). None = the type's default style. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	FName Style;
 };
 
 USTRUCT(BlueprintType)

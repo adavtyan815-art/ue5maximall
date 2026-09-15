@@ -529,6 +529,11 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
             {
                 bHoveringShowroom = true;
             }
+            else if (PlannerManager && PlannerManager->bPlannerUIOpen && !PlannerManager->Is2DModeActive()
+                && ARoomPlannerManager::IsOpeningLeafComponent(HitComp))
+            {
+                bHoveringShowroom = true; // planner 3D: door / window leaves are clickable (open / close)
+            }
         }
     }
 
@@ -2386,6 +2391,17 @@ void AAwsTutorial_PlayerController::Server_SetOpeningSwing_Implementation(int32 
 }
 bool AAwsTutorial_PlayerController::Server_SetOpeningSwing_Validate(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide Side, EOpeningSwingDirection Direction) { return true; }
 
+void AAwsTutorial_PlayerController::Server_SetOpeningStyle_Implementation(int32 SegmentID, int32 OpeningIndex, FName StyleID)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetOpeningStyle(SegmentID, OpeningIndex, StyleID);
+	}
+}
+
+// Always accepted: an unknown style (e.g. from an older client) is refused by the manager instead of disconnecting the player.
+bool AAwsTutorial_PlayerController::Server_SetOpeningStyle_Validate(int32 SegmentID, int32 OpeningIndex, FName StyleID) { return true; }
+
 void AAwsTutorial_PlayerController::Server_SetWallFinish_Implementation(int32 SegmentID, FSurfaceFinish Finish)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
@@ -2687,6 +2703,11 @@ EPlannerSelectionKind AAwsTutorial_PlayerController::PlannerPickUnderCursor()
 	FHitResult Hit;
 	if (GetHitResultUnderCursor(ECC_Visibility, true, Hit) && Hit.GetActor())
 	{
+		// 3D: a click on a door / window leaf opens or closes it (local view state) instead of selecting.
+		if (Manager->TryToggleOpeningLeafFromHit(Hit))
+		{
+			return EPlannerSelectionKind::None;
+		}
 		return Manager->SelectSurfaceFromHit(Hit);
 	}
 	Manager->ClearAllSelection();

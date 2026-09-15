@@ -16,6 +16,7 @@ class APlannerPlacedObjectActor;
 class FJsonObject;
 class ULocalLightComponent;
 class UPostProcessComponent;
+class UTexture2D;
 struct FHitResult;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRoomPlannerUpdated, const FString&, JSONState);
@@ -242,6 +243,56 @@ public:
 	/** Material for door / window leaves. Falls back to DefaultWallMaterial. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Materials")
 	TObjectPtr<UMaterialInterface> LeafMaterial;
+
+	// ── Doors & windows: materials ─────────────────────────────────────────────
+
+	/** Parent of painted door / window parts (frames, leaves, thresholds); vector parameter "BaseColor" / "Color". Empty = planner paint material. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Openings")
+	TObjectPtr<UMaterialInterface> OpeningPaintMaterial;
+
+	/** Clear glass of windows and glazed doors. Empty = /Game/NewDesign/scena/Materials/glass_2 (thin translucent). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Openings")
+	TObjectPtr<UMaterialInterface> OpeningGlassMaterial;
+
+	/** Frosted glass. Empty = /Game/NewDesign/scena/Materials/sid_glass_whitte (thin translucent), else clear glass. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Openings")
+	TObjectPtr<UMaterialInterface> OpeningFrostedGlassMaterial;
+
+	/** Handles and hinges; vector parameter "Color", scalar "Roughness". Empty = /Engine/BasicShapes/BasicShapeMaterial. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Openings")
+	TObjectPtr<UMaterialInterface> OpeningMetalMaterial;
+
+	/** Material of one piece of door / window dressing, cached per role and colour. Null when unavailable (e.g. no glass material). */
+	UMaterialInterface* GetOpeningMaterial(EPlannerOpeningMaterial Kind, const FLinearColor& Color);
+
+	/** Near-black, fully rough material of the 2D plan symbols (swing arcs). */
+	UMaterialInterface* GetPlanSymbolMaterial();
+
+	// ── Exterior view (3D) ─────────────────────────────────────────────────────
+
+	/**
+	 * While the planner is open in 3D, an unlit sky + ground enclosure around the layout is shown behind the doors and windows
+	 * (otherwise they show the level lit several stops below the planner exposure, i.e. black). It is not a light: it casts no
+	 * shadow, contributes no GI, is invisible to ray tracing and reflection captures, and its brightness is absolute cd/m²
+	 * matched to the planner's fixed exposure.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Exterior")
+	bool bShowExteriorBackdrop = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Exterior")
+	EPlannerExteriorLook ExteriorLook = EPlannerExteriorLook::Day;
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Exterior")
+	void SetExteriorLook(EPlannerExteriorLook NewLook);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Exterior")
+	void SetExteriorBackdropEnabled(bool bEnabled);
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoomPlanner|Exterior")
+	TObjectPtr<UProceduralMeshComponent> ExteriorSkyMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoomPlanner|Exterior")
+	TObjectPtr<UProceduralMeshComponent> ExteriorGroundMesh;
 
 	/** Tile catalog (rows: FPlannerTileRow). Falls back to /Game/DT/DT_PlannerTiles. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Catalogs")
@@ -487,6 +538,42 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Openings")
 	bool GetOpeningSwing(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide& OutSide, EOpeningSwingDirection& OutDirection) const;
+
+	// ── Door / window / archway styles ──────────────────────────────────────
+
+	/** Sets an opening's look (PlannerOpeningStyles ID). Refused when the style does not exist or belongs to another opening type. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Openings")
+	bool SetOpeningStyle(int32 SegmentID, int32 OpeningIndex, FName StyleID);
+
+	/** Effective style of an opening (its type's default when none is stored). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Openings")
+	bool GetOpeningStyle(int32 SegmentID, int32 OpeningIndex, FName& OutStyleID) const;
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Openings")
+	bool GetOpeningType(int32 SegmentID, int32 OpeningIndex, EOpeningType& OutType) const;
+
+	/** Styles available for an opening type: ID = style ID, DisplayName = UI label, Color = leaf colour. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Openings")
+	TArray<FPlannerCatalogEntry> GetAvailableOpeningStyles(EOpeningType Type) const;
+
+	// ── Door / window leaves in 3D: local view state, never saved or replicated ──
+
+	/** Opens or closes one door / window leaf with an eased swing (3D view only). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Openings")
+	void ToggleOpeningLeaf(int32 SegmentID, int32 OpeningIndex);
+
+	/** Opens or closes every door and window leaf; leaves created later start in the same state. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Openings")
+	void SetAllOpeningLeavesOpen(bool bOpen);
+
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Openings")
+	bool GetDefaultOpeningLeavesOpen() const { return bDefaultLeavesOpen; }
+
+	/** In 3D, when Hit is a door / window leaf: toggles it and returns true (the click is consumed). */
+	bool TryToggleOpeningLeafFromHit(const FHitResult& Hit);
+
+	/** True when Component is a planner door / window leaf (hover affordance). */
+	static bool IsOpeningLeafComponent(const UPrimitiveComponent* Component);
 
 	// ── REQ-06: exact distances of an opening ───────────────────────────────
 
@@ -808,6 +895,79 @@ private:
 	bool bLumenLightingModeOverridden = false;
 	int32 SavedLumenLightingMode = 0;
 	void UpdatePlannerLumenMode(bool bWantHitLightingGI);
+
+	/** Door / window dressing materials keyed by role + colour (see GetOpeningMaterial). */
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UMaterialInterface>> OpeningMaterialCache;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> PlanSymbolMaterial;
+
+	/** Runtime textures referenced by planner materials (kept alive here). */
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> ExteriorSkyTexture;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> ExteriorGroundTexture;
+
+	/** Exterior enclosure bookkeeping: rebuilt lazily (only while it can be seen) after layout or look changes. */
+	bool bExteriorBackdropDirty = true;
+	bool ShouldShowExteriorBackdrop() const;
+	void RebuildExteriorBackdrop();
+	void UpdateExteriorBackdropVisibility();
+
+	/** Horizontal centre, radius and top of the built enclosure (0 radius = not built). */
+	FVector2D ExteriorCenter = FVector2D::ZeroVector;
+	float ExteriorRadius = 0.f;
+	float ExteriorTop = 0.f;
+
+	/** The enclosure is two-sided and additive: seen from outside it would veil the building, so it shows only around the camera. */
+	bool IsCameraInsideExteriorBackdrop() const;
+
+	/**
+	 * > 0 while ImportLayoutFromJSON re-creates walls and openings: the per-element RebuildAllWalls / RebuildRooms calls of
+	 * AddWall / AddOpeningToWall are skipped and the import rebuilds once at its end (it previously rebuilt every wall and
+	 * all rooms after each wall and opening, i.e. quadratic work on every replicated edit).
+	 */
+	int32 LayoutImportDepth = 0;
+
+	/** Open fraction of one leaf (0 closed, 1 open) and its running animation, keyed by "WallGuid#OpeningIndex". */
+	struct FLeafAnimation
+	{
+		float Current = 0.f;
+		float From = 0.f;
+		float Target = 0.f;
+		float Elapsed = 0.f;
+		float Duration = 0.f;
+		bool bAnimating = false;
+		/** Fingerprint of the opening the state was created for (type + distance, cm): the key uses the opening's index,
+		 *  which a delete, drag or split can hand to a different opening. */
+		EOpeningType Type = EOpeningType::Door;
+		int32 DistanceKey = 0;
+	};
+	TMap<FString, FLeafAnimation> LeafAnimations;
+	bool bDefaultLeavesOpen = false;
+	bool bAnyLeafAnimating = false;
+
+	/** Last toggled leaf: one physical press can reach the pick twice (planner widget and PlayerTick). */
+	FString LastLeafToggleKey;
+	double LastLeafToggleTime = -1.0;
+
+	/** Set by ComputeWallInteriorSides when it rebuilt the walls (lets an import build its walls exactly once). */
+	bool bWallsRebuiltByInteriorPass = false;
+
+	/** Length of a wall face covered by other walls meeting at NodeID (AwayDir: this wall's direction away from the node). */
+	float ComputeBranchCoverOnFace(int32 SegmentID, int32 NodeID, const FVector2D& AwayDir, const FVector2D& FaceNormal, float HalfThickness) const;
+
+	static FString MakeLeafKey(const FString& WallGuid, int32 OpeningIndex);
+	/** State of a leaf, or null; state that belongs to a different opening (moved to this index) is discarded. */
+	FLeafAnimation* FindLeafAnimation(AProceduralWallActor* Wall, int32 OpeningIndex);
+	/** Starts easing a leaf toward Target; a leaf without state starts from InitialFraction. */
+	void StartLeafAnimation(AProceduralWallActor* Wall, int32 OpeningIndex, float Target, float InitialFraction);
+	void ToggleLeafOnWall(AProceduralWallActor* Wall, int32 OpeningIndex);
+	void TickLeafAnimations(float DeltaTime);
+	/** Re-poses a wall's leaves from the stored state (walls are rebuilt / respawned on every layout change). */
+	void ApplyLeafAnimationsToWall(AProceduralWallActor* Wall);
 
 	int32 NextNodeID = 1;
 	int32 NextSegmentID = 1;

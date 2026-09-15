@@ -135,6 +135,10 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_SetOpeningSwing(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide Side, EOpeningSwingDirection Direction);
 
+	/** Sets the look of a door / window / archway (built-in style ID); the manager rejects unknown or mismatched styles. */
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetOpeningStyle(int32 SegmentID, int32 OpeningIndex, FName StyleID);
+
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_SetWallFinish(int32 SegmentID, FSurfaceFinish Finish);
 

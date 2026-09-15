@@ -1,10 +1,41 @@
 // Copyright 2026 MaxiMall. All Rights Reserved.
 
 #include "ProceduralWallActor.h"
+#include "RoomPlannerManager.h"
+#include "PlannerOpeningStyles.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInterface.h"
 #include "MaterialDomain.h"
 #include "Engine/EngineTypes.h"
+#include "Engine/World.h"
+
+const FName AProceduralWallActor::LeafComponentTag(TEXT("PlannerOpeningLeaf"));
+
+namespace PlannerOpeningDefaults
+{
+	constexpr float FloorTopZ = 1.f;             // top of the planner floor slab (RoomPlannerManager::RebuildRooms)
+	constexpr float WalkThroughSillCm = 11.f;    // openings below this sill are walk-through (doors, archways)
+	constexpr float LeafGap = 0.5f;              // clearance between a leaf and its lining / frame
+	constexpr float ThresholdTopZ = 2.5f;        // 1.5 cm above the floor
+	constexpr float DoorHandleHeightCm = 100.f;  // above the floor
+	constexpr float DoorLeafThickness = 4.f;
+	constexpr float WindowSashThickness = 6.f;
+
+	constexpr float LiningThickness = 2.f;       // boards covering door / archway reveals
+	constexpr float CasingWidth = 7.f;
+	constexpr float CasingDepth = 1.6f;
+	constexpr float CasingReveal = 0.5f;         // the casing's inner edge overlaps the lining by this much
+	constexpr float MinCasingWidth = 3.f;        // less room than this (corner, neighbour, ceiling): no casing on that face
+
+	constexpr float WindowFrameWidth = 5.5f;
+	constexpr float WindowFrameDepth = 7.f;
+	constexpr float StoolThickness = 2.5f;       // interior window sill board
+	constexpr float StoolProjection = 3.5f;      // past the interior wall face
+	constexpr float StoolEars = 3.f;             // past the opening on each side
+
+	static const FLinearColor ThresholdOak(0.30f, 0.19f, 0.11f);
+	static const FLinearColor FloorFillStone(0.55f, 0.53f, 0.50f);
+}
 
 AProceduralWallActor::AProceduralWallActor()
 {
@@ -22,6 +53,22 @@ AProceduralWallActor::AProceduralWallActor()
 	WallProceduralMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	WallProceduralMesh->SetCollisionObjectType(ECC_WorldDynamic);
 	WallProceduralMesh->SetCollisionResponseToAllChannels(ECR_Block);
+
+	DressingMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("DressingMesh"));
+	DressingMesh->SetupAttachment(SceneRoot);
+	DressingMesh->bUseAsyncCooking = false; // never has collision: the synchronous path does not allocate a body setup per update
+	DressingMesh->SetCastShadow(true);
+	DressingMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Plan symbols are drawing aids, not objects: no shadows, no ray-traced or GI presence.
+	PlanSymbolMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("PlanSymbolMesh"));
+	PlanSymbolMesh->SetupAttachment(SceneRoot);
+	PlanSymbolMesh->SetCastShadow(false);
+	PlanSymbolMesh->bVisibleInRayTracing = false;
+	PlanSymbolMesh->bAffectDynamicIndirectLighting = false;
+	PlanSymbolMesh->bAffectDistanceFieldLighting = false;
+	PlanSymbolMesh->bVisibleInReflectionCaptures = false;
+	PlanSymbolMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 void AProceduralWallActor::BeginPlay()
@@ -35,6 +82,16 @@ void AProceduralWallActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		WallProceduralMesh->ClearAllMeshSections();
 		WallProceduralMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	if (DressingMesh) DressingMesh->ClearAllMeshSections();
+	if (PlanSymbolMesh) PlanSymbolMesh->ClearAllMeshSections();
+	for (UProceduralMeshComponent* Leaf : LeafMeshes)
+	{
+		if (Leaf)
+		{
+			Leaf->ClearAllMeshSections();
+			Leaf->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
 	}
 	BaseWallMaterial = nullptr;
 	WallSelectionMaterial = nullptr;
@@ -135,90 +192,6 @@ bool AProceduralWallActor::IsHingeAtStart(const FWallOpening& Opening, bool bLef
 	return bHingeRight ? bRightIsStart : !bRightIsStart;
 }
 
-void AProceduralWallActor::AppendOpeningLeaf(TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs,
-                                             const FWallOpening& Opening, const FVector2D& StartPos, const FVector2D& Dir2D, const FVector2D& Normal2D,
-                                             float TotalLength)
-{
-	if (Opening.Type == EOpeningType::Archway)
-	{
-		return; // Archways have no leaf.
-	}
-
-	const float OpenStart = FMath::Clamp(Opening.DistanceFromStart - Opening.Width * 0.5f, 0.f, TotalLength);
-	const float OpenEnd = FMath::Clamp(Opening.DistanceFromStart + Opening.Width * 0.5f, 0.f, TotalLength);
-	const float LeafWidth = FMath::Max(2.f, (OpenEnd - OpenStart) - 2.f);
-	const float LeafThickness = (Opening.Type == EOpeningType::Door) ? 4.f : 3.f;
-	const float SillZ = FMath::Max(0.f, Opening.SillHeight);
-	const float TopZ = FMath::Max(SillZ + 2.f, Opening.SillHeight + Opening.Height - 1.f);
-
-	const bool bHingeAtStart = IsHingeAtStart(Opening, WallData.bLeftSideIsInterior);
-	const FVector2D InteriorNormal = WallData.bLeftSideIsInterior ? Normal2D : -Normal2D;
-	const FVector2D SwingNormal = (Opening.SwingDirection == EOpeningSwingDirection::Inward) ? InteriorNormal : -InteriorNormal;
-
-	const FVector2D Hinge2D = bHingeAtStart ? (StartPos + Dir2D * (OpenStart + 1.f)) : (StartPos + Dir2D * (OpenEnd - 1.f));
-	const FVector2D AlongOpening = bHingeAtStart ? Dir2D : -Dir2D;
-
-	const float OpenAngleDeg = (Opening.Type == EOpeningType::Door) ? 90.f : 25.f;
-	const float OpenAngleRad = FMath::DegreesToRadians(OpenAngleDeg);
-
-	// Leaf direction rotated from the wall plane toward the swing side.
-	const FVector2D LeafDir = (AlongOpening * FMath::Cos(OpenAngleRad) + SwingNormal * FMath::Sin(OpenAngleRad)).GetSafeNormal();
-	const FVector2D LeafPerp = FVector2D(-LeafDir.Y, LeafDir.X) * (LeafThickness * 0.5f);
-
-	const FVector2D A2 = Hinge2D - LeafPerp;                       // hinge, side 1
-	const FVector2D B2 = Hinge2D + LeafDir * LeafWidth - LeafPerp; // far edge, side 1
-	const FVector2D C2 = Hinge2D + LeafDir * LeafWidth + LeafPerp; // far edge, side 2
-	const FVector2D D2 = Hinge2D + LeafPerp;                       // hinge, side 2
-
-	const FVector A0(A2.X, A2.Y, SillZ), A1(A2.X, A2.Y, TopZ);
-	const FVector B0(B2.X, B2.Y, SillZ), B1(B2.X, B2.Y, TopZ);
-	const FVector C0(C2.X, C2.Y, SillZ), C1(C2.X, C2.Y, TopZ);
-	const FVector D0(D2.X, D2.Y, SillZ), D1(D2.X, D2.Y, TopZ);
-
-	const FVector NSide1(-LeafPerp.X, -LeafPerp.Y, 0.f);
-	const FVector NSide2(LeafPerp.X, LeafPerp.Y, 0.f);
-	const FVector NFar(LeafDir.X, LeafDir.Y, 0.f);
-	const FVector NHinge(-LeafDir.X, -LeafDir.Y, 0.f);
-
-	// Side faces
-	GenerateQuad(Vertices, Triangles, Normals, UVs, A0, B0, B1, A1, NSide1.GetSafeNormal());
-	GenerateQuad(Vertices, Triangles, Normals, UVs, C0, D0, D1, C1, NSide2.GetSafeNormal());
-	// Far edge and hinge edge
-	GenerateQuad(Vertices, Triangles, Normals, UVs, B0, C0, C1, B1, NFar);
-	GenerateQuad(Vertices, Triangles, Normals, UVs, D0, A0, A1, D1, NHinge);
-	// Top and bottom
-	GenerateQuad(Vertices, Triangles, Normals, UVs, A1, B1, C1, D1, FVector::UpVector);
-	GenerateQuad(Vertices, Triangles, Normals, UVs, D0, C0, B0, A0, -FVector::UpVector);
-
-	// Floor swing arc (doors) / sill swing arc (windows): a thin annulus strip from the wall plane to the open leaf.
-	const float ArcZ = SillZ + 1.5f;
-	const float OuterR = LeafWidth;
-	const float InnerR = FMath::Max(1.f, LeafWidth - 3.f);
-	const int32 ArcSegments = (Opening.Type == EOpeningType::Door) ? 10 : 4;
-	for (int32 i = 0; i < ArcSegments; ++i)
-	{
-		const float T0 = OpenAngleRad * (float)i / (float)ArcSegments;
-		const float T1 = OpenAngleRad * (float)(i + 1) / (float)ArcSegments;
-		const FVector2D R0 = AlongOpening * FMath::Cos(T0) + SwingNormal * FMath::Sin(T0);
-		const FVector2D R1 = AlongOpening * FMath::Cos(T1) + SwingNormal * FMath::Sin(T1);
-		const FVector2D P0 = Hinge2D + R0 * InnerR;
-		const FVector2D P1 = Hinge2D + R0 * OuterR;
-		const FVector2D P2 = Hinge2D + R1 * OuterR;
-		const FVector2D P3 = Hinge2D + R1 * InnerR;
-
-		// Ensure the quad winds so its normal points up regardless of swing orientation.
-		const float Cross = (P1 - P0).X * (P3 - P0).Y - (P1 - P0).Y * (P3 - P0).X;
-		if (Cross >= 0.f)
-		{
-			GenerateQuad(Vertices, Triangles, Normals, UVs, FVector(P0.X, P0.Y, ArcZ), FVector(P1.X, P1.Y, ArcZ), FVector(P2.X, P2.Y, ArcZ), FVector(P3.X, P3.Y, ArcZ), FVector::UpVector);
-		}
-		else
-		{
-			GenerateQuad(Vertices, Triangles, Normals, UVs, FVector(P0.X, P0.Y, ArcZ), FVector(P3.X, P3.Y, ArcZ), FVector(P2.X, P2.Y, ArcZ), FVector(P1.X, P1.Y, ArcZ), FVector::UpVector);
-		}
-	}
-}
-
 void AProceduralWallActor::SetOpeningSelectedHighlight(int32 OpeningIndex, bool bSelected, int32 StencilValue)
 {
 	if (OpeningHighlightMeshes.IsValidIndex(OpeningIndex) && OpeningHighlightMeshes[OpeningIndex])
@@ -239,40 +212,162 @@ void AProceduralWallActor::ClearAllOpeningHighlights()
 	}
 }
 
-void AProceduralWallActor::GenerateQuad(TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs,
-                                         const FVector& V0, const FVector& V1, const FVector& V2, const FVector& V3,
-                                         const FVector& Normal, float UVScale)
+// ─────────────────────────────────────────────────────────────────────────────
+// Presentation (2D plan / 3D view) and leaves
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AProceduralWallActor::SetPresentation(bool bIn3D)
 {
-	int32 StartIdx = Vertices.Num();
-
-	Vertices.Add(V0);
-	Vertices.Add(V1);
-	Vertices.Add(V2);
-	Vertices.Add(V3);
-
-	Normals.Add(Normal);
-	Normals.Add(Normal);
-	Normals.Add(Normal);
-	Normals.Add(Normal);
-
-	float Width = FVector::Distance(V0, V1);
-	float Height = FVector::Distance(V0, V3);
-
-	UVs.Add(FVector2D(0.f, 0.f));
-	UVs.Add(FVector2D(Width / UVScale, 0.f));
-	UVs.Add(FVector2D(Width / UVScale, Height / UVScale));
-	UVs.Add(FVector2D(0.f, Height / UVScale));
-
-	// First triangle (V0, V1, V2)
-	Triangles.Add(StartIdx + 0);
-	Triangles.Add(StartIdx + 1);
-	Triangles.Add(StartIdx + 2);
-
-	// Second triangle (V0, V2, V3)
-	Triangles.Add(StartIdx + 0);
-	Triangles.Add(StartIdx + 2);
-	Triangles.Add(StartIdx + 3);
+	bPresentation3D = bIn3D;
+	if (PlanSymbolMesh)
+	{
+		PlanSymbolMesh->SetVisibility(!bIn3D);
+	}
+	ApplyAllLeafPoses();
 }
+
+void AProceduralWallActor::SetDressingFaceLimits(float StartLeft, float StartRight, float EndLeft, float EndRight)
+{
+	DressingStartCover[0] = FMath::Max(0.f, StartLeft);
+	DressingStartCover[1] = FMath::Max(0.f, StartRight);
+	DressingEndCover[0] = FMath::Max(0.f, EndLeft);
+	DressingEndCover[1] = FMath::Max(0.f, EndRight);
+}
+
+void AProceduralWallActor::SetLeafOpenFraction(int32 OpeningIndex, float Fraction)
+{
+	if (OpeningIndex < 0) return;
+	if (LeafOpenFractions.Num() <= OpeningIndex)
+	{
+		LeafOpenFractions.SetNumZeroed(OpeningIndex + 1);
+	}
+	LeafOpenFractions[OpeningIndex] = Fraction;
+	ApplyLeafPose(OpeningIndex);
+}
+
+int32 AProceduralWallActor::FindLeafIndex(const UPrimitiveComponent* Component) const
+{
+	if (!Component) return INDEX_NONE;
+	for (int32 i = 0; i < LeafMeshes.Num(); ++i)
+	{
+		if (LeafMeshes[i] == Component)
+		{
+			return HasLeaf(i) ? i : INDEX_NONE;
+		}
+	}
+	return INDEX_NONE;
+}
+
+bool AProceduralWallActor::HasLeaf(int32 OpeningIndex) const
+{
+	return LeafPoses.IsValidIndex(OpeningIndex) && LeafPoses[OpeningIndex].bValid
+		&& LeafMeshes.IsValidIndex(OpeningIndex) && LeafMeshes[OpeningIndex] != nullptr;
+}
+
+void AProceduralWallActor::SyncLeafComponents(int32 Count)
+{
+	while (LeafMeshes.Num() > Count)
+	{
+		if (UProceduralMeshComponent* Leaf = LeafMeshes.Pop())
+		{
+			Leaf->DestroyComponent();
+		}
+	}
+	while (LeafMeshes.Num() < Count)
+	{
+		LeafMeshes.Add(CreateLeafComponent());
+	}
+}
+
+UProceduralMeshComponent* AProceduralWallActor::CreateLeafComponent()
+{
+	UProceduralMeshComponent* Leaf = NewObject<UProceduralMeshComponent>(this, NAME_None, RF_Transient);
+	Leaf->CreationMethod = EComponentCreationMethod::Instance;
+	Leaf->SetupAttachment(SceneRoot);
+	Leaf->bUseAsyncCooking = true;
+	Leaf->bUseComplexAsSimpleCollision = true;
+	Leaf->SetCastShadow(true);
+	// Only Visibility traces (3D click / hover) see a leaf; pawns and cameras pass through it.
+	Leaf->SetCollisionObjectType(ECC_WorldDynamic);
+	Leaf->SetCollisionResponseToAllChannels(ECR_Ignore);
+	Leaf->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	Leaf->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Leaf->ComponentTags.Add(LeafComponentTag);
+	Leaf->RegisterComponent();
+	AddInstanceComponent(Leaf);
+	return Leaf;
+}
+
+void AProceduralWallActor::ApplyLeafPose(int32 OpeningIndex)
+{
+	UProceduralMeshComponent* Leaf = LeafMeshes.IsValidIndex(OpeningIndex) ? LeafMeshes[OpeningIndex].Get() : nullptr;
+	if (!Leaf) return;
+
+	const bool bValid = LeafPoses.IsValidIndex(OpeningIndex) && LeafPoses[OpeningIndex].bValid;
+	Leaf->SetVisibility(bValid);
+	const ECollisionEnabled::Type WantCollision = (bValid && bPresentation3D) ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision;
+	if (Leaf->GetCollisionEnabled() != WantCollision)
+	{
+		Leaf->SetCollisionEnabled(WantCollision);
+	}
+	if (!bValid) return;
+
+	const FLeafPose& Pose = LeafPoses[OpeningIndex];
+	const float Fraction = LeafOpenFractions.IsValidIndex(OpeningIndex) ? LeafOpenFractions[OpeningIndex] : 0.f;
+	const float Angle = bPresentation3D ? Pose.OpenAngle3DDeg * Fraction : Pose.PlanAngleDeg;
+	Leaf->SetRelativeLocationAndRotation(Pose.Pivot, FRotator(0.f, Pose.ClosedYawDeg + Pose.SwingSign * Angle, 0.f));
+}
+
+void AProceduralWallActor::ApplyAllLeafPoses()
+{
+	for (int32 i = 0; i < LeafMeshes.Num(); ++i)
+	{
+		ApplyLeafPose(i);
+	}
+}
+
+UMaterialInterface* AProceduralWallActor::ResolveOpeningMaterial(EPlannerOpeningMaterial Kind, const FLinearColor& Color) const
+{
+	if (ARoomPlannerManager* Manager = Cast<ARoomPlannerManager>(GetOwner()))
+	{
+		return Manager->GetOpeningMaterial(Kind, Color);
+	}
+	if (Kind == EPlannerOpeningMaterial::Glass || Kind == EPlannerOpeningMaterial::FrostedGlass)
+	{
+		return nullptr;
+	}
+	return LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+}
+
+UMaterialInterface* AProceduralWallActor::ResolvePlanSymbolMaterial() const
+{
+	if (ARoomPlannerManager* Manager = Cast<ARoomPlannerManager>(GetOwner()))
+	{
+		return Manager->GetPlanSymbolMaterial();
+	}
+	return LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+}
+
+void AProceduralWallActor::CommitSections(UProceduralMeshComponent* Component, const FPlannerSectionedMesh& Mesh, bool bCreateCollision)
+{
+	if (!Component) return;
+	Component->ClearAllMeshSections();
+	int32 SectionIndex = 0;
+	for (const FPlannerSectionedMesh::FSection& Section : Mesh.Sections)
+	{
+		if (Section.Buffers.IsEmpty()) continue;
+		UMaterialInterface* Material = ResolveOpeningMaterial(Section.Kind, Section.Color);
+		if (!Material) continue; // e.g. no glass material in this build
+		const FPlannerMeshBuffers& B = Section.Buffers;
+		Component->CreateMeshSection(SectionIndex, B.Vertices, B.Triangles, B.Normals, B.UVs, TArray<FColor>(), B.Tangents, bCreateCollision);
+		Component->SetMaterial(SectionIndex, Material);
+		++SectionIndex;
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wall mesh
+// ─────────────────────────────────────────────────────────────────────────────
 
 void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVector2D& EndPos,
                                             FVector2D InSL2D, FVector2D InSR2D,
@@ -286,6 +381,8 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	}
 
 	WallProceduralMesh->ClearAllMeshSections();
+	if (DressingMesh) DressingMesh->ClearAllMeshSections();
+	if (PlanSymbolMesh) PlanSymbolMesh->ClearAllMeshSections();
 
 	for (UProceduralMeshComponent* Comp : OpeningHighlightMeshes)
 	{
@@ -296,153 +393,195 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	}
 	OpeningHighlightMeshes.Empty();
 
+	// Leaves exist only where something renders (a dedicated server builds the wall body and its collision only).
+	const bool bBuildVisuals = GetNetMode() != NM_DedicatedServer;
+	const int32 NumOpenings = WallData.Openings.Num();
+	LeafPoses.Reset();
+	LeafPoses.SetNum(NumOpenings);
+	if (LeafOpenFractions.Num() != NumOpenings)
+	{
+		LeafOpenFractions.SetNumZeroed(NumOpenings);
+	}
+	SyncLeafComponents(bBuildVisuals ? NumOpenings : 0);
+	for (UProceduralMeshComponent* Leaf : LeafMeshes)
+	{
+		if (!Leaf) continue;
+		// 2D leaves carry no collision and are rebuilt every frame of a drag: the synchronous path reuses one body setup
+		// instead of allocating one and dispatching an async task per update.
+		Leaf->bUseAsyncCooking = bPresentation3D;
+		Leaf->ClearAllMeshSections();
+	}
+
 	FVector2D Dir2D = (EndPos - StartPos);
-	float NominalLength = Dir2D.Size();
+	const float NominalLength = Dir2D.Size();
 	if (NominalLength < 1.0f)
 	{
+		ApplyAllLeafPoses();
 		return;
 	}
 
 	Dir2D /= NominalLength;
-	FVector2D Normal2D(-Dir2D.Y, Dir2D.X);
+	const FVector2D Normal2D(-Dir2D.Y, Dir2D.X);
 
-	float HalfThickness = WallData.Thickness * 0.5f;
-	float WallHeight = WallData.Height;
+	const float HalfThickness = WallData.Thickness * 0.5f;
+	const float WallHeight = WallData.Height;
 
 	// If corner vertices are not provided (e.g. preview wall), calculate standard rectangular corners
-	FVector2D SL2D = InSL2D.IsNearlyZero() ? (StartPos + Normal2D * HalfThickness) : InSL2D;
-	FVector2D SR2D = InSR2D.IsNearlyZero() ? (StartPos - Normal2D * HalfThickness) : InSR2D;
-	FVector2D EL2D = InEL2D.IsNearlyZero() ? (EndPos + Normal2D * HalfThickness) : InEL2D;
-	FVector2D ER2D = InER2D.IsNearlyZero() ? (EndPos - Normal2D * HalfThickness) : InER2D;
+	const FVector2D SL2D = InSL2D.IsNearlyZero() ? (StartPos + Normal2D * HalfThickness) : InSL2D;
+	const FVector2D SR2D = InSR2D.IsNearlyZero() ? (StartPos - Normal2D * HalfThickness) : InSR2D;
+	const FVector2D EL2D = InEL2D.IsNearlyZero() ? (EndPos + Normal2D * HalfThickness) : InEL2D;
+	const FVector2D ER2D = InER2D.IsNearlyZero() ? (EndPos - Normal2D * HalfThickness) : InER2D;
 
-	float TotalLength = NominalLength;
+	const float TotalLength = NominalLength;
 
-	TArray<FVector> Vertices;
-	TArray<int32> Triangles;
-	TArray<FVector> Normals;
-	TArray<FVector2D> UVs;
-	TArray<FProcMeshTangent> Tangents;
+	const FVector LeftNormalVector(Normal2D.X, Normal2D.Y, 0.f);
+	const FVector RightNormalVector(-Normal2D.X, -Normal2D.Y, 0.f);
+	const FVector StartNormalVector(-Dir2D.X, -Dir2D.Y, 0.f);
+	const FVector EndNormalVector(Dir2D.X, Dir2D.Y, 0.f);
+	const FVector UpVector(0.f, 0.f, 1.f);
 
-	FVector LeftNormalVector(Normal2D.X, Normal2D.Y, 0.f);
-	FVector RightNormalVector(-Normal2D.X, -Normal2D.Y, 0.f);
-	FVector StartNormalVector(-Dir2D.X, -Dir2D.Y, 0.f);
-	FVector EndNormalVector(Dir2D.X, Dir2D.Y, 0.f);
-	FVector UpVector(0.f, 0.f, 1.f);
+	// Point of the left / right face at a centreline distance D. Wall ends keep their exact (mitred) corners; points in
+	// between lie square across the wall. Interpolating between the mitred end corners instead (the previous approach)
+	// skewed every opening's jambs in plan by up to half the mitre offset of the wall's ends.
+	auto AlongOf = [&](const FVector2D& P) { return FVector2D::DotProduct(P - StartPos, Dir2D); };
+	const float LeftLo = FMath::Min(AlongOf(SL2D), AlongOf(EL2D));
+	const float LeftHi = FMath::Max(AlongOf(SL2D), AlongOf(EL2D));
+	const float RightLo = FMath::Min(AlongOf(SR2D), AlongOf(ER2D));
+	const float RightHi = FMath::Max(AlongOf(SR2D), AlongOf(ER2D));
+	auto FacePoint = [&](float D, bool bLeft) -> FVector2D
+	{
+		if (D <= 0.01f) return bLeft ? SL2D : SR2D;
+		if (D >= TotalLength - 0.01f) return bLeft ? EL2D : ER2D;
+		const float Clamped = bLeft ? FMath::Clamp(D, LeftLo, LeftHi) : FMath::Clamp(D, RightLo, RightHi);
+		return StartPos + Dir2D * Clamped + Normal2D * (bLeft ? HalfThickness : -HalfThickness);
+	};
+	auto V3 = [](const FVector2D& P, float Z) { return FVector(P.X, P.Y, Z); };
+	auto JambNormal = [](const FVector2D& A, const FVector2D& B, const FVector& Toward)
+	{
+		const FVector2D Edge = (B - A).GetSafeNormal();
+		FVector N(-Edge.Y, Edge.X, 0.f);
+		if (N.IsNearlyZero()) return Toward;
+		return FVector::DotProduct(N, Toward) < 0.f ? -N : N;
+	};
+	// Holes are cut only where both faces run straight. An opening pushed into a mitred corner keeps square jambs (so its
+	// lining, casing and leaf fit it) instead of following the mitre into the perpendicular wall. Openings away from
+	// corners are unaffected (JointLo = 0 and JointHi = length on unmitred ends).
+	const float JointLo = FMath::Clamp(FMath::Max(LeftLo, RightLo), 0.f, TotalLength);
+	const float JointHi = FMath::Clamp(FMath::Min(LeftHi, RightHi), JointLo, TotalLength);
+	auto ClampedStart = [&](const FWallOpening& Op) { return FMath::Clamp(Op.DistanceFromStart - Op.Width * 0.5f, JointLo, JointHi); };
+	auto ClampedEnd = [&](const FWallOpening& Op) { return FMath::Clamp(Op.DistanceFromStart + Op.Width * 0.5f, JointLo, JointHi); };
 
-	// Sort & filter out overlapping openings to prevent mesh corruption
-	TArray<FWallOpening> SortedOpenings = WallData.Openings;
-	SortedOpenings.Sort([](const FWallOpening& A, const FWallOpening& B) {
-		return A.DistanceFromStart < B.DistanceFromStart;
+	// Sort & filter out overlapping openings to prevent mesh corruption (indices keep the 1-to-1 match with WallData.Openings)
+	TArray<int32> Order;
+	Order.Reserve(NumOpenings);
+	for (int32 i = 0; i < NumOpenings; ++i) Order.Add(i);
+	Order.Sort([this](int32 A, int32 B) {
+		return WallData.Openings[A].DistanceFromStart < WallData.Openings[B].DistanceFromStart;
 	});
 
-	TArray<FWallOpening> ValidOpenings;
+	TArray<int32> ValidIndices;
 	float LastOpeningEnd = 0.f;
-	for (const FWallOpening& Op : SortedOpenings)
+	for (int32 Index : Order)
 	{
-		float OpStart = Op.DistanceFromStart - Op.Width * 0.5f;
-		float OpEnd = Op.DistanceFromStart + Op.Width * 0.5f;
+		const FWallOpening& Op = WallData.Openings[Index];
+		const float OpStart = Op.DistanceFromStart - Op.Width * 0.5f;
+		const float OpEnd = Op.DistanceFromStart + Op.Width * 0.5f;
 		if (OpStart >= LastOpeningEnd - 1.f && OpStart < TotalLength && OpEnd <= TotalLength + 1.f)
 		{
-			ValidOpenings.Add(Op);
+			ValidIndices.Add(Index);
 			LastOpeningEnd = OpEnd;
 		}
 	}
 
+	FPlannerMeshBuffers Wall;
 	float CurrentDist = 0.f;
 
-	for (const FWallOpening& Opening : ValidOpenings)
+	for (int32 Index : ValidIndices)
 	{
-		float OpenStart = FMath::Clamp(Opening.DistanceFromStart - Opening.Width * 0.5f, 0.f, TotalLength);
-		float OpenEnd = FMath::Clamp(Opening.DistanceFromStart + Opening.Width * 0.5f, 0.f, TotalLength);
+		const FWallOpening& Opening = WallData.Openings[Index];
+		const float OpenStart = ClampedStart(Opening);
+		const float OpenEnd = ClampedEnd(Opening);
 
 		if (OpenStart > CurrentDist)
 		{
 			// Solid wall section before opening
-			float AlphaStart = CurrentDist / TotalLength;
-			float AlphaEnd = OpenStart / TotalLength;
+			const FVector2D SecSL = FacePoint(CurrentDist, true);
+			const FVector2D SecEL = FacePoint(OpenStart, true);
+			const FVector2D SecSR = FacePoint(CurrentDist, false);
+			const FVector2D SecER = FacePoint(OpenStart, false);
 
-			FVector2D SecSL = FMath::Lerp(SL2D, EL2D, AlphaStart);
-			FVector2D SecEL = FMath::Lerp(SL2D, EL2D, AlphaEnd);
-			FVector2D SecSR = FMath::Lerp(SR2D, ER2D, AlphaStart);
-			FVector2D SecER = FMath::Lerp(SR2D, ER2D, AlphaEnd);
-
-			// Left Face
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(SecSL.X, SecSL.Y, 0.f), FVector(SecEL.X, SecEL.Y, 0.f),
-				FVector(SecEL.X, SecEL.Y, WallHeight), FVector(SecSL.X, SecSL.Y, WallHeight), LeftNormalVector);
-
-			// Right Face
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(SecER.X, SecER.Y, 0.f), FVector(SecSR.X, SecSR.Y, 0.f),
-				FVector(SecSR.X, SecSR.Y, WallHeight), FVector(SecER.X, SecER.Y, WallHeight), RightNormalVector);
-
-			// Top Face
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(SecSL.X, SecSL.Y, WallHeight), FVector(SecEL.X, SecEL.Y, WallHeight),
-				FVector(SecER.X, SecER.Y, WallHeight), FVector(SecSR.X, SecSR.Y, WallHeight), UpVector);
+			PlannerMeshBuilder::AddQuad(Wall, V3(SecSL, 0.f), V3(SecEL, 0.f), V3(SecEL, WallHeight), V3(SecSL, WallHeight), LeftNormalVector);
+			PlannerMeshBuilder::AddQuad(Wall, V3(SecER, 0.f), V3(SecSR, 0.f), V3(SecSR, WallHeight), V3(SecER, WallHeight), RightNormalVector);
+			PlannerMeshBuilder::AddQuad(Wall, V3(SecSL, WallHeight), V3(SecEL, WallHeight), V3(SecER, WallHeight), V3(SecSR, WallHeight), UpVector);
 		}
 
 		// Opening section (Wall above/below opening)
-		float AlphaOpStart = OpenStart / TotalLength;
-		float AlphaOpEnd = OpenEnd / TotalLength;
+		const FVector2D OpSL = FacePoint(OpenStart, true);
+		const FVector2D OpEL = FacePoint(OpenEnd, true);
+		const FVector2D OpSR = FacePoint(OpenStart, false);
+		const FVector2D OpER = FacePoint(OpenEnd, false);
 
-		FVector2D OpSL = FMath::Lerp(SL2D, EL2D, AlphaOpStart);
-		FVector2D OpEL = FMath::Lerp(SL2D, EL2D, AlphaOpEnd);
-		FVector2D OpSR = FMath::Lerp(SR2D, ER2D, AlphaOpStart);
-		FVector2D OpER = FMath::Lerp(SR2D, ER2D, AlphaOpEnd);
-
-		float SillZ = Opening.SillHeight;
-		float LintelZ = Opening.SillHeight + Opening.Height;
+		const float SillZ = Opening.SillHeight;
+		const float LintelZ = Opening.SillHeight + Opening.Height;
 
 		// Sub-opening wall below sill (Windows)
 		if (SillZ > 0.f)
 		{
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(OpSL.X, OpSL.Y, 0.f), FVector(OpEL.X, OpEL.Y, 0.f),
-				FVector(OpEL.X, OpEL.Y, SillZ), FVector(OpSL.X, OpSL.Y, SillZ), LeftNormalVector);
-
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(OpER.X, OpER.Y, 0.f), FVector(OpSR.X, OpSR.Y, 0.f),
-				FVector(OpSR.X, OpSR.Y, SillZ), FVector(OpER.X, OpER.Y, SillZ), RightNormalVector);
-
+			PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, 0.f), V3(OpEL, 0.f), V3(OpEL, SillZ), V3(OpSL, SillZ), LeftNormalVector);
+			PlannerMeshBuilder::AddQuad(Wall, V3(OpER, 0.f), V3(OpSR, 0.f), V3(OpSR, SillZ), V3(OpER, SillZ), RightNormalVector);
 			// Sill top jamb
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(OpSL.X, OpSL.Y, SillZ), FVector(OpEL.X, OpEL.Y, SillZ),
-				FVector(OpER.X, OpER.Y, SillZ), FVector(OpSR.X, OpSR.Y, SillZ), UpVector);
+			PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, SillZ), V3(OpEL, SillZ), V3(OpER, SillZ), V3(OpSR, SillZ), UpVector);
 		}
 
 		// Sub-opening wall above lintel
 		if (LintelZ < WallHeight)
 		{
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(OpSL.X, OpSL.Y, LintelZ), FVector(OpEL.X, OpEL.Y, LintelZ),
-				FVector(OpEL.X, OpEL.Y, WallHeight), FVector(OpSL.X, OpSL.Y, WallHeight), LeftNormalVector);
-
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(OpER.X, OpER.Y, LintelZ), FVector(OpSR.X, OpSR.Y, LintelZ),
-				FVector(OpSR.X, OpSR.Y, WallHeight), FVector(OpER.X, OpER.Y, WallHeight), RightNormalVector);
-
+			PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, LintelZ), V3(OpEL, LintelZ), V3(OpEL, WallHeight), V3(OpSL, WallHeight), LeftNormalVector);
+			PlannerMeshBuilder::AddQuad(Wall, V3(OpER, LintelZ), V3(OpSR, LintelZ), V3(OpSR, WallHeight), V3(OpER, WallHeight), RightNormalVector);
 			// Lintel bottom jamb
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(OpEL.X, OpEL.Y, LintelZ), FVector(OpSL.X, OpSL.Y, LintelZ),
-				FVector(OpSR.X, OpSR.Y, LintelZ), FVector(OpER.X, OpER.Y, LintelZ), -UpVector);
-
+			PlannerMeshBuilder::AddQuad(Wall, V3(OpEL, LintelZ), V3(OpSL, LintelZ), V3(OpSR, LintelZ), V3(OpER, LintelZ), -UpVector);
 			// Top Face above lintel
-			GenerateQuad(Vertices, Triangles, Normals, UVs,
-				FVector(OpSL.X, OpSL.Y, WallHeight), FVector(OpEL.X, OpEL.Y, WallHeight),
-				FVector(OpER.X, OpER.Y, WallHeight), FVector(OpSR.X, OpSR.Y, WallHeight), UpVector);
+			PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, WallHeight), V3(OpEL, WallHeight), V3(OpER, WallHeight), V3(OpSR, WallHeight), UpVector);
 		}
 
-		// Left & Right inner jamb faces
-		GenerateQuad(Vertices, Triangles, Normals, UVs,
-			FVector(OpSL.X, OpSL.Y, SillZ), FVector(OpSR.X, OpSR.Y, SillZ),
-			FVector(OpSR.X, OpSR.Y, LintelZ), FVector(OpSL.X, OpSL.Y, LintelZ), StartNormalVector);
-
-		GenerateQuad(Vertices, Triangles, Normals, UVs,
-			FVector(OpER.X, OpER.Y, SillZ), FVector(OpEL.X, OpEL.Y, SillZ),
-			FVector(OpEL.X, OpEL.Y, LintelZ), FVector(OpER.X, OpER.Y, LintelZ), EndNormalVector);
+		// Left & right reveals (jambs): each faces INTO the opening (the start jamb toward the wall's end and vice versa).
+		PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, SillZ), V3(OpSR, SillZ), V3(OpSR, LintelZ), V3(OpSL, LintelZ), JambNormal(OpSL, OpSR, EndNormalVector));
+		PlannerMeshBuilder::AddQuad(Wall, V3(OpER, SillZ), V3(OpEL, SillZ), V3(OpEL, LintelZ), V3(OpER, LintelZ), JambNormal(OpER, OpEL, StartNormalVector));
 
 		CurrentDist = OpenEnd;
+	}
+
+	// Final wall section after last opening
+	if (CurrentDist < TotalLength)
+	{
+		const FVector2D SecSL = FacePoint(CurrentDist, true);
+		const FVector2D SecEL = EL2D;
+		const FVector2D SecSR = FacePoint(CurrentDist, false);
+		const FVector2D SecER = ER2D;
+
+		PlannerMeshBuilder::AddQuad(Wall, V3(SecSL, 0.f), V3(SecEL, 0.f), V3(SecEL, WallHeight), V3(SecSL, WallHeight), LeftNormalVector);
+		PlannerMeshBuilder::AddQuad(Wall, V3(SecER, 0.f), V3(SecSR, 0.f), V3(SecSR, WallHeight), V3(SecER, WallHeight), RightNormalVector);
+		PlannerMeshBuilder::AddQuad(Wall, V3(SecSL, WallHeight), V3(SecEL, WallHeight), V3(SecER, WallHeight), V3(SecSR, WallHeight), UpVector);
+	}
+
+	// Start Cap Face (if open end)
+	if (bStartCap)
+	{
+		PlannerMeshBuilder::AddQuad(Wall, V3(SR2D, 0.f), V3(SL2D, 0.f), V3(SL2D, WallHeight), V3(SR2D, WallHeight), StartNormalVector);
+	}
+
+	// End Cap Face (if open end)
+	if (bEndCap)
+	{
+		PlannerMeshBuilder::AddQuad(Wall, V3(EL2D, 0.f), V3(ER2D, 0.f), V3(ER2D, WallHeight), V3(EL2D, WallHeight), EndNormalVector);
+	}
+
+	WallProceduralMesh->CreateMeshSection(0, Wall.Vertices, Wall.Triangles, Wall.Normals, Wall.UVs, TArray<FColor>(), Wall.Tangents, bCreateCollision);
+
+	// Apply the wall's normal material (finish if any, else clean default white).
+	if (UMaterialInterface* NormalMat = ResolveNormalMaterial())
+	{
+		WallProceduralMesh->SetMaterial(0, NormalMat);
 	}
 
 	// Generate 3D red translucent selection boxes with guaranteed 1-to-1 index match to WallData.Openings
@@ -456,31 +595,30 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
 	}
 
-	for (int32 OpIdx = 0; OpIdx < WallData.Openings.Num(); ++OpIdx)
+	for (int32 OpIdx = 0; OpIdx < NumOpenings; ++OpIdx)
 	{
 		const FWallOpening& Op = WallData.Openings[OpIdx];
-		float H_OpenStart = FMath::Clamp(Op.DistanceFromStart - Op.Width * 0.5f, 0.f, TotalLength);
-		float H_OpenEnd = FMath::Clamp(Op.DistanceFromStart + Op.Width * 0.5f, 0.f, TotalLength);
-		float H_AlphaStart = H_OpenStart / TotalLength;
-		float H_AlphaEnd = H_OpenEnd / TotalLength;
+		// The selection box keeps showing the opening's requested extent.
+		const float H_OpenStart = FMath::Clamp(Op.DistanceFromStart - Op.Width * 0.5f, 0.f, TotalLength);
+		const float H_OpenEnd = FMath::Clamp(Op.DistanceFromStart + Op.Width * 0.5f, 0.f, TotalLength);
 
-		FVector2D H_SL = FMath::Lerp(SL2D, EL2D, H_AlphaStart);
-		FVector2D H_EL = FMath::Lerp(SL2D, EL2D, H_AlphaEnd);
-		FVector2D H_SR = FMath::Lerp(SR2D, ER2D, H_AlphaStart);
-		FVector2D H_ER = FMath::Lerp(SR2D, ER2D, H_AlphaEnd);
+		const FVector2D H_SL = FacePoint(H_OpenStart, true);
+		const FVector2D H_EL = FacePoint(H_OpenEnd, true);
+		const FVector2D H_SR = FacePoint(H_OpenStart, false);
+		const FVector2D H_ER = FacePoint(H_OpenEnd, false);
 
-		float H_SillZ = FMath::Max(0.f, Op.SillHeight - 2.0f);
-		float H_LintelZ = Op.SillHeight + Op.Height + 2.0f;
+		const float H_SillZ = FMath::Max(0.f, Op.SillHeight - 2.0f);
+		const float H_LintelZ = Op.SillHeight + Op.Height + 2.0f;
 
-		FVector2D OutLeft = FVector2D(LeftNormalVector.X, LeftNormalVector.Y) * 2.0f;
-		FVector2D OutRight = FVector2D(RightNormalVector.X, RightNormalVector.Y) * 2.0f;
-		FVector2D OutStart = FVector2D(StartNormalVector.X, StartNormalVector.Y) * 2.0f;
-		FVector2D OutEnd = FVector2D(EndNormalVector.X, EndNormalVector.Y) * 2.0f;
+		const FVector2D OutLeft = Normal2D * 2.0f;
+		const FVector2D OutRight = -Normal2D * 2.0f;
+		const FVector2D OutStart = -Dir2D * 2.0f;
+		const FVector2D OutEnd = Dir2D * 2.0f;
 
-		FVector2D Box_SL = H_SL + OutLeft + OutStart;
-		FVector2D Box_EL = H_EL + OutLeft + OutEnd;
-		FVector2D Box_SR = H_SR + OutRight + OutStart;
-		FVector2D Box_ER = H_ER + OutRight + OutEnd;
+		const FVector2D Box_SL = H_SL + OutLeft + OutStart;
+		const FVector2D Box_EL = H_EL + OutLeft + OutEnd;
+		const FVector2D Box_SR = H_SR + OutRight + OutStart;
+		const FVector2D Box_ER = H_ER + OutRight + OutEnd;
 
 		UProceduralMeshComponent* HighlightMesh = NewObject<UProceduralMeshComponent>(this);
 		HighlightMesh->CreationMethod = EComponentCreationMethod::Instance;
@@ -493,126 +631,242 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		HighlightMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		OpeningHighlightMeshes.Add(HighlightMesh);
 
-		TArray<FVector> HVerts;
-		TArray<int32> HTris;
-		TArray<FVector> HNorms;
-		TArray<FVector2D> HUVs;
+		FPlannerMeshBuffers Box;
+		PlannerMeshBuilder::AddQuad(Box, V3(Box_SL, H_SillZ), V3(Box_EL, H_SillZ), V3(Box_EL, H_LintelZ), V3(Box_SL, H_LintelZ), LeftNormalVector);
+		PlannerMeshBuilder::AddQuad(Box, V3(Box_ER, H_SillZ), V3(Box_SR, H_SillZ), V3(Box_SR, H_LintelZ), V3(Box_ER, H_LintelZ), RightNormalVector);
+		PlannerMeshBuilder::AddQuad(Box, V3(Box_SR, H_SillZ), V3(Box_SL, H_SillZ), V3(Box_SL, H_LintelZ), V3(Box_SR, H_LintelZ), StartNormalVector);
+		PlannerMeshBuilder::AddQuad(Box, V3(Box_EL, H_SillZ), V3(Box_ER, H_SillZ), V3(Box_ER, H_LintelZ), V3(Box_EL, H_LintelZ), EndNormalVector);
+		PlannerMeshBuilder::AddQuad(Box, V3(Box_SL, H_LintelZ), V3(Box_EL, H_LintelZ), V3(Box_ER, H_LintelZ), V3(Box_SR, H_LintelZ), UpVector);
+		PlannerMeshBuilder::AddQuad(Box, V3(Box_EL, H_SillZ), V3(Box_SL, H_SillZ), V3(Box_SR, H_SillZ), V3(Box_ER, H_SillZ), -UpVector);
 
-		// Front Face
-		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(Box_SL.X, Box_SL.Y, H_SillZ), FVector(Box_EL.X, Box_EL.Y, H_SillZ),
-			FVector(Box_EL.X, Box_EL.Y, H_LintelZ), FVector(Box_SL.X, Box_SL.Y, H_LintelZ), LeftNormalVector);
-		// Back Face
-		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(Box_ER.X, Box_ER.Y, H_SillZ), FVector(Box_SR.X, Box_SR.Y, H_SillZ),
-			FVector(Box_SR.X, Box_SR.Y, H_LintelZ), FVector(Box_ER.X, Box_ER.Y, H_LintelZ), RightNormalVector);
-		// Left Face (Start Jamb)
-		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(Box_SR.X, Box_SR.Y, H_SillZ), FVector(Box_SL.X, Box_SL.Y, H_SillZ),
-			FVector(Box_SL.X, Box_SL.Y, H_LintelZ), FVector(Box_SR.X, Box_SR.Y, H_LintelZ), StartNormalVector);
-		// Right Face (End Jamb)
-		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(Box_EL.X, Box_EL.Y, H_SillZ), FVector(Box_ER.X, Box_ER.Y, H_SillZ),
-			FVector(Box_ER.X, Box_ER.Y, H_LintelZ), FVector(Box_EL.X, Box_EL.Y, H_LintelZ), EndNormalVector);
-		// Top Face
-		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(Box_SL.X, Box_SL.Y, H_LintelZ), FVector(Box_EL.X, Box_EL.Y, H_LintelZ),
-			FVector(Box_ER.X, Box_ER.Y, H_LintelZ), FVector(Box_SR.X, Box_SR.Y, H_LintelZ), UpVector);
-		// Bottom Face
-		GenerateQuad(HVerts, HTris, HNorms, HUVs,
-			FVector(Box_EL.X, Box_EL.Y, H_SillZ), FVector(Box_SL.X, Box_SL.Y, H_SillZ),
-			FVector(Box_SR.X, Box_SR.Y, H_SillZ), FVector(Box_ER.X, Box_ER.Y, H_SillZ), -UpVector);
+		HighlightMesh->CreateMeshSection(0, Box.Vertices, Box.Triangles, Box.Normals, Box.UVs, TArray<FColor>(), Box.Tangents, false);
+		HighlightMesh->SetMaterial(0, OpeningMat ? OpeningMat : WallProceduralMesh->GetMaterial(0));
+	}
 
-		HighlightMesh->CreateMeshSection(0, HVerts, HTris, HNorms, HUVs, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
-		if (OpeningMat)
+	// Doors / windows / archways: dressing, leaves and plan symbols.
+	if (bBuildVisuals)
+	{
+		FWallBuildFrame Frame;
+		Frame.Start = StartPos;
+		Frame.Dir = Dir2D;
+		Frame.Normal = Normal2D;
+		Frame.HalfThickness = HalfThickness;
+		Frame.Length = TotalLength;
+		Frame.Height = WallHeight;
+		Frame.FaceLo[0] = LeftLo;
+		Frame.FaceHi[0] = LeftHi;
+		Frame.FaceLo[1] = RightLo;
+		Frame.FaceHi[1] = RightHi;
+		for (int32 FaceIdx = 0; FaceIdx < 2; ++FaceIdx)
 		{
-			HighlightMesh->SetMaterial(0, OpeningMat);
+			// Branch walls at the ends (T-junctions) cover part of a face that the corner points do not describe. Only a real
+			// branch limits the face: an outer mitred face keeps its extent beyond the node.
+			if (DressingStartCover[FaceIdx] > 0.f)
+			{
+				Frame.FaceLo[FaceIdx] = FMath::Max(Frame.FaceLo[FaceIdx], DressingStartCover[FaceIdx]);
+			}
+			if (DressingEndCover[FaceIdx] > 0.f)
+			{
+				Frame.FaceHi[FaceIdx] = FMath::Min(Frame.FaceHi[FaceIdx], TotalLength - DressingEndCover[FaceIdx]);
+			}
 		}
-		else
+		Frame.JointLo = JointLo;
+		Frame.JointHi = JointHi;
+
+		FPlannerSectionedMesh Dressing;
+		FPlannerMeshBuffers Plan;
+		for (int32 i = 0; i < ValidIndices.Num(); ++i)
 		{
-			HighlightMesh->SetMaterial(0, WallProceduralMesh->GetMaterial(0));
+			const float PrevEnd = (i > 0) ? ClampedEnd(WallData.Openings[ValidIndices[i - 1]]) : -1.0e6f;
+			const float NextStart = (i + 1 < ValidIndices.Num()) ? ClampedStart(WallData.Openings[ValidIndices[i + 1]]) : 1.0e6f;
+			BuildOpeningVisuals(ValidIndices[i], Frame, PrevEnd, NextStart, Dressing, Plan);
 		}
-	}
-
-	// Final wall section after last opening
-	if (CurrentDist < TotalLength)
-	{
-		float AlphaStart = CurrentDist / TotalLength;
-		float AlphaEnd = 1.0f;
-
-		FVector2D SecSL = FMath::Lerp(SL2D, EL2D, AlphaStart);
-		FVector2D SecEL = EL2D;
-		FVector2D SecSR = FMath::Lerp(SR2D, ER2D, AlphaStart);
-		FVector2D SecER = ER2D;
-
-		// Left Face
-		GenerateQuad(Vertices, Triangles, Normals, UVs,
-			FVector(SecSL.X, SecSL.Y, 0.f), FVector(SecEL.X, SecEL.Y, 0.f),
-			FVector(SecEL.X, SecEL.Y, WallHeight), FVector(SecSL.X, SecSL.Y, WallHeight), LeftNormalVector);
-
-		// Right Face
-		GenerateQuad(Vertices, Triangles, Normals, UVs,
-			FVector(SecER.X, SecER.Y, 0.f), FVector(SecSR.X, SecSR.Y, 0.f),
-			FVector(SecSR.X, SecSR.Y, WallHeight), FVector(SecER.X, SecER.Y, WallHeight), RightNormalVector);
-
-		// Top Face
-		GenerateQuad(Vertices, Triangles, Normals, UVs,
-			FVector(SecSL.X, SecSL.Y, WallHeight), FVector(SecEL.X, SecEL.Y, WallHeight),
-			FVector(SecER.X, SecER.Y, WallHeight), FVector(SecSR.X, SecSR.Y, WallHeight), UpVector);
-	}
-
-	// Start Cap Face (if open end)
-	if (bStartCap)
-	{
-		GenerateQuad(Vertices, Triangles, Normals, UVs,
-			FVector(SR2D.X, SR2D.Y, 0.f), FVector(SL2D.X, SL2D.Y, 0.f),
-			FVector(SL2D.X, SL2D.Y, WallHeight), FVector(SR2D.X, SR2D.Y, WallHeight), StartNormalVector);
-	}
-
-	// End Cap Face (if open end)
-	if (bEndCap)
-	{
-		GenerateQuad(Vertices, Triangles, Normals, UVs,
-			FVector(EL2D.X, EL2D.Y, 0.f), FVector(ER2D.X, ER2D.Y, 0.f),
-			FVector(ER2D.X, ER2D.Y, WallHeight), FVector(EL2D.X, EL2D.Y, WallHeight), EndNormalVector);
-	}
-
-	WallProceduralMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, TArray<FColor>(), Tangents, bCreateCollision);
-
-	// Section 1: door / window leaves in their open position + swing arcs (REQ-07).
-	{
-		TArray<FVector> LeafVerts;
-		TArray<int32> LeafTris;
-		TArray<FVector> LeafNorms;
-		TArray<FVector2D> LeafUVs;
-		for (const FWallOpening& Opening : ValidOpenings)
+		CommitSections(DressingMesh, Dressing, false);
+		if (PlanSymbolMesh && !Plan.IsEmpty())
 		{
-			AppendOpeningLeaf(LeafVerts, LeafTris, LeafNorms, LeafUVs, Opening, StartPos, Dir2D, Normal2D, TotalLength);
-		}
-		if (LeafVerts.Num() > 0)
-		{
-			WallProceduralMesh->CreateMeshSection(1, LeafVerts, LeafTris, LeafNorms, LeafUVs, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
+			PlanSymbolMesh->CreateMeshSection(0, Plan.Vertices, Plan.Triangles, Plan.Normals, Plan.UVs, TArray<FColor>(), Plan.Tangents, false);
+			PlanSymbolMesh->SetMaterial(0, ResolvePlanSymbolMaterial());
 		}
 	}
 
-	// Apply the wall's normal material (finish if any, else clean default white) and the leaf material.
-	UMaterialInterface* NormalMat = ResolveNormalMaterial();
-	if (NormalMat)
+	if (PlanSymbolMesh)
 	{
-		WallProceduralMesh->SetMaterial(0, NormalMat);
+		PlanSymbolMesh->SetVisibility(!bPresentation3D);
+	}
+	ApplyAllLeafPoses();
+}
+
+void AProceduralWallActor::BuildOpeningVisuals(int32 OpeningIndex, const FWallBuildFrame& F, float PrevOpeningEnd, float NextOpeningStart,
+                                               FPlannerSectionedMesh& Dressing, FPlannerMeshBuffers& Plan)
+{
+	using namespace PlannerOpeningDefaults;
+
+	const FWallOpening& Op = WallData.Openings[OpeningIndex];
+	const FPlannerOpeningStyle& Style = PlannerOpeningStyles::Resolve(Op.Type, Op.Style);
+
+	const float S0 = FMath::Clamp(Op.DistanceFromStart - Op.Width * 0.5f, F.JointLo, F.JointHi);
+	const float S1 = FMath::Clamp(Op.DistanceFromStart + Op.Width * 0.5f, F.JointLo, F.JointHi);
+	const float SillZ = FMath::Max(0.f, Op.SillHeight);
+	const float TopZ = FMath::Min(Op.SillHeight + Op.Height, F.Height);
+	if (S1 - S0 < 4.f || TopZ - SillZ < 4.f) return;
+
+	const bool bDoor = Op.Type == EOpeningType::Door;
+	const bool bWindow = Op.Type == EOpeningType::Window;
+	const bool bWalkThrough = SillZ < WalkThroughSillCm;
+	const float HT = F.HalfThickness;
+
+	// Wall-aligned frame: X along the wall, Y toward the left face, Z up.
+	const FVector Origin(F.Start.X, F.Start.Y, 0.f);
+	const FVector AxisX(F.Dir.X, F.Dir.Y, 0.f);
+	const FVector AxisY(F.Normal.X, F.Normal.Y, 0.f);
+	const FVector AxisZ = FVector::UpVector;
+	auto FrameBox = [&](const FVector& Min, const FVector& Max, uint8 Faces)
+	{
+		PlannerMeshBuilder::AddBox(Dressing.Get(EPlannerOpeningMaterial::Frame, Style.FrameColor), Origin, AxisX, AxisY, AxisZ, Min, Max, Faces);
+	};
+	const uint8 NoEnds = EPlannerBoxFace::All & ~(EPlannerBoxFace::NegX | EPlannerBoxFace::PosX);
+
+	// Room along the wall that trim may use on each side: half the gap to a neighbouring opening, never past the face's extent
+	// (a mitred inner corner ends the face early, so casings never run into the perpendicular wall).
+	const float PrevLimit = PrevOpeningEnd > -1.0e5f ? (PrevOpeningEnd + S0) * 0.5f : -1.0e6f;
+	const float NextLimit = NextOpeningStart < 1.0e5f ? (NextOpeningStart + S1) * 0.5f : 1.0e6f;
+	auto RoomBefore = [&](int32 FaceIdx, float Edge) { return Edge - FMath::Max(F.FaceLo[FaceIdx], PrevLimit); };
+	auto RoomAfter = [&](int32 FaceIdx, float Edge) { return FMath::Min(F.FaceHi[FaceIdx], NextLimit) - Edge; };
+
+	// Floor: raised threshold for doors, a flush fill (just below the room floors, which meet at the centreline) otherwise.
+	if (bWalkThrough && bDoor && Style.bThreshold)
+	{
+		PlannerMeshBuilder::AddBox(Dressing.Get(EPlannerOpeningMaterial::Threshold, ThresholdOak), Origin, AxisX, AxisY, AxisZ,
+			FVector(S0, -HT - 1.f, FloorTopZ - 0.5f), FVector(S1, HT + 1.f, ThresholdTopZ), EPlannerBoxFace::All & ~EPlannerBoxFace::NegZ);
+	}
+	else if (bWalkThrough && !bWindow)
+	{
+		PlannerMeshBuilder::AddBox(Dressing.Get(EPlannerOpeningMaterial::Threshold, FloorFillStone), Origin, AxisX, AxisY, AxisZ,
+			FVector(S0, -HT, FloorTopZ - 0.5f), FVector(S1, HT, FloorTopZ - 0.05f), EPlannerBoxFace::PosZ);
 	}
 
-	UMaterialInterface* LeafMat = LeafMaterial ? LeafMaterial.Get() : nullptr;
-	if (!LeafMat)
+	// Doors / archways: lining boards over the reveals and a mitred casing on both wall faces.
+	float Lining = 0.f;
+	if (!bWindow && Style.bLining)
 	{
-		LeafMat = BaseWallMaterial ? BaseWallMaterial.Get() : nullptr;
+		Lining = FMath::Min(LiningThickness, (S1 - S0) * 0.1f);
+		const float Base = bWalkThrough ? ((bDoor && Style.bThreshold) ? ThresholdTopZ : FloorTopZ) : SillZ;
+		FrameBox(FVector(S0, -HT, Base), FVector(S0 + Lining, HT, TopZ), EPlannerBoxFace::All & ~EPlannerBoxFace::NegX);
+		FrameBox(FVector(S1 - Lining, -HT, Base), FVector(S1, HT, TopZ), EPlannerBoxFace::All & ~EPlannerBoxFace::PosX);
+		FrameBox(FVector(S0 + Lining, -HT, TopZ - Lining), FVector(S1 - Lining, HT, TopZ), NoEnds & ~EPlannerBoxFace::PosZ);
+
+		if (Style.bCasing)
+		{
+			const float InnerStart = S0 + Lining - CasingReveal;
+			const float InnerEnd = S1 - Lining + CasingReveal;
+			const float InnerTop = TopZ - Lining + CasingReveal;
+			const float CasingBottom = bWalkThrough ? FloorTopZ : SillZ;
+			for (int32 FaceIdx = 0; FaceIdx < 2; ++FaceIdx)
+			{
+				float Width = CasingWidth;
+				Width = FMath::Min(Width, RoomBefore(FaceIdx, InnerStart));
+				Width = FMath::Min(Width, RoomAfter(FaceIdx, InnerEnd));
+				Width = FMath::Min(Width, F.Height - 0.5f - InnerTop);
+				if (Width < MinCasingWidth)
+				{
+					continue; // no room on this face (corner, neighbour, ceiling): a clipped casing looks worse than none
+				}
+				const float FaceSign = FaceIdx == 0 ? 1.f : -1.f;
+				PlannerOpeningGeometry::AddMitredCasing(Dressing.Get(EPlannerOpeningMaterial::Frame, Style.FrameColor),
+					Origin + AxisY * (FaceSign * HT), AxisX, AxisY * FaceSign, InnerStart, InnerEnd, CasingBottom, InnerTop, Width, CasingDepth);
+			}
+		}
 	}
-	if (!LeafMat)
+
+	// Windows: frame in the middle of the wall depth and a sill board on the interior face.
+	float WindowFrame = 0.f;
+	float WindowDepth = FMath::Max(1.f, 2.f * HT - 1.f);
+	if (bWindow)
 	{
-		LeafMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+		WindowFrame = FMath::Min(WindowFrameWidth, FMath::Min(S1 - S0, TopZ - SillZ) * 0.2f);
+		WindowDepth = FMath::Min(WindowFrameDepth, WindowDepth);
+		const float Y0 = -WindowDepth * 0.5f;
+		const float Y1 = WindowDepth * 0.5f;
+		FrameBox(FVector(S0, Y0, SillZ), FVector(S0 + WindowFrame, Y1, TopZ), EPlannerBoxFace::All & ~EPlannerBoxFace::NegX);
+		FrameBox(FVector(S1 - WindowFrame, Y0, SillZ), FVector(S1, Y1, TopZ), EPlannerBoxFace::All & ~EPlannerBoxFace::PosX);
+		FrameBox(FVector(S0 + WindowFrame, Y0, SillZ), FVector(S1 - WindowFrame, Y1, SillZ + WindowFrame), NoEnds & ~EPlannerBoxFace::NegZ);
+		FrameBox(FVector(S0 + WindowFrame, Y0, TopZ - WindowFrame), FVector(S1 - WindowFrame, Y1, TopZ), NoEnds & ~EPlannerBoxFace::PosZ);
+
+		if (!bWalkThrough)
+		{
+			const int32 InteriorFace = WallData.bLeftSideIsInterior ? 0 : 1;
+			const float InteriorSign = WallData.bLeftSideIsInterior ? 1.f : -1.f;
+			const float EarsBefore = FMath::Clamp(RoomBefore(InteriorFace, S0), 0.f, StoolEars);
+			const float EarsAfter = FMath::Clamp(RoomAfter(InteriorFace, S1), 0.f, StoolEars);
+			const float InnerY = InteriorSign * Y1;
+			const float OuterY = InteriorSign * (HT + StoolProjection);
+			FrameBox(FVector(S0 - EarsBefore, FMath::Min(InnerY, OuterY), SillZ), FVector(S1 + EarsAfter, FMath::Max(InnerY, OuterY), SillZ + StoolThickness),
+				EPlannerBoxFace::All);
+		}
 	}
-	if (LeafMat && WallProceduralMesh->GetNumSections() > 1)
+
+	if (Op.Type == EOpeningType::Archway || !LeafMeshes.IsValidIndex(OpeningIndex) || !LeafMeshes[OpeningIndex])
 	{
-		WallProceduralMesh->SetMaterial(1, LeafMat);
+		return;
 	}
+
+	// ── Leaf / sash ──
+	const bool bHingeAtStart = IsHingeAtStart(Op, WallData.bLeftSideIsInterior);
+	const FVector2D InteriorNormal = WallData.bLeftSideIsInterior ? F.Normal : -F.Normal;
+	const FVector2D Swing = (Op.SwingDirection == EOpeningSwingDirection::Inward) ? InteriorNormal : -InteriorNormal;
+	const FVector2D Along = bHingeAtStart ? F.Dir : -F.Dir;
+	// +1 when the swing side is the leaf's local +Y at the closed yaw (UE yaw turns +X toward +Y).
+	const float SwingSign = (Along.X * Swing.Y - Along.Y * Swing.X) >= 0.f ? 1.f : -1.f;
+	const float SwingFace = FVector2D::DotProduct(Swing, F.Normal) >= 0.f ? 1.f : -1.f;
+
+	const float Inset = bDoor ? Lining : WindowFrame;
+	const float MaxThickness = FMath::Max(1.f, (bDoor ? 2.f * HT : WindowDepth) - 1.f);
+	const float Thickness = FMath::Min(bDoor ? DoorLeafThickness : WindowSashThickness, MaxThickness);
+	const float FloorBase = (bDoor && bWalkThrough) ? (Style.bThreshold ? ThresholdTopZ : FloorTopZ) : SillZ;
+	const float LeafBottom = FloorBase + (bWindow ? WindowFrame : 0.f) + LeafGap;
+	const float LeafTop = TopZ - Inset - LeafGap;
+	const float LeafWidth = (S1 - S0) - 2.f * (Inset + LeafGap);
+	const float LeafHeight = LeafTop - LeafBottom;
+	if (LeafWidth < 4.f || LeafHeight < 4.f)
+	{
+		return;
+	}
+
+	// Hinge axis at the hinge-side lining / frame: on the swing-side wall face for doors (the leaf opens away from the wall),
+	// on the swing face of the sash for windows (the sash sits in the middle of the wall depth).
+	const float HingeAlong = bHingeAtStart ? S0 + Inset + LeafGap : S1 - Inset - LeafGap;
+	const float Lateral = bDoor ? SwingFace * HT : SwingFace * Thickness * 0.5f;
+	const FVector2D Pivot2D = F.Start + F.Dir * HingeAlong + F.Normal * Lateral;
+
+	FLeafPose& Pose = LeafPoses[OpeningIndex];
+	Pose.bValid = true;
+	Pose.Pivot = FVector(Pivot2D.X, Pivot2D.Y, LeafBottom);
+	Pose.ClosedYawDeg = FMath::RadiansToDegrees(FMath::Atan2(Along.Y, Along.X));
+	Pose.SwingSign = SwingSign;
+	Pose.PlanAngleDeg = bDoor ? 90.f : 25.f;
+	Pose.OpenAngle3DDeg = bDoor ? 90.f : 45.f;
+
+	FPlannerLeafParams Params;
+	Params.Type = Op.Type;
+	Params.Design = bDoor ? Style.LeafDesign : EPlannerLeafDesign::Flush;
+	Params.GlassKind = Style.GlassKind;
+	Params.Width = LeafWidth;
+	Params.Height = LeafHeight;
+	Params.Thickness = Thickness;
+	Params.BodySign = -SwingSign; // the body lies behind the swing face, inside the wall depth
+	Params.HandleZ = FloorTopZ + DoorHandleHeightCm - LeafBottom;
+	Params.LeafColor = Style.LeafColor;
+	Params.MetalColor = Style.MetalColor;
+	Params.bSwingFaceIsInterior = (Op.SwingDirection == EOpeningSwingDirection::Inward);
+
+	FPlannerSectionedMesh LeafMesh;
+	PlannerOpeningGeometry::BuildLeaf(Params, LeafMesh);
+	// Leaves are clickable only in 3D; 2D edits rebuild walls every frame, so they do not cook collision there
+	// (the manager rebuilds the walls once when the view switches to 3D).
+	CommitSections(LeafMeshes[OpeningIndex], LeafMesh, bPresentation3D);
+
+	// Plan symbol: swing arc from the closed latch edge to the plan pose, just above the floor (doors) or the sill board (windows).
+	const float ArcZ = bDoor ? FloorTopZ + 0.3f : SillZ + StoolThickness + 0.5f;
+	PlannerMeshBuilder::AddArcStrip(Plan, Pivot2D, Along, Swing, FMath::DegreesToRadians(Pose.PlanAngleDeg),
+		FMath::Max(0.f, LeafWidth - 1.5f), LeafWidth, ArcZ, bDoor ? 24 : 8);
 }

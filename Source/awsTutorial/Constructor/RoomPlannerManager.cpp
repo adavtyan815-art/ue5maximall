@@ -32,6 +32,9 @@
 #include "Interfaces/Interface_PostProcessVolume.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/Texture2D.h"
+#include "Constructor/PlannerOpeningBuilder.h"
+#include "Constructor/PlannerOpeningStyles.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/Guid.h"
 #include "Framework/Application/SlateApplication.h"
@@ -107,6 +110,26 @@ ARoomPlannerManager::ARoomPlannerManager()
 	NodeHandleMesh->SetAbsolute(true, true, true);
 	NodeHandleMesh->SetVisibility(false);
 
+	// Exterior view behind doors / windows (3D only): unlit, not a light, invisible to shadows, GI, ray tracing and captures.
+	auto CreateExteriorMesh = [this](const TCHAR* Name)
+	{
+		UProceduralMeshComponent* Mesh = CreateDefaultSubobject<UProceduralMeshComponent>(Name);
+		Mesh->SetupAttachment(SceneRoot);
+		Mesh->SetAbsolute(true, true, true);
+		Mesh->bUseAsyncCooking = true;
+		Mesh->SetCastShadow(false);
+		Mesh->bVisibleInRayTracing = false;
+		Mesh->bAffectDynamicIndirectLighting = false;
+		Mesh->bAffectDistanceFieldLighting = false;
+		Mesh->bVisibleInReflectionCaptures = false;
+		Mesh->bVisibleInRealTimeSkyCaptures = false;
+		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Mesh->SetVisibility(false);
+		return Mesh;
+	};
+	ExteriorSkyMesh = CreateExteriorMesh(TEXT("ExteriorSkyMesh"));
+	ExteriorGroundMesh = CreateExteriorMesh(TEXT("ExteriorGroundMesh"));
+
 	// Planner exposure override (see header): disabled until a planner session is open in 3D.
 	PlannerExposure = CreateDefaultSubobject<UPostProcessComponent>(TEXT("PlannerExposure"));
 	PlannerExposure->SetupAttachment(SceneRoot);
@@ -175,6 +198,18 @@ void ARoomPlannerManager::Tick(float DeltaTime)
 	{
 		RebuildRoomLights();
 	}
+	// Exterior view: rebuild when dirty and needed, hide it once the layout no longer qualifies (e.g. cleared while in 3D),
+	// and follow the camera in and out of the enclosure.
+	{
+		const bool bShouldShow = ShouldShowExteriorBackdrop();
+		const bool bCurrentlyVisible = (ExteriorSkyMesh && ExteriorSkyMesh->GetVisibleFlag()) || (ExteriorGroundMesh && ExteriorGroundMesh->GetVisibleFlag());
+		const bool bWantVisible = bShouldShow && IsCameraInsideExteriorBackdrop();
+		if ((bExteriorBackdropDirty && (bShouldShow || bCurrentlyVisible)) || (!bExteriorBackdropDirty && bCurrentlyVisible != bWantVisible))
+		{
+			UpdateExteriorBackdropVisibility();
+		}
+	}
+	TickLeafAnimations(DeltaTime);
 
 	if (!BoundPSInput.IsValid())
 	{
@@ -607,6 +642,7 @@ void ARoomPlannerManager::ClearWallsAndRooms()
 	Nodes.Empty();
 	Rooms.Empty();
 	FloorSectionMaterials.Empty();
+	bExteriorBackdropDirty = true; // the enclosure follows the layout (hidden by Tick when nothing qualifies)
 	NextNodeID = 1;
 	NextSegmentID = 1;
 	DraggingNodeID = -1;
@@ -826,6 +862,11 @@ void ARoomPlannerManager::ComputeAllCornerJoints()
 
 void ARoomPlannerManager::RebuildAllWalls()
 {
+	if (LayoutImportDepth > 0)
+	{
+		return; // ImportLayoutFromJSON rebuilds once when every wall and opening exists
+	}
+
 	ComputeAllCornerJoints();
 
 	for (auto& Pair : WallActors)
@@ -875,7 +916,15 @@ void ARoomPlannerManager::RebuildAllWalls()
 				WallActor->AppliedFinish = Seg->Finish;
 			}
 
+			// Trim must stay clear of other walls meeting this wall's ends (T-junction branches are not mitred).
+			WallActor->SetDressingFaceLimits(
+				ComputeBranchCoverOnFace(SegID, Seg->StartNodeID, Dir, Normal, HalfThick),
+				ComputeBranchCoverOnFace(SegID, Seg->StartNodeID, Dir, -Normal, HalfThick),
+				ComputeBranchCoverOnFace(SegID, Seg->EndNodeID, -Dir, Normal, HalfThick),
+				ComputeBranchCoverOnFace(SegID, Seg->EndNodeID, -Dir, -Normal, HalfThick));
+			WallActor->SetPresentation(!b2DViewMode);
 			WallActor->RebuildWallMesh(StartPos, EndPos, SL2D, SR2D, EL2D, ER2D, bStartCap, bEndCap, true);
+			ApplyLeafAnimationsToWall(WallActor);
 		}
 	}
 
@@ -898,8 +947,14 @@ void ARoomPlannerManager::SetCeilingVisibility(bool bVisible)
 
 void ARoomPlannerManager::RebuildRooms()
 {
+	if (LayoutImportDepth > 0)
+	{
+		return; // ImportLayoutFromJSON rebuilds once when every wall and opening exists
+	}
+
 	Rooms.Empty();
 	bRoomLightsDirty = true; // every exit below (including "no closed room") must refresh the room lights
+	bExteriorBackdropDirty = true; // the enclosure follows the layout bounds
 	if (FloorProceduralMesh) FloorProceduralMesh->ClearAllMeshSections();
 	if (CeilingProceduralMesh) CeilingProceduralMesh->ClearAllMeshSections();
 	if (BaseboardProceduralMesh) BaseboardProceduralMesh->ClearAllMeshSections();
@@ -1471,24 +1526,61 @@ void ARoomPlannerManager::RebuildRooms()
 				FVector2D EdgeDir = (P2 - P1).GetSafeNormal();
 				FVector2D EdgeNorm(-EdgeDir.Y, EdgeDir.X);
 				FVector OutNormal(EdgeNorm.X, EdgeNorm.Y, 0.f);
+				const float EdgeLen = FVector2D::Distance(P1, P2);
 
-				FVector V0(P1.X, P1.Y, 1.f);
-				FVector V1(P2.X, P2.Y, 1.f);
-				FVector V2(P2.X, P2.Y, 1.f + BbHeight);
-				FVector V3(P1.X, P1.Y, 1.f + BbHeight);
+				// Walk-through openings (doors, archways) cut the baseboard. The strip runs along the wall centreline, so the only
+				// part that ever showed was the piece crossing a doorway, where it looked like a raised wooden threshold.
+				TArray<FVector2D, TInlineAllocator<4>> Cuts; // (from, to) in cm along P1 -> P2
+				for (const TPair<int32, FWallSegment>& SegPair : WallSegments)
+				{
+					const FWallNode* SegStart = Nodes.Find(SegPair.Value.StartNodeID);
+					const FWallNode* SegEnd = Nodes.Find(SegPair.Value.EndNodeID);
+					if (!SegStart || !SegEnd) continue;
+					const bool bForward = SegStart->Position.Equals(P1, 0.5f) && SegEnd->Position.Equals(P2, 0.5f);
+					const bool bBackward = SegStart->Position.Equals(P2, 0.5f) && SegEnd->Position.Equals(P1, 0.5f);
+					if (!bForward && !bBackward) continue;
+					for (const FWallOpening& Op : SegPair.Value.Openings)
+					{
+						if (Op.SillHeight >= 11.f) continue;
+						const float Center = bForward ? Op.DistanceFromStart : EdgeLen - Op.DistanceFromStart;
+						Cuts.Add(FVector2D(FMath::Clamp(Center - Op.Width * 0.5f, 0.f, EdgeLen), FMath::Clamp(Center + Op.Width * 0.5f, 0.f, EdgeLen)));
+					}
+					break;
+				}
+				Cuts.Sort([](const FVector2D& A, const FVector2D& B) { return A.X < B.X; });
 
-				int32 StartIdx = BbVerts.Num();
-				BbVerts.Add(V0); BbVerts.Add(V1); BbVerts.Add(V2); BbVerts.Add(V3);
-				BbNorms.Add(OutNormal); BbNorms.Add(OutNormal); BbNorms.Add(OutNormal); BbNorms.Add(OutNormal);
-				BbUVs.Add(FVector2D(0.f, 0.f)); BbUVs.Add(FVector2D(1.f, 0.f)); BbUVs.Add(FVector2D(1.f, 1.f)); BbUVs.Add(FVector2D(0.f, 1.f));
+				auto AddBaseboardSpan = [&](float From, float To)
+				{
+					if (To - From < 0.5f) return;
+					const FVector2D A = P1 + EdgeDir * From;
+					const FVector2D B = P1 + EdgeDir * To;
 
-				FColor BbColor(100, 75, 50, 255);
-				BbColors.Add(BbColor); BbColors.Add(BbColor); BbColors.Add(BbColor); BbColors.Add(BbColor);
+					FVector V0(A.X, A.Y, 1.f);
+					FVector V1(B.X, B.Y, 1.f);
+					FVector V2(B.X, B.Y, 1.f + BbHeight);
+					FVector V3(A.X, A.Y, 1.f + BbHeight);
 
-				BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 1); BbTris.Add(StartIdx + 2);
-				BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 2); BbTris.Add(StartIdx + 3);
-				BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 2); BbTris.Add(StartIdx + 1);
-				BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 3); BbTris.Add(StartIdx + 2);
+					int32 StartIdx = BbVerts.Num();
+					BbVerts.Add(V0); BbVerts.Add(V1); BbVerts.Add(V2); BbVerts.Add(V3);
+					BbNorms.Add(OutNormal); BbNorms.Add(OutNormal); BbNorms.Add(OutNormal); BbNorms.Add(OutNormal);
+					BbUVs.Add(FVector2D(0.f, 0.f)); BbUVs.Add(FVector2D(1.f, 0.f)); BbUVs.Add(FVector2D(1.f, 1.f)); BbUVs.Add(FVector2D(0.f, 1.f));
+
+					FColor BbColor(100, 75, 50, 255);
+					BbColors.Add(BbColor); BbColors.Add(BbColor); BbColors.Add(BbColor); BbColors.Add(BbColor);
+
+					BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 1); BbTris.Add(StartIdx + 2);
+					BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 2); BbTris.Add(StartIdx + 3);
+					BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 2); BbTris.Add(StartIdx + 1);
+					BbTris.Add(StartIdx + 0); BbTris.Add(StartIdx + 3); BbTris.Add(StartIdx + 2);
+				};
+
+				float Cursor = 0.f;
+				for (const FVector2D& Cut : Cuts)
+				{
+					AddBaseboardSpan(Cursor, Cut.X);
+					Cursor = FMath::Max(Cursor, Cut.Y);
+				}
+				AddBaseboardSpan(Cursor, EdgeLen);
 			}
 
 			BaseboardProceduralMesh->CreateMeshSection(RoomIdx, BbVerts, BbTris, BbNorms, BbUVs, BbColors, TArray<FProcMeshTangent>(), false);
@@ -1595,6 +1687,10 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 			OpObj->SetNumberField(TEXT("sill"), Op.SillHeight);
 			OpObj->SetStringField(TEXT("swingSide"), Op.SwingSide == EOpeningSwingSide::Right ? TEXT("right") : TEXT("left"));
 			OpObj->SetStringField(TEXT("swingDir"), Op.SwingDirection == EOpeningSwingDirection::Outward ? TEXT("out") : TEXT("in"));
+			if (!Op.Style.IsNone())
+			{
+				OpObj->SetStringField(TEXT("style"), Op.Style.ToString());
+			}
 			OpeningsArray.Add(MakeShareable(new FJsonValueObject(OpObj)));
 		}
 		WallObj->SetArrayField(TEXT("openings"), OpeningsArray);
@@ -1697,6 +1793,7 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 	// Walls / nodes / rooms are rebuilt from scratch (established full-reimport model);
 	// placed objects and cabinet sets are RECONCILED by InstanceID so they do not flicker.
 	ClearWallsAndRooms();
+	++LayoutImportDepth; // walls / openings below rebuild once at the end of the import
 
 	// Read Nodes
 	const TArray<TSharedPtr<FJsonValue>>* NodesArray = nullptr;
@@ -1803,7 +1900,11 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 									if (Seg->Openings.Num() > 0)
 									{
 										FWallOpening& NewOp = Seg->Openings.Last();
-										FString SideStr, DirStr;
+										FString SideStr, DirStr, StyleStr;
+										if (OpObj->TryGetStringField(TEXT("style"), StyleStr) && !StyleStr.IsEmpty())
+										{
+											NewOp.Style = FName(*StyleStr); // unknown IDs fall back to the type's default style when drawn
+										}
 										if (OpObj->TryGetStringField(TEXT("swingSide"), SideStr))
 										{
 											NewOp.SwingSide = SideStr.Equals(TEXT("right"), ESearchCase::IgnoreCase) ? EOpeningSwingSide::Right : EOpeningSwingSide::Left;
@@ -1881,8 +1982,15 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 		}
 	}
 
-	RebuildAllWalls();
+	--LayoutImportDepth;
+	// Rooms first: they decide each wall's interior side (hinge side, sill boards), which the JSON does not carry, so the
+	// walls are then built exactly once with the right side.
+	bWallsRebuiltByInteriorPass = false;
 	RebuildRooms();
+	if (!bWallsRebuiltByInteriorPass)
+	{
+		RebuildAllWalls();
+	}
 	RebuildPlacedObjectActors();
 	ReconcileCabinetSetActors();
 
@@ -2013,6 +2121,7 @@ float ARoomPlannerManager::CalculatePerimeterM() const
 
 void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 {
+	const bool bWas2D = b2DViewMode;
 	b2DViewMode = bIn2DMode;
 	ActiveViewMode = bIn2DMode ? EPlannerViewMode::View2D_TopDown : EPlannerViewMode::View3D_Perspective;
 
@@ -2037,7 +2146,21 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 	{
 		if (Pair.Value) Pair.Value->SetShown(!bIn2DMode);
 	}
+	// Doors / windows: plan symbols and plan-pose leaves in 2D, closed / opened leaves in 3D. Switching from 2D to 3D rebuilds
+	// the walls once: 2D rebuilds (every frame while dragging) skip leaf collision, which 3D clicks and hover need.
+	if (!bIn2DMode && bWas2D)
+	{
+		RebuildAllWalls();
+	}
+	else
+	{
+		for (const auto& Pair : WallActors)
+		{
+			if (Pair.Value) Pair.Value->SetPresentation(!bIn2DMode);
+		}
+	}
 	UpdatePlannerExposure();
+	UpdateExteriorBackdropVisibility();
 
 	RefreshNodeHandles();
 }
@@ -4167,6 +4290,7 @@ void ARoomPlannerManager::ComputeWallInteriorSides(const TArray<TArray<FVector2D
 
 	if (bAnyChanged)
 	{
+		bWallsRebuiltByInteriorPass = true;
 		RebuildAllWalls(); // leaves depend on the interior side
 	}
 }
@@ -4216,6 +4340,271 @@ bool ARoomPlannerManager::SetOpeningSwing(int32 SegmentID, int32 OpeningIndex, E
 	CommitStateAfterMutation();
 	UpdateSelectionVisuals();
 	return true;
+}
+
+bool ARoomPlannerManager::SetOpeningStyle(int32 SegmentID, int32 OpeningIndex, FName StyleID)
+{
+	FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || !Seg->Openings.IsValidIndex(OpeningIndex)) return false;
+
+	FWallOpening& Op = Seg->Openings[OpeningIndex];
+	if (!PlannerOpeningStyles::IsValidFor(Op.Type, StyleID))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] SetOpeningStyle: '%s' is not a style for this opening type."), *StyleID.ToString());
+		return false;
+	}
+	if (Op.Style == StyleID) return true;
+
+	Op.Style = StyleID;
+	RebuildAllWalls();
+	CommitStateAfterMutation();
+	UpdateSelectionVisuals();
+	return true;
+}
+
+bool ARoomPlannerManager::GetOpeningStyle(int32 SegmentID, int32 OpeningIndex, FName& OutStyleID) const
+{
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || !Seg->Openings.IsValidIndex(OpeningIndex)) return false;
+	const FWallOpening& Op = Seg->Openings[OpeningIndex];
+	OutStyleID = PlannerOpeningStyles::Resolve(Op.Type, Op.Style).ID;
+	return true;
+}
+
+bool ARoomPlannerManager::GetOpeningType(int32 SegmentID, int32 OpeningIndex, EOpeningType& OutType) const
+{
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || !Seg->Openings.IsValidIndex(OpeningIndex)) return false;
+	OutType = Seg->Openings[OpeningIndex].Type;
+	return true;
+}
+
+TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableOpeningStyles(EOpeningType Type) const
+{
+	TArray<FPlannerCatalogEntry> Entries;
+	for (const FPlannerOpeningStyle& Style : PlannerOpeningStyles::All())
+	{
+		if (Style.Type != Type) continue;
+		FPlannerCatalogEntry& Entry = Entries.AddDefaulted_GetRef();
+		Entry.ID = Style.ID.ToString();
+		Entry.DisplayName = FText::FromString(Style.DisplayName);
+		Entry.Category = TEXT("OpeningStyle");
+		Entry.Color = Style.LeafColor;
+	}
+	return Entries;
+}
+
+// ── Door / window leaves in 3D (local view state) ──
+
+namespace
+{
+	constexpr float LeafOpenSeconds = 0.65f;
+	constexpr float LeafCloseSeconds = 0.5f;
+
+	/** Opening: ease-out that settles with a barely visible (~1°) overshoot. Closing: ease-in-out. */
+	float EaseLeafMotion(float T, bool bOpening)
+	{
+		T = FMath::Clamp(T, 0.f, 1.f);
+		if (bOpening)
+		{
+			const float C1 = 0.6f;
+			const float C3 = C1 + 1.f;
+			const float U = T - 1.f;
+			return 1.f + C3 * U * U * U + C1 * U * U;
+		}
+		return T < 0.5f ? 4.f * T * T * T : 1.f - FMath::Pow(-2.f * T + 2.f, 3.f) * 0.5f;
+	}
+}
+
+FString ARoomPlannerManager::MakeLeafKey(const FString& WallGuid, int32 OpeningIndex)
+{
+	return FString::Printf(TEXT("%s#%d"), *WallGuid, OpeningIndex);
+}
+
+ARoomPlannerManager::FLeafAnimation* ARoomPlannerManager::FindLeafAnimation(AProceduralWallActor* Wall, int32 OpeningIndex)
+{
+	if (!Wall || !Wall->WallData.Openings.IsValidIndex(OpeningIndex)) return nullptr;
+	const FString Key = MakeLeafKey(Wall->WallData.WallGuid, OpeningIndex);
+	FLeafAnimation* Anim = LeafAnimations.Find(Key);
+	if (!Anim) return nullptr;
+	const FWallOpening& Opening = Wall->WallData.Openings[OpeningIndex];
+	if (Anim->Type != Opening.Type || Anim->DistanceKey != FMath::RoundToInt(Opening.DistanceFromStart))
+	{
+		LeafAnimations.Remove(Key); // another opening now sits at this index (delete, drag, split): start from the default
+		return nullptr;
+	}
+	return Anim;
+}
+
+float ARoomPlannerManager::ComputeBranchCoverOnFace(int32 SegmentID, int32 NodeID, const FVector2D& AwayDir, const FVector2D& FaceNormal, float HalfThickness) const
+{
+	const FWallNode* Node = Nodes.Find(NodeID);
+	if (!Node) return 0.f;
+	float Cover = 0.f;
+	for (int32 OtherID : Node->ConnectedSegmentIDs)
+	{
+		if (OtherID == SegmentID) continue;
+		const FWallSegment* Other = WallSegments.Find(OtherID);
+		if (!Other) continue;
+		const FWallNode* Far = Nodes.Find(Other->StartNodeID == NodeID ? Other->EndNodeID : Other->StartNodeID);
+		if (!Far) continue;
+		const FVector2D OtherDir = (Far->Position - Node->Position).GetSafeNormal();
+		if (FVector2D::DotProduct(OtherDir, FaceNormal) <= 0.f) continue; // on the other face's side
+		const float Sin = FMath::Abs(AwayDir.X * OtherDir.Y - AwayDir.Y * OtherDir.X);
+		if (Sin < 0.05f) continue; // collinear continuation
+		// Distance along this face from the node to the far edge of the other wall's footprint. A branch leaning away (obtuse)
+		// starts at its end cap, which limits how far along this face it can reach.
+		const float Cos = FVector2D::DotProduct(AwayDir, OtherDir);
+		float WallCover = (HalfThickness * Cos + Other->Thickness * 0.5f) / Sin;
+		if (Cos < 0.f)
+		{
+			WallCover = FMath::Min(WallCover, HalfThickness * Sin / -Cos);
+		}
+		Cover = FMath::Max(Cover, WallCover);
+	}
+	return Cover;
+}
+
+bool ARoomPlannerManager::IsOpeningLeafComponent(const UPrimitiveComponent* Component)
+{
+	return Component && Component->ComponentHasTag(AProceduralWallActor::LeafComponentTag)
+		&& Cast<AProceduralWallActor>(Component->GetOwner()) != nullptr;
+}
+
+void ARoomPlannerManager::StartLeafAnimation(AProceduralWallActor* Wall, int32 OpeningIndex, float Target, float InitialFraction)
+{
+	if (!Wall || !Wall->HasLeaf(OpeningIndex)) return;
+
+	const FString Key = MakeLeafKey(Wall->WallData.WallGuid, OpeningIndex);
+	const bool bNew = FindLeafAnimation(Wall, OpeningIndex) == nullptr; // also discards state of an opening that moved away
+	FLeafAnimation& Anim = LeafAnimations.FindOrAdd(Key);
+	if (bNew)
+	{
+		Anim.Current = Anim.Target = InitialFraction;
+		Anim.Type = Wall->WallData.Openings[OpeningIndex].Type;
+		Anim.DistanceKey = FMath::RoundToInt(Wall->WallData.Openings[OpeningIndex].DistanceFromStart);
+	}
+	Anim.From = Anim.Current;
+	Anim.Target = Target;
+	Anim.Elapsed = 0.f;
+	// Reversing a half-finished swing takes proportionally less time.
+	Anim.Duration = (Target > Anim.Current ? LeafOpenSeconds : LeafCloseSeconds) * FMath::Clamp(FMath::Abs(Target - Anim.Current), 0.25f, 1.f);
+	Anim.bAnimating = !FMath::IsNearlyEqual(Anim.Current, Target);
+	bAnyLeafAnimating |= Anim.bAnimating;
+}
+
+void ARoomPlannerManager::ToggleLeafOnWall(AProceduralWallActor* Wall, int32 OpeningIndex)
+{
+	if (!Wall || !Wall->HasLeaf(OpeningIndex)) return;
+	const float Default = bDefaultLeavesOpen ? 1.f : 0.f;
+	const FLeafAnimation* Existing = FindLeafAnimation(Wall, OpeningIndex);
+	const float CurrentTarget = Existing ? Existing->Target : Default;
+	StartLeafAnimation(Wall, OpeningIndex, CurrentTarget > 0.5f ? 0.f : 1.f, Default);
+}
+
+void ARoomPlannerManager::ToggleOpeningLeaf(int32 SegmentID, int32 OpeningIndex)
+{
+	if (b2DViewMode) return; // the 2D plan always shows the plan pose
+	const TObjectPtr<AProceduralWallActor>* WallPtr = WallActors.Find(SegmentID);
+	ToggleLeafOnWall(WallPtr ? WallPtr->Get() : nullptr, OpeningIndex);
+}
+
+bool ARoomPlannerManager::TryToggleOpeningLeafFromHit(const FHitResult& Hit)
+{
+	if (b2DViewMode) return false;
+	const UPrimitiveComponent* Component = Hit.GetComponent();
+	if (!IsOpeningLeafComponent(Component)) return false;
+	AProceduralWallActor* Wall = Cast<AProceduralWallActor>(Component->GetOwner());
+	const int32 Index = Wall ? Wall->FindLeafIndex(Component) : INDEX_NONE;
+	if (Index == INDEX_NONE) return false;
+
+	// One press can arrive here twice (the planner widget's 3D pick and PlayerTick's pick): toggle it once.
+	const FString Key = MakeLeafKey(Wall->WallData.WallGuid, Index);
+	const double Now = FPlatformTime::Seconds();
+	if (Key == LastLeafToggleKey && Now - LastLeafToggleTime < 0.2)
+	{
+		return true;
+	}
+	LastLeafToggleKey = Key;
+	LastLeafToggleTime = Now;
+
+	ToggleLeafOnWall(Wall, Index);
+	return true;
+}
+
+void ARoomPlannerManager::SetAllOpeningLeavesOpen(bool bOpen)
+{
+	const float PreviousDefault = bDefaultLeavesOpen ? 1.f : 0.f;
+	bDefaultLeavesOpen = bOpen;
+	const float Target = bOpen ? 1.f : 0.f;
+	for (const auto& Pair : WallActors)
+	{
+		AProceduralWallActor* Wall = Pair.Value;
+		if (!Wall) continue;
+		for (int32 i = 0; i < Wall->WallData.Openings.Num(); ++i)
+		{
+			if (!Wall->HasLeaf(i)) continue;
+			if (b2DViewMode)
+			{
+				// Not visible in 2D: jump straight to the new state for the next 3D view.
+				FLeafAnimation& Anim = LeafAnimations.FindOrAdd(MakeLeafKey(Wall->WallData.WallGuid, i));
+				Anim.Current = Anim.From = Anim.Target = Target;
+				Anim.bAnimating = false;
+				Anim.Type = Wall->WallData.Openings[i].Type;
+				Anim.DistanceKey = FMath::RoundToInt(Wall->WallData.Openings[i].DistanceFromStart);
+				Wall->SetLeafOpenFraction(i, Target);
+			}
+			else
+			{
+				StartLeafAnimation(Wall, i, Target, PreviousDefault);
+			}
+		}
+	}
+}
+
+void ARoomPlannerManager::TickLeafAnimations(float DeltaTime)
+{
+	if (!bAnyLeafAnimating) return;
+	bAnyLeafAnimating = false;
+	for (const auto& Pair : WallActors)
+	{
+		AProceduralWallActor* Wall = Pair.Value;
+		if (!Wall) continue;
+		for (int32 i = 0; i < Wall->WallData.Openings.Num(); ++i)
+		{
+			FLeafAnimation* Anim = FindLeafAnimation(Wall, i);
+			if (!Anim || !Anim->bAnimating) continue;
+
+			Anim->Elapsed += DeltaTime;
+			const float T = Anim->Duration > KINDA_SMALL_NUMBER ? Anim->Elapsed / Anim->Duration : 1.f;
+			if (T >= 1.f)
+			{
+				Anim->Current = Anim->Target;
+				Anim->bAnimating = false;
+			}
+			else
+			{
+				Anim->Current = FMath::Lerp(Anim->From, Anim->Target, EaseLeafMotion(T, Anim->Target > Anim->From));
+				bAnyLeafAnimating = true;
+			}
+			Wall->SetLeafOpenFraction(i, Anim->Current);
+		}
+	}
+}
+
+void ARoomPlannerManager::ApplyLeafAnimationsToWall(AProceduralWallActor* Wall)
+{
+	if (!Wall) return;
+	const float Default = bDefaultLeavesOpen ? 1.f : 0.f;
+	for (int32 i = 0; i < Wall->WallData.Openings.Num(); ++i)
+	{
+		const FLeafAnimation* Anim = FindLeafAnimation(Wall, i);
+		Wall->SetLeafOpenFraction(i, Anim ? Anim->Current : Default);
+		if (Anim && Anim->bAnimating)
+		{
+			bAnyLeafAnimating = true;
+		}
+	}
 }
 
 bool ARoomPlannerManager::GetOpeningSwing(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide& OutSide, EOpeningSwingDirection& OutDirection) const
@@ -5974,6 +6363,7 @@ void ARoomPlannerManager::SetPlannerSessionActive(bool bActive)
 {
 	bPlannerSessionActive = bActive;
 	UpdatePlannerExposure();
+	UpdateExteriorBackdropVisibility();
 }
 
 void ARoomPlannerManager::UpdatePlannerExposure()
@@ -6020,6 +6410,247 @@ void ARoomPlannerManager::UpdatePlannerLumenMode(bool bWantHitLightingGI)
 		bLumenLightingModeOverridden = false;
 		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] Lumen HWRT lighting mode restored to %d."), SavedLumenLightingMode);
 	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Doors & windows: materials and plan symbols; exterior view
+// ═══════════════════════════════════════════════════════════════════════════════
+
+UMaterialInterface* ARoomPlannerManager::GetOpeningMaterial(EPlannerOpeningMaterial Kind, const FLinearColor& Color)
+{
+	const FString Key = FString::Printf(TEXT("%d_%s"), (int32)Kind, *Color.ToFColor(false).ToHex());
+	if (const TObjectPtr<UMaterialInterface>* Found = OpeningMaterialCache.Find(Key))
+	{
+		return Found->Get();
+	}
+
+	auto MakeTinted = [this, &Color](UMaterialInterface* Parent, float Roughness) -> UMaterialInterface*
+	{
+		if (!Parent) return nullptr;
+		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Parent, this);
+		if (!MID) return Parent;
+		MID->SetVectorParameterValue(FName("BaseColor"), Color);
+		MID->SetVectorParameterValue(FName("Color"), Color);
+		if (Roughness >= 0.f)
+		{
+			MID->SetScalarParameterValue(FName("Roughness"), Roughness);
+		}
+		return MID;
+	};
+
+	UMaterialInterface* Result = nullptr;
+	switch (Kind)
+	{
+	case EPlannerOpeningMaterial::Glass:
+		Result = OpeningGlassMaterial ? OpeningGlassMaterial.Get()
+			: LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/NewDesign/scena/Materials/glass_2.glass_2"));
+		break;
+	case EPlannerOpeningMaterial::FrostedGlass:
+		Result = OpeningFrostedGlassMaterial ? OpeningFrostedGlassMaterial.Get()
+			: LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/NewDesign/scena/Materials/sid_glass_whitte.sid_glass_whitte"));
+		if (!Result)
+		{
+			Result = GetOpeningMaterial(EPlannerOpeningMaterial::Glass, Color);
+		}
+		break;
+	case EPlannerOpeningMaterial::Metal:
+		Result = MakeTinted(OpeningMetalMaterial ? OpeningMetalMaterial.Get()
+			: LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")), 0.4f);
+		break;
+	case EPlannerOpeningMaterial::Leaf:
+		if (LeafMaterial)
+		{
+			Result = LeafMaterial.Get();
+			break;
+		}
+		[[fallthrough]];
+	default:
+		Result = MakeTinted(OpeningPaintMaterial ? OpeningPaintMaterial.Get() : ResolvePaintBaseMaterial(), -1.f);
+		break;
+	}
+
+	OpeningMaterialCache.Add(Key, Result);
+	return Result;
+}
+
+UMaterialInterface* ARoomPlannerManager::GetPlanSymbolMaterial()
+{
+	if (PlanSymbolMaterial)
+	{
+		return PlanSymbolMaterial;
+	}
+	// Near-black, fully rough surface: a dark line whatever lighting the 2D view has. BasicShapeMaterial is cooked (the lobby
+	// map references it); EmissiveTexturedMaterial is referenced by nothing the cook follows, so packaged builds lack it.
+	if (UMaterialInterface* Parent = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+	{
+		if (UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Parent, this))
+		{
+			MID->SetVectorParameterValue(FName("Color"), FLinearColor(0.012f, 0.012f, 0.014f, 1.f));
+			MID->SetScalarParameterValue(FName("Roughness"), 1.f);
+			PlanSymbolMaterial = MID;
+		}
+	}
+	if (!PlanSymbolMaterial)
+	{
+		PlanSymbolMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
+	}
+	return PlanSymbolMaterial;
+}
+
+namespace
+{
+	/** Exterior colours as absolute luminance (cd/m²) per channel, matched to the planner's fixed EV100 6.8 exposure (scene white ≈ 111 cd/m²; a white wall under the room light ≈ 45–50 cd/m²). */
+	struct FPlannerExteriorPalette
+	{
+		FLinearColor Zenith;
+		FLinearColor Horizon;
+		FLinearColor GroundNear;
+		FLinearColor GroundFar;
+	};
+
+	FPlannerExteriorPalette GetExteriorPalette(EPlannerExteriorLook Look)
+	{
+		switch (Look)
+		{
+		case EPlannerExteriorLook::Overcast:
+			return { FLinearColor(0.78f, 0.80f, 0.84f) * 70.f, FLinearColor(0.92f, 0.93f, 0.94f) * 92.f,
+			         FLinearColor(0.46f, 0.47f, 0.45f) * 42.f, FLinearColor(0.80f, 0.81f, 0.82f) * 60.f };
+		case EPlannerExteriorLook::Evening:
+			return { FLinearColor(0.16f, 0.22f, 0.45f) * 20.f, FLinearColor(1.00f, 0.60f, 0.36f) * 52.f,
+			         FLinearColor(0.30f, 0.26f, 0.25f) * 14.f, FLinearColor(0.80f, 0.52f, 0.36f) * 30.f };
+		default:
+			return { FLinearColor(0.28f, 0.48f, 0.92f) * 62.f, FLinearColor(0.84f, 0.90f, 0.98f) * 98.f,
+			         FLinearColor(0.50f, 0.51f, 0.47f) * 50.f, FLinearColor(0.80f, 0.85f, 0.90f) * 70.f };
+		}
+	}
+}
+
+void ARoomPlannerManager::SetExteriorLook(EPlannerExteriorLook NewLook)
+{
+	if (ExteriorLook != NewLook)
+	{
+		ExteriorLook = NewLook;
+		bExteriorBackdropDirty = true;
+	}
+	UpdateExteriorBackdropVisibility();
+}
+
+void ARoomPlannerManager::SetExteriorBackdropEnabled(bool bEnabled)
+{
+	bShowExteriorBackdrop = bEnabled;
+	UpdateExteriorBackdropVisibility();
+}
+
+bool ARoomPlannerManager::ShouldShowExteriorBackdrop() const
+{
+	const UWorld* World = GetWorld();
+	// Only around closed rooms: without a room there is no planner floor, and the ground would replace the level floor.
+	return bShowExteriorBackdrop && (bPlannerSessionActive || bPlannerUIOpen) && !b2DViewMode && Rooms.Num() > 0
+		&& World && World->GetNetMode() != NM_DedicatedServer;
+}
+
+void ARoomPlannerManager::UpdateExteriorBackdropVisibility()
+{
+	const bool bShow = ShouldShowExteriorBackdrop();
+	if (bShow && bExteriorBackdropDirty)
+	{
+		RebuildExteriorBackdrop();
+	}
+	const bool bVisible = bShow && IsCameraInsideExteriorBackdrop();
+	if (ExteriorSkyMesh) ExteriorSkyMesh->SetVisibility(bVisible && ExteriorSkyMesh->GetNumSections() > 0);
+	if (ExteriorGroundMesh) ExteriorGroundMesh->SetVisibility(bVisible && ExteriorGroundMesh->GetNumSections() > 0);
+}
+
+bool ARoomPlannerManager::IsCameraInsideExteriorBackdrop() const
+{
+	if (ExteriorRadius <= 0.f) return true;
+	const APlayerCameraManager* CameraManager = GetWorld() ? UGameplayStatics::GetPlayerCameraManager(GetWorld(), 0) : nullptr;
+	if (!CameraManager) return true;
+	const FVector Camera = CameraManager->GetCameraLocation();
+	return FVector2D::Distance(FVector2D(Camera.X, Camera.Y), ExteriorCenter) < ExteriorRadius - 20.f && Camera.Z < ExteriorTop - 20.f;
+}
+
+void ARoomPlannerManager::RebuildExteriorBackdrop()
+{
+	bExteriorBackdropDirty = false;
+	if (!ExteriorSkyMesh || !ExteriorGroundMesh) return;
+	ExteriorSkyMesh->ClearAllMeshSections();
+	ExteriorGroundMesh->ClearAllMeshSections();
+	if (Nodes.Num() == 0) return;
+
+	// EmissiveMeshMaterial (unlit, additive, emissive = "Color" × texture "LinearColor") is an engine startup package, so it
+	// is present in cooked builds. Additive over the level (several stops below the planner exposure) shows the gradient as is.
+	UMaterialInterface* Parent = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/EmissiveMeshMaterial.EmissiveMeshMaterial"));
+	if (!Parent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] Exterior view: /Engine/EngineMaterials/EmissiveMeshMaterial is not available; doors and windows show the level behind them."));
+		return;
+	}
+
+	// Enclosure around the layout: a sky cylinder with a cap and a ground disc just below the planner floor (floor top Z = 1).
+	FBox2D Bounds(ForceInit);
+	for (const TPair<int32, FWallNode>& Pair : Nodes)
+	{
+		Bounds += Pair.Value.Position;
+	}
+	const FVector2D Center = Bounds.GetCenter();
+	const float Radius = FMath::Max(Bounds.GetExtent().Size() + 900.f, 2200.f);
+	const float SkyBottom = -50.f;
+	const float SkyTop = Radius * 1.1f;
+	const float EyeZ = 160.f;
+	ExteriorCenter = Center;
+	ExteriorRadius = Radius;
+	ExteriorTop = SkyTop;
+
+	FPlannerMeshBuffers Sky;
+	PlannerMeshBuilder::AddInwardCylinder(Sky, Center, Radius, SkyBottom, SkyTop, 96, true);
+	FPlannerMeshBuffers Ground;
+	PlannerMeshBuilder::AddDisc(Ground, Center, Radius - 2.f, 0.4f, 96);
+
+	const FPlannerExteriorPalette Palette = GetExteriorPalette(ExteriorLook);
+
+	// Sky gradient by elevation angle seen from eye height (texture row 0 = top of the cylinder, V = 0).
+	const int32 Rows = 64;
+	TArray<FLinearColor> SkyPixels;
+	SkyPixels.SetNum(Rows);
+	for (int32 Row = 0; Row < Rows; ++Row)
+	{
+		const float V = (Row + 0.5f) / Rows;
+		const float Z = FMath::Lerp(SkyTop, SkyBottom, V);
+		const float Elevation = FMath::Atan2(Z - EyeZ, Radius);
+		const float T = FMath::Clamp(Elevation / FMath::DegreesToRadians(40.f), 0.f, 1.f);
+		SkyPixels[Row] = FMath::Lerp(Palette.Horizon, Palette.Zenith, FMath::SmoothStep(0.f, 1.f, FMath::Pow(T, 0.65f)));
+		SkyPixels[Row].A = 1.f;
+	}
+	// Ground: near colour around the building fading into the horizon haze at the rim (U = 0 centre, 1 rim).
+	const int32 Cols = 32;
+	TArray<FLinearColor> GroundPixels;
+	GroundPixels.SetNum(Cols);
+	for (int32 Col = 0; Col < Cols; ++Col)
+	{
+		const float U = (Col + 0.5f) / Cols;
+		GroundPixels[Col] = FMath::Lerp(Palette.GroundNear, Palette.GroundFar, FMath::SmoothStep(0.35f, 1.f, U));
+		GroundPixels[Col].A = 1.f;
+	}
+
+	ExteriorSkyTexture = PlannerRuntimeTextures::CreateHdrPixels(1, Rows, SkyPixels);
+	ExteriorGroundTexture = PlannerRuntimeTextures::CreateHdrPixels(Cols, 1, GroundPixels);
+	if (!ExteriorSkyTexture || !ExteriorGroundTexture) return;
+
+	UMaterialInstanceDynamic* SkyMID = UMaterialInstanceDynamic::Create(Parent, this);
+	UMaterialInstanceDynamic* GroundMID = UMaterialInstanceDynamic::Create(Parent, this);
+	if (!SkyMID || !GroundMID) return;
+	for (UMaterialInstanceDynamic* MID : { SkyMID, GroundMID })
+	{
+		MID->SetVectorParameterValue(FName("Color"), FLinearColor::White);
+	}
+	SkyMID->SetTextureParameterValue(FName("LinearColor"), ExteriorSkyTexture);
+	GroundMID->SetTextureParameterValue(FName("LinearColor"), ExteriorGroundTexture);
+
+	ExteriorSkyMesh->CreateMeshSection(0, Sky.Vertices, Sky.Triangles, Sky.Normals, Sky.UVs, TArray<FColor>(), Sky.Tangents, false);
+	ExteriorSkyMesh->SetMaterial(0, SkyMID);
+	ExteriorGroundMesh->CreateMeshSection(0, Ground.Vertices, Ground.Triangles, Ground.Normals, Ground.UVs, TArray<FColor>(), Ground.Tangents, false);
+	ExteriorGroundMesh->SetMaterial(0, GroundMID);
 }
 
 void ARoomPlannerManager::SetAutoCeilingLightsEnabled(bool bEnabled)
@@ -6132,6 +6763,49 @@ static FAutoConsoleCommandWithWorldAndArgs GPlannerExposureCmd(
 		{
 			UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.Exposure: EFFECTIVE exposure range comes from %s"), *ExposureOwnerName);
 		}
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GPlannerExteriorCmd(
+	TEXT("planner.Exterior"),
+	TEXT("planner.Exterior [day|overcast|evening|on|off] — unlit exterior view behind doors and windows in 3D. No argument = print."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(World);
+		if (!Manager)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[MaxiMallConstructor] planner.Exterior: no planner manager in this world (run while playing)."));
+			return;
+		}
+		if (Args.Num() > 0)
+		{
+			const FString& Arg = Args[0];
+			if (Arg.Equals(TEXT("off"), ESearchCase::IgnoreCase)) Manager->SetExteriorBackdropEnabled(false);
+			else if (Arg.Equals(TEXT("on"), ESearchCase::IgnoreCase)) Manager->SetExteriorBackdropEnabled(true);
+			else if (Arg.Equals(TEXT("overcast"), ESearchCase::IgnoreCase)) Manager->SetExteriorLook(EPlannerExteriorLook::Overcast);
+			else if (Arg.Equals(TEXT("evening"), ESearchCase::IgnoreCase)) Manager->SetExteriorLook(EPlannerExteriorLook::Evening);
+			else if (Arg.Equals(TEXT("day"), ESearchCase::IgnoreCase)) Manager->SetExteriorLook(EPlannerExteriorLook::Day);
+		}
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.Exterior: enabled=%d look=%s visible=%d"),
+			Manager->bShowExteriorBackdrop ? 1 : 0, *UEnum::GetValueAsString(Manager->ExteriorLook),
+			(Manager->ExteriorSkyMesh && Manager->ExteriorSkyMesh->IsVisible()) ? 1 : 0);
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GPlannerDoorsCmd(
+	TEXT("planner.Doors"),
+	TEXT("planner.Doors [open|closed] — opens or closes every door / window leaf in the 3D view. No argument = print."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(World);
+		if (!Manager)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[MaxiMallConstructor] planner.Doors: no planner manager in this world (run while playing)."));
+			return;
+		}
+		if (Args.Num() > 0)
+		{
+			Manager->SetAllOpeningLeavesOpen(Args[0].Equals(TEXT("open"), ESearchCase::IgnoreCase));
+		}
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.Doors: leaves %s by default"), Manager->GetDefaultOpeningLeavesOpen() ? TEXT("open") : TEXT("closed"));
 	}));
 
 static FAutoConsoleCommandWithWorldAndArgs GPlannerCeilingLightScaleCmd(

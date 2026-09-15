@@ -23,6 +23,13 @@
 #include "Blueprint/DragDropOperation.h"
 #include "ColorCatalog/ColorCatalogWidget.h"
 #include "FurnitureConfigurator/UI/PlannerCatalogItemWidget.h"
+#include "FurnitureConfigurator/UI/PlannerStyleButton.h"
+#include "Constructor/PlannerOpeningStyles.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/WrapBoxSlot.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/VerticalBoxSlot.h"
+#include "Styling/CoreStyle.h"
 
 void URoomPlannerWidget::NativeConstruct()
 {
@@ -150,6 +157,21 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnRotateLeft) { BtnRotateLeft->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnRotateLeftClicked); }
 	if (BtnRotateRight) { BtnRotateRight->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnRotateRightClicked); }
 	if (BtnCancelPlacement) { BtnCancelPlacement->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCancelPlacementClicked); }
+	if (BtnDoorsOpen)
+	{
+		BtnDoorsOpen->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnDoorsOpenClicked);
+		BtnDoorsOpen->SetToolTipText(FText::FromString(TEXT("Открыть все двери и окна")));
+	}
+	if (BtnDoorsClose)
+	{
+		BtnDoorsClose->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnDoorsCloseClicked);
+		BtnDoorsClose->SetToolTipText(FText::FromString(TEXT("Закрыть все двери и окна")));
+	}
+	if (BtnExteriorLook)
+	{
+		BtnExteriorLook->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnExteriorLookClicked);
+		BtnExteriorLook->SetToolTipText(FText::FromString(TEXT("Вид за окном: день / пасмурно / вечер")));
+	}
 
 	if (BtnSwingLeft) BtnSwingLeft->SetToolTipText(FText::FromString(TEXT("Петли слева (вид изнутри комнаты)")));
 	if (BtnSwingRight) BtnSwingRight->SetToolTipText(FText::FromString(TEXT("Петли справа (вид изнутри комнаты)")));
@@ -607,6 +629,18 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 	if (BtnPresetRoom) BtnPresetRoom->SetVisibility(ToolsVis);
 	if (Image_1) Image_1->SetVisibility(ToolsVis);
 
+	// 3D view options: door / window leaves and the exterior look.
+	const ESlateVisibility ViewOptionsVis = bIs2D ? ESlateVisibility::Collapsed : ESlateVisibility::Visible;
+	if (BtnDoorsOpen) BtnDoorsOpen->SetVisibility(ViewOptionsVis);
+	if (BtnDoorsClose) BtnDoorsClose->SetVisibility(ViewOptionsVis);
+	if (BtnExteriorLook) BtnExteriorLook->SetVisibility(ViewOptionsVis);
+	if (ViewOptionsRow) ViewOptionsRow->SetVisibility(bIs2D ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+	{
+		const bool bLeavesOpen = PlannerManager && PlannerManager->GetDefaultOpeningLeavesOpen();
+		if (BtnDoorsOpen) BtnDoorsOpen->SetBackgroundColor(bLeavesOpen ? ActiveColor : InactiveColor);
+		if (BtnDoorsClose) BtnDoorsClose->SetBackgroundColor(!bLeavesOpen ? ActiveColor : InactiveColor);
+	}
+
 	// Catalog area (tabs, sections, separators) is a 2D-only workflow like placement itself.
 	ApplyCatalogSectionVisibility();
 	UpdateSummaryStatsUI();
@@ -989,7 +1023,9 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 					EditableTxtProp2->SetText(FText::FromString(FString::Printf(TEXT("%.0f"), H_cm)));
 				}
 
-				if (S_cm > 1.0f) // It's a window
+				EOpeningType SelectedOpeningType = (S_cm > 1.0f) ? EOpeningType::Window : EOpeningType::Door;
+				PlannerManager->GetOpeningType(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, SelectedOpeningType);
+				if (SelectedOpeningType == EOpeningType::Window || S_cm > 1.0f) // a window (or a raised opening): the sill height is editable
 				{
 					if (EditableTxtProp3)
 					{
@@ -1002,7 +1038,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 				else // It's a door
 				{
 					if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
-					if (LblWallSize) LblWallSize->SetText(FText::FromString(TEXT("Дверь, см: ширина · высота")));
+					if (LblWallSize) LblWallSize->SetText(FText::FromString((SelectedOpeningType == EOpeningType::Archway ? TEXT("Проём, см: ширина · высота") : TEXT("Дверь, см: ширина · высота"))));
 					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Применить")));
 				}
 			}
@@ -1078,6 +1114,17 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 		}
 	}
 
+	// Door / window / archway style picker (built-in catalog): 2D only, like the swing controls.
+	if (StyleRow)
+	{
+		const bool bShowStyles = bIs2DPanel && Kind == EPlannerSelectionKind::Opening;
+		StyleRow->SetVisibility(bShowStyles ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		if (bShowStyles)
+		{
+			RefreshStyleRow();
+		}
+	}
+
 	// REQ-17 / REQ-18: rotate controls for objects / cabinet sets
 	const ESlateVisibility RotVis = (bIs2DPanel && (Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet)) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 	if (BtnRotateLeft) BtnRotateLeft->SetVisibility(RotVis);
@@ -1110,9 +1157,12 @@ FString URoomPlannerWidget::GetSelectionTitleText() const
 		return TEXT("Стена");
 	case EPlannerSelectionKind::Opening:
 	{
-		float W = 0.f, H = 0.f, Sill = 0.f;
-		const bool bOk = PlannerManager->GetOpeningDetails(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, W, H, Sill);
-		return (bOk && Sill * 100.f > 1.f) ? TEXT("Окно") : TEXT("Дверь");
+		EOpeningType Type = EOpeningType::Door;
+		if (PlannerManager->GetOpeningType(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, Type))
+		{
+			return Type == EOpeningType::Window ? TEXT("Окно") : (Type == EOpeningType::Archway ? TEXT("Проём") : TEXT("Дверь"));
+		}
+		return TEXT("Дверь");
 	}
 	case EPlannerSelectionKind::Floor:
 		return TEXT("Пол");
@@ -1759,6 +1809,106 @@ void URoomPlannerWidget::OnSwingLeftClicked() { SetSelectedSwingSide(EOpeningSwi
 void URoomPlannerWidget::OnSwingRightClicked() { SetSelectedSwingSide(EOpeningSwingSide::Right); }
 void URoomPlannerWidget::OnSwingInwardClicked() { SetSelectedSwingDirection(EOpeningSwingDirection::Inward); }
 void URoomPlannerWidget::OnSwingOutwardClicked() { SetSelectedSwingDirection(EOpeningSwingDirection::Outward); }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Door / window / archway styles
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void URoomPlannerWidget::RefreshStyleRow()
+{
+	if (!StyleRow || !PlannerManager || !WidgetTree) return;
+
+	EOpeningType Type = EOpeningType::Door;
+	if (!PlannerManager->GetOpeningType(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, Type)) return;
+	FName CurrentStyle;
+	PlannerManager->GetOpeningStyle(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, CurrentStyle);
+
+	const FString Key = FString::FromInt((int32)Type);
+	if (Key != StyleRowBuiltKey)
+	{
+		StyleRow->ClearChildren();
+		for (const FPlannerOpeningStyle& Style : PlannerOpeningStyles::All())
+		{
+			if (Style.Type != Type) continue;
+
+			UPlannerStyleButton* Button = WidgetTree->ConstructWidget<UPlannerStyleButton>(UPlannerStyleButton::StaticClass());
+			UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+			if (!Button || !Label) continue;
+
+			Label->SetText(FText::FromString(Style.DisplayName));
+			Label->SetFont(FCoreStyle::GetDefaultFontStyle("Regular", 10));
+			Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+			Button->AddChild(Label);
+			Button->StyleID = Style.ID;
+			Button->SetToolTipText(FText::FromString(FString::Printf(TEXT("Стиль: %s"), *Style.DisplayName)));
+			Button->OnStyleClicked.BindUObject(this, &URoomPlannerWidget::OnStyleButtonClicked);
+			Button->BindClick();
+
+			const FMargin ButtonPadding(2.f);
+			UPanelSlot* ButtonSlot = StyleRow->AddChild(Button);
+			if (UWrapBoxSlot* WrapSlot = Cast<UWrapBoxSlot>(ButtonSlot)) WrapSlot->SetPadding(ButtonPadding);
+			else if (UHorizontalBoxSlot* HorizontalSlot = Cast<UHorizontalBoxSlot>(ButtonSlot)) HorizontalSlot->SetPadding(ButtonPadding);
+			else if (UVerticalBoxSlot* VerticalSlot = Cast<UVerticalBoxSlot>(ButtonSlot)) VerticalSlot->SetPadding(ButtonPadding);
+		}
+		StyleRowBuiltKey = Key;
+	}
+
+	const FLinearColor Active(0.18f, 0.8f, 0.44f, 1.f), Inactive(0.17f, 0.17f, 0.18f, 1.f);
+	for (UWidget* Child : StyleRow->GetAllChildren())
+	{
+		if (UPlannerStyleButton* Button = Cast<UPlannerStyleButton>(Child))
+		{
+			Button->SetBackgroundColor(Button->StyleID == CurrentStyle ? Active : Inactive);
+		}
+	}
+}
+
+void URoomPlannerWidget::SetSelectedOpeningStyle(FName StyleID)
+{
+	if (!PlannerManager || PlannerManager->SelectedSegmentID == -1 || PlannerManager->SelectedOpeningIndex == -1) return;
+	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // editing openings is a 2D workflow
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		PC->Server_SetOpeningStyle(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, StyleID);
+	}
+}
+
+void URoomPlannerWidget::OnStyleButtonClicked(FName StyleID)
+{
+	SetSelectedOpeningStyle(StyleID);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3D view options: door / window leaves, exterior look
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void URoomPlannerWidget::OnDoorsOpenClicked()
+{
+	if (!PlannerManager) return;
+	PlannerManager->SetAllOpeningLeavesOpen(true);
+	UpdateViewModeButtonStyles();
+}
+
+void URoomPlannerWidget::OnDoorsCloseClicked()
+{
+	if (!PlannerManager) return;
+	PlannerManager->SetAllOpeningLeavesOpen(false);
+	UpdateViewModeButtonStyles();
+}
+
+void URoomPlannerWidget::OnExteriorLookClicked()
+{
+	if (!PlannerManager) return;
+	const EPlannerExteriorLook Next =
+		PlannerManager->ExteriorLook == EPlannerExteriorLook::Day ? EPlannerExteriorLook::Overcast :
+		PlannerManager->ExteriorLook == EPlannerExteriorLook::Overcast ? EPlannerExteriorLook::Evening : EPlannerExteriorLook::Day;
+	PlannerManager->SetExteriorLook(Next);
+	if (BtnExteriorLook)
+	{
+		const TCHAR* LookName = Next == EPlannerExteriorLook::Day ? TEXT("день") : (Next == EPlannerExteriorLook::Overcast ? TEXT("пасмурно") : TEXT("вечер"));
+		BtnExteriorLook->SetToolTipText(FText::FromString(FString::Printf(TEXT("Вид за окном: %s (нажмите, чтобы сменить)"), LookName)));
+	}
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // REQ-13 / REQ-14: finishing

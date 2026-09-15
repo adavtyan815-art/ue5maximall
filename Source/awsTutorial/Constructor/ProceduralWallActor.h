@@ -6,6 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
 #include "RoomPlannerTypes.h"
+#include "PlannerOpeningBuilder.h"
 #include "ProceduralWallActor.generated.h"
 
 UCLASS()
@@ -22,8 +23,27 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
 	TObjectPtr<USceneComponent> SceneRoot;
 
+	/** Section 0: the wall body with its door / window holes (collision). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
 	TObjectPtr<UProceduralMeshComponent> WallProceduralMesh;
+
+	/** Door / window dressing fixed to the wall (thresholds, floor fills, frames); one section per material, no collision. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
+	TObjectPtr<UProceduralMeshComponent> DressingMesh;
+
+	/** 2D plan symbols (swing arcs). Shown only in the 2D view; never casts shadows and is invisible to ray tracing and GI. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
+	TObjectPtr<UProceduralMeshComponent> PlanSymbolMesh;
+
+	/**
+	 * One door leaf / window sash component per entry of WallData.Openings (empty for archways and for openings the wall
+	 * skips). Each component's origin is the hinge axis, so opening a leaf is a pure rotation. Not built on a dedicated server.
+	 */
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
+	TArray<TObjectPtr<UProceduralMeshComponent>> LeafMeshes;
+
+	/** Component tag carried by every leaf component (3D click / hover detection). */
+	static const FName LeafComponentTag;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wall")
 	FWallSegment WallData;
@@ -68,7 +88,7 @@ public:
 	UPROPERTY(Transient)
 	FSurfaceFinish AppliedFinish;
 
-	/** Material for door / window leaves (section 1). Falls back to the normal wall material. */
+	/** Kept for compatibility; leaf materials are resolved by the owning ARoomPlannerManager (its LeafMaterial overrides every leaf). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wall|Materials")
 	TObjectPtr<UMaterialInterface> LeafMaterial;
 
@@ -96,13 +116,84 @@ public:
 	 */
 	static bool IsHingeAtStart(const FWallOpening& Opening, bool bLeftSideIsInterior);
 
-private:
-	void GenerateQuad(TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs,
-	                  const FVector& V0, const FVector& V1, const FVector& V2, const FVector& V3,
-	                  const FVector& Normal, float UVScale = 100.f);
+	/**
+	 * 2D view: plan symbols visible, leaves in their plan pose (door 90°, window 25°), leaves without collision.
+	 * 3D view: plan symbols hidden, leaves posed by their open fraction (0 = closed), leaves hit by Visibility traces.
+	 */
+	void SetPresentation(bool bIn3D);
+	bool IsPresentation3D() const { return bPresentation3D; }
 
-	/** Appends the open door / window leaf and its floor swing arc for one opening (REQ-07). */
-	void AppendOpeningLeaf(TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs,
-	                       const FWallOpening& Opening, const FVector2D& StartPos, const FVector2D& Dir2D, const FVector2D& Normal2D,
-	                       float TotalLength);
+	/** 3D pose of one leaf: 0 closed, 1 fully open (values slightly above 1 allow an easing overshoot). */
+	void SetLeafOpenFraction(int32 OpeningIndex, float Fraction);
+
+	/**
+	 * Length (cm, from each wall end along the wall) of each face covered by other walls meeting at that end. The mitred
+	 * corner points only describe corners; a T-junction branch is not mitred, so trim uses these limits to stay clear of it.
+	 * Applied on the next RebuildWallMesh.
+	 */
+	void SetDressingFaceLimits(float StartLeft, float StartRight, float EndLeft, float EndRight);
+
+	/** Index into WallData.Openings of the leaf owning Component, or INDEX_NONE. */
+	int32 FindLeafIndex(const UPrimitiveComponent* Component) const;
+
+	/** True when the opening has a built leaf (doors and windows the wall could build). */
+	bool HasLeaf(int32 OpeningIndex) const;
+
+private:
+	/** Hinge-axis pose data of one leaf, filled by RebuildWallMesh. */
+	struct FLeafPose
+	{
+		bool bValid = false;
+		FVector Pivot = FVector::ZeroVector;
+		float ClosedYawDeg = 0.f;
+		/** +1: opening rotates the leaf with increasing yaw, -1: decreasing yaw. */
+		float SwingSign = 1.f;
+		float PlanAngleDeg = 90.f;
+		float OpenAngle3DDeg = 90.f;
+	};
+
+	/** Centreline frame of the wall being rebuilt (world XY, cm). */
+	struct FWallBuildFrame
+	{
+		FVector2D Start = FVector2D::ZeroVector;
+		FVector2D Dir = FVector2D(1.f, 0.f);
+		FVector2D Normal = FVector2D(0.f, 1.f);
+		float HalfThickness = 10.f;
+		float Length = 0.f;
+		float Height = 280.f;
+		/** Along-wall extent of each face ([0] left, [1] right), shorter than [0, Length] where a corner is mitred or a branch wall meets it. */
+		float FaceLo[2] = { 0.f, 0.f };
+		float FaceHi[2] = { 0.f, 0.f };
+		/** Along-wall range where both faces run straight; openings are cut and dressed only inside it. */
+		float JointLo = 0.f;
+		float JointHi = 0.f;
+	};
+
+	float DressingStartCover[2] = { 0.f, 0.f };
+	float DressingEndCover[2] = { 0.f, 0.f };
+
+	TArray<FLeafPose> LeafPoses;
+	TArray<float> LeafOpenFractions;
+	bool bPresentation3D = true;
+
+	/**
+	 * Dressing (threshold / floor fill, lining, casing, window frame, sill board), leaf geometry, leaf pose and plan symbol of one
+	 * opening. PrevOpeningEnd / NextOpeningStart are the neighbouring openings on this wall (±large when none); trim never
+	 * extends past half the gap to them or past the wall faces' extents.
+	 */
+	void BuildOpeningVisuals(int32 OpeningIndex, const FWallBuildFrame& Frame, float PrevOpeningEnd, float NextOpeningStart,
+	                         FPlannerSectionedMesh& Dressing, FPlannerMeshBuffers& Plan);
+
+	/** Creates / destroys pooled leaf components so there is exactly one per opening. */
+	void SyncLeafComponents(int32 Count);
+	UProceduralMeshComponent* CreateLeafComponent();
+
+	void ApplyLeafPose(int32 OpeningIndex);
+	void ApplyAllLeafPoses();
+
+	/** Writes every non-empty section of Mesh into Component (clearing it first) with materials from the manager. */
+	void CommitSections(UProceduralMeshComponent* Component, const FPlannerSectionedMesh& Mesh, bool bCreateCollision);
+
+	UMaterialInterface* ResolveOpeningMaterial(EPlannerOpeningMaterial Kind, const FLinearColor& Color) const;
+	UMaterialInterface* ResolvePlanSymbolMaterial() const;
 };

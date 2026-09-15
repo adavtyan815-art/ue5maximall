@@ -558,6 +558,47 @@ public:
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UWidget> SwingRow;
 
+	/**
+	 * Optional container (e.g. a Wrap Box under SwingRow) for the door / window / archway style buttons. The buttons are created
+	 * in code from the built-in style catalog; the row is visible only while an opening is selected in 2D.
+	 */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UPanelWidget> StyleRow;
+
+	/** Builds (once per opening type) and highlights the style buttons of the selected opening. */
+	void RefreshStyleRow();
+	void SetSelectedOpeningStyle(FName StyleID);
+	void OnStyleButtonClicked(FName StyleID);
+
+	/** Opening type the StyleRow buttons were built for ("" = none). */
+	FString StyleRowBuiltKey;
+
+	// --- 3D view options (optional, visible only in 3D) ---
+	/** Opens every door and window leaf (local view state, not saved). */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnDoorsOpen;
+
+	/** Closes every door and window leaf (local view state, not saved). */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnDoorsClose;
+
+	/** Cycles the view behind doors and windows: day → overcast → evening. */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UButton> BtnExteriorLook;
+
+	/** Optional row holding the 3D view option buttons; follows their visibility. */
+	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
+	TObjectPtr<UWidget> ViewOptionsRow;
+
+	UFUNCTION()
+	void OnDoorsOpenClicked();
+
+	UFUNCTION()
+	void OnDoorsCloseClicked();
+
+	UFUNCTION()
+	void OnExteriorLookClicked();
+
 	/** Optional row (caption + rotate buttons); follows the rotate buttons' visibility. */
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UWidget> RotateRow;
