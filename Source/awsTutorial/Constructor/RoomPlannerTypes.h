@@ -618,3 +618,95 @@ struct FPlannerCatalogEntry
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
 	FLinearColor Color = FLinearColor::White;
 };
+
+/**
+ * Settings of the Room Planner's per-room ceiling light (APlannerRoomLightActor): ONE rect light per room whose
+ * emission is masked to the room's panel polygon, plus the visible emissive panel of the same polygon.
+ * Editable on ARoomPlannerManager (RoomLightSettings) and overridable from the player controller
+ * (BP_MaxiMallPlayerController → Planner Room Light Settings).
+ */
+USTRUCT(BlueprintType)
+struct FPlannerRoomLightSettings
+{
+	GENERATED_BODY()
+
+	/** Master switch: off = no room lights (existing ones are destroyed). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light")
+	bool bEnabled = true;
+
+	// ── Panel (visible surface, same polygon as the light) ──
+
+	/** Show the emissive panel. The light works without it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel")
+	bool bShowSurface = true;
+
+	/** Colour of the luminous panel. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel")
+	FLinearColor LightColor = FLinearColor(1.f, 0.98f, 0.94f, 1.f);
+
+	/**
+	 * Multiplier on the panel's physical luminance. 1 = the luminance a diffuse panel emitting the light's flux
+	 * really has (flux / (π × panel area)); a 4 × 4 m room gives ≈ 300 cd/m², clearly glowing at EV100 6.8.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0"))
+	float EmissiveIntensity = 1.f;
+
+	/** Inset of the panel polygon (and of the light's emitting shape) from the walls (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0"))
+	float PolygonInsetCm = 45.f;
+
+	/** Distance of the luminous face below the room's ceiling (cm); the light sits 1 cm under it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0.5"))
+	float CeilingOffsetCm = 4.f;
+
+	/** Panel slab thickness (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0.5"))
+	float SurfaceThicknessCm = 3.f;
+
+	/**
+	 * Panel material. Empty = engine EmissiveTexturedMaterial (opaque unlit) fed with a 1×1 HDR float texture.
+	 * A project material receives the HDR colour (cd/m², alpha 1) in the vector parameters "Color" and "EmissiveColor"
+	 * and the same value as the texture parameter "Texture".
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel")
+	TObjectPtr<UMaterialInterface> SurfaceMaterial;
+
+	// ── Light (one rect light per room) ──
+
+	/** Luminous flux budget per m² of room floor (lumens). 280 is the value the fixed planner exposure (EV100 6.8) was tuned with. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light", meta = (ClampMin = "0"))
+	float LumensPerM2 = 280.f;
+
+	/** Global multiplier on the flux (planner.CeilingLightScale). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light", meta = (ClampMin = "0"))
+	float IntensityScale = 1.f;
+
+	/** Resolution of the polygon mask texture of the light (square, power of two; doubled automatically for concave rooms that fill little of their rectangle). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light", meta = (ClampMin = "64", ClampMax = "1024"))
+	int32 MaskResolution = 256;
+
+	/** Colour temperature of the light (K); 5200 = neutral white. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light", meta = (ClampMin = "1700", ClampMax = "12000"))
+	float TemperatureK = 5200.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light")
+	bool bCastShadows = true;
+
+	/**
+	 * Trace the light's shadows with hardware ray tracing: they sample the real light rectangle. Virtual shadow maps
+	 * treat a rect light as a disk of radius SourceWidth/2 around its centre, which is far too soft for a room-sized
+	 * panel and invalid for receivers closer than that radius. Ray-traced shadow rays ignore the mask, so the intensity
+	 * of non-rectangular rooms is compensated by the estimated share of the rectangle inside the room.
+	 * Without ray tracing the engine falls back to shadow maps.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light")
+	bool bRayTracedShadows = true;
+
+	/** Contribution to Lumen GI (1 = physical). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light", meta = (ClampMin = "0", ClampMax = "2"))
+	float IndirectIntensity = 1.f;
+
+	/** Specular highlight scale of the light on glossy finishes. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light", meta = (ClampMin = "0", ClampMax = "1"))
+	float SpecularScale = 0.6f;
+};

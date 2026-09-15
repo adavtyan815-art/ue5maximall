@@ -1540,6 +1540,10 @@ void URoomPlannerWidget::BindManagerDelegates()
 	// The manager binds here (NativeConstruct), not in the tick fallback, so the session flag that drives the
 	// planner's bounded 3D exposure must be raised here as well.
 	PlannerManager->SetPlannerSessionActive(true);
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		PC->ApplyPlannerRoomLightSettings(); // BP_MaxiMallPlayerController override of the room light settings, if enabled
+	}
 	bManagerDelegatesBound = true;
 }
 

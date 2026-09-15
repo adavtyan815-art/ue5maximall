@@ -2625,6 +2625,15 @@ void AAwsTutorial_PlayerController::Server_LoadPlannerProject_Implementation(con
 }
 bool AAwsTutorial_PlayerController::Server_LoadPlannerProject_Validate(const FString& SaveRecordJSON) { return true; }
 
+void AAwsTutorial_PlayerController::ApplyPlannerRoomLightSettings()
+{
+	if (!bOverridePlannerRoomLightSettings) return;
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetRoomLightSettings(PlannerRoomLightSettings);
+	}
+}
+
 bool AAwsTutorial_PlayerController::PlannerPlacePendingAtCursorRay(const FVector& RayOrigin, const FVector& RayDirection, float YawDeg)
 {
 	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());

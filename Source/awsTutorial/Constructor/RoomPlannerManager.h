@@ -27,6 +27,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPlannerSelectionChanged);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlannerOperationRejected, const FString&, Reason);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnNodeDragProgress, int32, NodeID, FVector, WorldPos);
 
+class APlannerRoomLightActor;
+
 UCLASS()
 class AWSTUTORIAL_API ARoomPlannerManager : public AActor
 {
@@ -101,6 +103,7 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoomPlanner")
 	TObjectPtr<UProceduralMeshComponent> BaseboardProceduralMesh;
 
+
 	/** Small discs drawn on every wall corner in 2D Select mode — the draggable control points (REQ-02). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoomPlanner")
 	TObjectPtr<UProceduralMeshComponent> NodeHandleMesh;
@@ -127,67 +130,42 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner", meta = (ClampMin = "1"))
 	float CeilingThicknessCm = 5.f;
 
-	// ── Automatic ceiling lighting ─────────────────────────────────────────────
-	// Every room gets a grid of downward spot lights just under its ceiling, rebuilt together with the
-	// floor / ceiling meshes, so the lighting always matches the current room polygons and wall heights.
-	// Spot lights pointing down (cone < 90°) cannot emit above their own plane, so nothing leaks through
-	// the ceiling; the ceiling and walls cast shadows for everything else.
+	// ── Room lights ────────────────────────────────────────────────────────────
+	// Every detected room owns one APlannerRoomLightActor: exactly ONE rect light whose emission is masked to
+	// the room's panel polygon (room polygon inset from the walls) plus the visible emissive panel of the same
+	// polygon, at that room's ceiling height. Rebuilt with the rooms on every topology change and
+	// destroyed with them, so a split room becomes two independent lights and a merge becomes one.
 
-	/** Master switch. Off = no automatic lights (existing ones are removed). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting")
-	bool bAutoCeilingLights = true;
+	/** Tunable settings (also overridable from the player controller, see AAwsTutorial_PlayerController::PlannerRoomLightSettings). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Room Light")
+	FPlannerRoomLightSettings RoomLightSettings;
 
-	/**
-	 * true  = rect lights: luminous panels sized to the ceiling (one per room, tiled for large / concave rooms).
-	 *         A panel emits only into the hemisphere in front of it, so a downward panel cannot light the top
-	 *         side of the ceiling. Softest, most even result.
-	 * false = spot lights: the earlier grid of downward cones (kept for comparison, `planner.CeilingLightType spot`).
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting")
-	bool bUseRectLights = true;
+	/** Replaces the settings and rebuilds every room light. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Room Light")
+	void SetRoomLightSettings(const FPlannerRoomLightSettings& NewSettings);
 
-	/** Rect mode: largest panel edge (cm). Rooms longer than this are tiled into several panels. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "100"))
-	float CeilingPanelMaxSizeCm = 600.f;
+	/** Rebuilds all room lights from the current settings without changing them. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Room Light")
+	void RebuildRoomLightsPublic() { RebuildRoomLights(); }
 
-	/** Rect mode: gap between a panel edge and the walls / the neighbouring panel (cm). Larger = softer wall-top gradient. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0"))
-	float CeilingPanelEdgeMarginCm = 45.f;
+	/** Master switch shortcut (console planner.CeilingLights). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Room Light")
+	void SetAutoCeilingLightsEnabled(bool bEnabled);
 
-	/** Grid spacing between lights (cm). 0 = automatic: 0.8 × ceiling height, clamped to 180…300 cm. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0"))
-	float CeilingLightSpacingCm = 0.f;
+	/** Total real light sources across all rooms (one per room light). */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Room Light")
+	int32 GetCeilingLightCount() const;
 
-	/**
-	 * Luminous flux budget per m² of floor (lumens, inverse-square falloff). Physically grounded default:
-	 * a luminous ceiling panel gives floor illuminance E ≈ 0.7 × flux / panel area, so 280 lm/m² ≈ 200 lux,
-	 * the usual living-room / showroom target. Under the planner's bounded exposure (EV100 5…10) this reads
-	 * as a normally lit interior; halve it for a dim mood, double it for a bright retail look.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0"))
-	float CeilingLightLumensPerM2 = 280.f;
+	/** Real light sources of one room: 1, or 0 if none / unknown room. */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Room Light")
+	int32 GetRoomCeilingLightCount(int32 RoomID) const;
 
-	/** Spot mode: per-light clamp (lumens). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0"))
-	float CeilingLightMinLumens = 120.f;
+	/** The room light actor of a room, or null. */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Room Light")
+	APlannerRoomLightActor* GetRoomLight(int32 RoomID) const;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0"))
-	float CeilingLightMaxLumens = 3000.f;
-
-	/** Rect mode: per-panel cap (lumens); one 6 × 6 m panel at 280 lm/m² needs ~10 000 lm. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0"))
-	float CeilingPanelMaxLumens = 20000.f;
-
-	/** Global multiplier on every light's flux (live-tunable with `planner.CeilingLightScale <x>`). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0"))
-	float CeilingLightIntensityScale = 1.f;
-
-	/**
-	 * How much the lights feed Lumen GI. 1 = physically correct. Lower it only if near-white finishes
-	 * (albedo > 0.85) make a closed room wash out; the better fix is a lower wall albedo.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0", ClampMax = "2"))
-	float CeilingLightIndirectIntensity = 1.f;
+	/** Read-only view of the detected rooms (debug / console reporting). */
+	const TMap<int32, FRoomData>& GetRoomsForDebug() const { return Rooms; }
 
 	// ── Planner exposure ───────────────────────────────────────────────────────
 	// Lighting is tuned against a deliberate exposure: while the planner UI is open in 3D, an unbound
@@ -233,46 +211,6 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting")
 	bool bPlannerLumenHitLightingGI = true;
-
-	/** Colour temperature (K). 5200 = neutral white LED; lower values look noticeably orange in Unreal. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "1700", ClampMax = "12000"))
-	float CeilingLightTemperatureK = 5200.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting")
-	bool bCeilingLightsCastShadows = true;
-
-	/** Distance below the ceiling plane at which the lights sit (cm). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "1"))
-	float CeilingLightDropCm = 4.f;
-
-	/** Minimum distance from any wall (cm); grid points closer than this are pulled towards the room centre. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0"))
-	float CeilingLightWallClearanceCm = 50.f;
-
-	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Lighting")
-	void SetAutoCeilingLightsEnabled(bool bEnabled);
-
-	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Lighting")
-	int32 GetCeilingLightCount() const { return CeilingLights.Num(); }
-
-	/** Grid spacing actually used for a room with this ceiling height (cm). */
-	float ResolveCeilingLightSpacing(float CeilingZ) const;
-
-	/**
-	 * Light positions (world cm, Z = CeilingZ − DropCm) for one room polygon: a grid of SpacingCm cells over the
-	 * polygon's bounding box, keeping the cells that lie inside the polygon (concave rooms: a cell counts when
-	 * its centre or one of its quarter points is inside), pulled WallClearanceCm away from the walls.
-	 * Always returns at least one position for a valid polygon.
-	 */
-	static TArray<FVector> ComputeCeilingLightPositions(const TArray<FVector2D>& Polygon, float CeilingZ, float SpacingCm, float WallClearanceCm, float DropCm);
-
-	/**
-	 * Rect mode: ceiling panels (world XY boxes, cm) for one room polygon. The bounding box is tiled into cells no
-	 * larger than MaxSizeCm; a cell is kept when it lies inside the polygon, and a cell that crosses the walls of a
-	 * concave room is split into quarters (twice) so only the parts over the room remain. Every box is then inset
-	 * by EdgeMarginCm. Always returns at least one panel for a valid polygon.
-	 */
-	static TArray<FBox2D> ComputeCeilingLightPanels(const TArray<FVector2D>& Polygon, float MaxSizeCm, float EdgeMarginCm);
 
 	/** Default base material applied to walls when unselected (clean white / surface material). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Materials")
@@ -846,13 +784,23 @@ public:
 	void RefreshNodeHandles();
 
 private:
-	/** Spot lights created by RebuildCeilingLights (one grid per room). Local rendering only, never replicated. */
+	/** One custom light per detected room, keyed by the RoomID of the current detection pass. Local, never replicated. */
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<ULocalLightComponent>> CeilingLights; // URectLightComponent (default) or USpotLightComponent
+	TMap<int32, TObjectPtr<APlannerRoomLightActor>> RoomLights;
 
-	/** Destroys and re-creates the ceiling lights from the current Rooms (called at the end of RebuildRooms). */
-	void RebuildCeilingLights();
-	void ClearCeilingLights();
+	/** Destroys every room light and rebuilds one per room from the current Rooms. */
+	void RebuildRoomLights();
+	void ClearRoomLights();
+
+	/**
+	 * Set by RebuildRooms. Room lights exist only for 3D, so a dirty flag is resolved on the next Tick while in
+	 * 3D, or immediately when switching to 3D; 2D editing (corner drags rebuild the rooms every frame) never
+	 * rebuilds hidden lights, and several RebuildRooms calls in one frame coalesce into one light rebuild.
+	 */
+	bool bRoomLightsDirty = false;
+
+	/** Settings hash of the last RebuildRoomLights; a different hash (Details panel, Blueprint writes) marks the lights dirty. */
+	uint32 AppliedRoomLightSettingsHash = 0;
 
 	bool bPlannerSessionActive = false;
 

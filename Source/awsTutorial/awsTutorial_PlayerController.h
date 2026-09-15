@@ -75,6 +75,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Camera")
 	void ApplyRoomPlannerInputMode(bool bIn2D);
 
+	// ── Room light tuning (edit in BP_MaxiMallPlayerController) ────────────────
+
+	/** When true, PlannerRoomLightSettings replaces the manager's settings every time the planner UI binds. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Room Light")
+	bool bOverridePlannerRoomLightSettings = false;
+
+	/** Custom per-room ceiling light settings pushed to the planner manager (see FPlannerRoomLightSettings). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Room Light", meta = (EditCondition = "bOverridePlannerRoomLightSettings"))
+	FPlannerRoomLightSettings PlannerRoomLightSettings;
+
+	/** Pushes PlannerRoomLightSettings to the manager (if the override is on) and rebuilds the room lights. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Room Light")
+	void ApplyPlannerRoomLightSettings();
+
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	static FVector FindNonOverlappingPlannerSpot(UWorld* World, AActor* IgnoreActor, const FVector& BaseLocation);
 

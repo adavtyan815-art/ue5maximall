@@ -18,6 +18,7 @@
 #include "JsonObjectConverter.h"
 #include "PixelStreamingInputComponent.h"
 #include "Constructor/PlannerPlacedObjectActor.h"
+#include "Constructor/PlannerRoomLightActor.h"
 #include "FurnitureConfigurator/ShowroomBooth.h"
 #include "Engine/DataTable.h"
 #include "Engine/StaticMesh.h"
@@ -163,6 +164,17 @@ void ARoomPlannerManager::Tick(float DeltaTime)
 	}
 
 	TickLocalNodeDrag();
+
+	// Room lights follow room changes lazily and only when they can be seen (see bRoomLightsDirty). Direct edits of
+	// RoomLightSettings (Details panel, Blueprint) are noticed through the settings hash.
+	if (APlannerRoomLightActor::ComputeSettingsHash(RoomLightSettings) != AppliedRoomLightSettingsHash)
+	{
+		bRoomLightsDirty = true;
+	}
+	if (bRoomLightsDirty && !b2DViewMode)
+	{
+		RebuildRoomLights();
+	}
 
 	if (!BoundPSInput.IsValid())
 	{
@@ -603,7 +615,9 @@ void ARoomPlannerManager::ClearWallsAndRooms()
 	if (CeilingProceduralMesh) CeilingProceduralMesh->ClearAllMeshSections();
 	if (BaseboardProceduralMesh) BaseboardProceduralMesh->ClearAllMeshSections();
 	if (NodeHandleMesh) NodeHandleMesh->ClearAllMeshSections();
-	ClearCeilingLights();
+	// Room lights are matched by content on the next rebuild (RebuildRoomLights). Destroying them here would throw away
+	// every unchanged room's light on each replicated edit (every mutation re-imports the layout through this path).
+	bRoomLightsDirty = true;
 }
 
 void ARoomPlannerManager::ClearLayout()
@@ -885,6 +899,7 @@ void ARoomPlannerManager::SetCeilingVisibility(bool bVisible)
 void ARoomPlannerManager::RebuildRooms()
 {
 	Rooms.Empty();
+	bRoomLightsDirty = true; // every exit below (including "no closed room") must refresh the room lights
 	if (FloorProceduralMesh) FloorProceduralMesh->ClearAllMeshSections();
 	if (CeilingProceduralMesh) CeilingProceduralMesh->ClearAllMeshSections();
 	if (BaseboardProceduralMesh) BaseboardProceduralMesh->ClearAllMeshSections();
@@ -892,7 +907,7 @@ void ARoomPlannerManager::RebuildRooms()
 	if (Nodes.Num() < 3 || WallSegments.Num() < 3)
 	{
 		ComputeWallInteriorSides(TArray<TArray<FVector2D>>{});
-		ClearCeilingLights();
+		ClearRoomLights();
 		return;
 	}
 
@@ -1488,8 +1503,8 @@ void ARoomPlannerManager::RebuildRooms()
 	// Which face of every wall looks into a room (drives door/window swing direction, REQ-07).
 	ComputeWallInteriorSides(DetectedRoomPolygons);
 
-	// Ceiling lights follow the rooms (count / placement / height) on every rebuild.
-	RebuildCeilingLights();
+	// Room lights follow the rooms (shape / size / height); resolved on the next Tick in 3D or on entering 3D.
+	bRoomLightsDirty = true;
 }
 
 
@@ -2013,11 +2028,14 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 		CeilingProceduralMesh->SetVisibility(bCeilingVisible && !bIn2DMode);
 	}
 
-	// Automatic ceiling lights are a 3D-only feature: switched off in 2D, back on in 3D. Only the visibility
-	// flag changes; the grid itself is untouched, so switching modes never recreates the lighting layout.
-	for (const TObjectPtr<ULocalLightComponent>& Light : CeilingLights)
+	// Room lights are a 3D-only feature: hidden in 2D, shown in 3D. Rooms edited while in 2D are rebuilt now, once.
+	if (!bIn2DMode && bRoomLightsDirty)
 	{
-		if (Light) Light->SetVisibility(!bIn2DMode);
+		RebuildRoomLights();
+	}
+	for (const auto& Pair : RoomLights)
+	{
+		if (Pair.Value) Pair.Value->SetShown(!bIn2DMode);
 	}
 	UpdatePlannerExposure();
 
@@ -5835,358 +5853,114 @@ bool ARoomPlannerManager::ImportProjectFromSaveJSON(const FString& SaveRecordJSO
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Automatic ceiling lighting
+// Room lights (one APlannerRoomLightActor per detected room)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-namespace PlannerCeilingLights
+void ARoomPlannerManager::ClearRoomLights()
 {
-	static bool PointInPolygon(const FVector2D& P, const TArray<FVector2D>& Poly)
+	for (auto& Pair : RoomLights)
 	{
-		bool bInside = false;
-		const int32 N = Poly.Num();
-		for (int32 i = 0, j = N - 1; i < N; j = i++)
+		if (Pair.Value && Pair.Value->IsValidLowLevel())
 		{
-			const FVector2D& A = Poly[i];
-			const FVector2D& B = Poly[j];
-			if (((A.Y > P.Y) != (B.Y > P.Y)) &&
-				(P.X < (B.X - A.X) * (P.Y - A.Y) / (B.Y - A.Y) + A.X))
-			{
-				bInside = !bInside;
-			}
+			Pair.Value->Destroy();
 		}
-		return bInside;
 	}
-
-	static float DistanceToEdges(const FVector2D& P, const TArray<FVector2D>& Poly)
-	{
-		float Best = TNumericLimits<float>::Max();
-		const int32 N = Poly.Num();
-		for (int32 i = 0; i < N; ++i)
-		{
-			const FVector2D& A = Poly[i];
-			const FVector2D& B = Poly[(i + 1) % N];
-			const FVector2D AB = B - A;
-			const float LenSq = AB.SizeSquared();
-			const float T = LenSq > KINDA_SMALL_NUMBER ? FMath::Clamp(FVector2D::DotProduct(P - A, AB) / LenSq, 0.f, 1.f) : 0.f;
-			Best = FMath::Min(Best, FVector2D::Distance(P, A + AB * T));
-		}
-		return Best;
-	}
-
-	static FVector2D Centroid(const TArray<FVector2D>& Poly)
-	{
-		double TwiceArea = 0.0, Cx = 0.0, Cy = 0.0;
-		const int32 N = Poly.Num();
-		for (int32 i = 0; i < N; ++i)
-		{
-			const FVector2D& P1 = Poly[i];
-			const FVector2D& P2 = Poly[(i + 1) % N];
-			const double Cross = (double)P1.X * P2.Y - (double)P2.X * P1.Y;
-			TwiceArea += Cross;
-			Cx += (P1.X + P2.X) * Cross;
-			Cy += (P1.Y + P2.Y) * Cross;
-		}
-		if (FMath::Abs(TwiceArea) > KINDA_SMALL_NUMBER)
-		{
-			return FVector2D((float)(Cx / (3.0 * TwiceArea)), (float)(Cy / (3.0 * TwiceArea)));
-		}
-		FVector2D Sum = FVector2D::ZeroVector;
-		for (const FVector2D& P : Poly) Sum += P;
-		return N > 0 ? Sum / (float)N : FVector2D::ZeroVector;
-	}
-
-	/** Moves P towards Target until it is at least Clearance away from every edge (or gives up and keeps P). */
-	static FVector2D PullInside(const FVector2D& P, const FVector2D& Target, const TArray<FVector2D>& Poly, float Clearance)
-	{
-		if (DistanceToEdges(P, Poly) >= Clearance) return P;
-		FVector2D Best = P;
-		for (int32 Step = 1; Step <= 10; ++Step)
-		{
-			const FVector2D Q = FMath::Lerp(P, Target, Step / 10.f);
-			if (!PointInPolygon(Q, Poly)) break;
-			Best = Q;
-			if (DistanceToEdges(Q, Poly) >= Clearance) break;
-		}
-		return Best;
-	}
+	RoomLights.Empty();
 }
 
-float ARoomPlannerManager::ResolveCeilingLightSpacing(float CeilingZ) const
+void ARoomPlannerManager::RebuildRoomLights()
 {
-	if (CeilingLightSpacingCm > 1.f) return CeilingLightSpacingCm;
-	// Denser grid of weaker lights: a 4 × 4 m room gets 2 × 2 instead of one bright lamp in the middle,
-	// so no wall sits under a single strong cone.
-	return FMath::Clamp(CeilingZ * 0.8f, 180.f, 300.f);
-}
-
-TArray<FVector> ARoomPlannerManager::ComputeCeilingLightPositions(const TArray<FVector2D>& Polygon, float CeilingZ, float SpacingCm, float WallClearanceCm, float DropCm)
-{
-	using namespace PlannerCeilingLights;
-	TArray<FVector> Out;
-	if (Polygon.Num() < 3) return Out;
-
-	FVector2D Min(TNumericLimits<float>::Max(), TNumericLimits<float>::Max());
-	FVector2D Max(-TNumericLimits<float>::Max(), -TNumericLimits<float>::Max());
-	for (const FVector2D& P : Polygon)
-	{
-		Min.X = FMath::Min(Min.X, P.X); Min.Y = FMath::Min(Min.Y, P.Y);
-		Max.X = FMath::Max(Max.X, P.X); Max.Y = FMath::Max(Max.Y, P.Y);
-	}
-	const float W = Max.X - Min.X;
-	const float H = Max.Y - Min.Y;
-	const float S = FMath::Max(SpacingCm, 50.f);
-	const FVector2D Center = Centroid(Polygon);
-
-	// Grid: enough cells so that no cell is wider than the spacing (rooms narrower than one cell get one column).
-	const int32 Nx = FMath::Max(1, FMath::CeilToInt((W - 2.f * WallClearanceCm) / S));
-	const int32 Ny = FMath::Max(1, FMath::CeilToInt((H - 2.f * WallClearanceCm) / S));
-	const float Cw = W / Nx;
-	const float Ch = H / Ny;
-
-	TArray<FVector2D> Points;
-	const float MinSeparation = S * 0.45f;
-	auto TryAdd = [&](FVector2D P)
-	{
-		P = PullInside(P, Center, Polygon, WallClearanceCm);
-		for (const FVector2D& Q : Points)
-		{
-			if (FVector2D::DistSquared(P, Q) < MinSeparation * MinSeparation) return;
-		}
-		Points.Add(P);
-	};
-
-	for (int32 j = 0; j < Ny; ++j)
-	{
-		for (int32 i = 0; i < Nx; ++i)
-		{
-			const FVector2D CellMin(Min.X + i * Cw, Min.Y + j * Ch);
-			const FVector2D CellCenter = CellMin + FVector2D(Cw * 0.5f, Ch * 0.5f);
-			if (PointInPolygon(CellCenter, Polygon))
-			{
-				TryAdd(CellCenter);
-				continue;
-			}
-			// Concave rooms (L / U shapes): the cell may still overlap the room at one of its quarter points.
-			const FVector2D Quarters[4] = {
-				CellMin + FVector2D(Cw * 0.25f, Ch * 0.25f), CellMin + FVector2D(Cw * 0.75f, Ch * 0.25f),
-				CellMin + FVector2D(Cw * 0.25f, Ch * 0.75f), CellMin + FVector2D(Cw * 0.75f, Ch * 0.75f) };
-			for (const FVector2D& Q : Quarters)
-			{
-				if (PointInPolygon(Q, Polygon) && DistanceToEdges(Q, Polygon) >= WallClearanceCm * 0.5f)
-				{
-					TryAdd(Q);
-					break;
-				}
-			}
-		}
-	}
-
-	if (Points.Num() == 0)
-	{
-		// Degenerate / very small room: one light at the centroid, or at the first interior triangle centre.
-		if (PointInPolygon(Center, Polygon))
-		{
-			Points.Add(Center);
-		}
-		else
-		{
-			const FVector2D Tri = (Polygon[0] + Polygon[1] + Polygon[2]) / 3.f;
-			Points.Add(PointInPolygon(Tri, Polygon) ? Tri : Polygon[0]);
-		}
-	}
-
-	Out.Reserve(Points.Num());
-	for (const FVector2D& P : Points)
-	{
-		Out.Add(FVector(P.X, P.Y, CeilingZ - DropCm));
-	}
-	return Out;
-}
-
-void ARoomPlannerManager::ClearCeilingLights()
-{
-	for (TObjectPtr<ULocalLightComponent>& Light : CeilingLights)
-	{
-		if (Light && Light->IsValidLowLevel())
-		{
-			Light->DestroyComponent();
-		}
-	}
-	CeilingLights.Empty();
-}
-
-TArray<FBox2D> ARoomPlannerManager::ComputeCeilingLightPanels(const TArray<FVector2D>& Polygon, float MaxSizeCm, float EdgeMarginCm)
-{
-	using namespace PlannerCeilingLights;
-	TArray<FBox2D> Out;
-	if (Polygon.Num() < 3) return Out;
-
-	FBox2D Bounds(ForceInit);
-	for (const FVector2D& P : Polygon) Bounds += P;
-	const FVector2D Size = Bounds.GetSize();
-	const float MaxSize = FMath::Max(MaxSizeCm, 100.f);
-	const int32 Nx = FMath::Max(1, FMath::CeilToInt(Size.X / MaxSize));
-	const int32 Ny = FMath::Max(1, FMath::CeilToInt(Size.Y / MaxSize));
-	const FVector2D Cell(Size.X / Nx, Size.Y / Ny);
-
-	auto CornersInside = [&](const FBox2D& B, int32& OutInside)
-	{
-		const FVector2D C[4] = { B.Min, FVector2D(B.Max.X, B.Min.Y), B.Max, FVector2D(B.Min.X, B.Max.Y) };
-		OutInside = 0;
-		for (const FVector2D& P : C) if (PointInPolygon(P, Polygon)) ++OutInside;
-		return OutInside == 4;
-	};
-
-	// Recursive refinement: cells fully inside are kept as they are; cells that cross a wall are split into
-	// quarters (max depth 2); at the last depth a cell is kept when its centre is inside the room.
-	TFunction<void(const FBox2D&, int32)> Visit = [&](const FBox2D& B, int32 Depth)
-	{
-		int32 Inside = 0;
-		const bool bAll = CornersInside(B, Inside);
-		const bool bCenter = PointInPolygon(B.GetCenter(), Polygon);
-		if (bAll) { Out.Add(B); return; }
-		if (Inside == 0 && !bCenter) return;
-		if (Depth >= 2)
-		{
-			if (bCenter) Out.Add(B);
-			return;
-		}
-		const FVector2D Mid = B.GetCenter();
-		Visit(FBox2D(B.Min, Mid), Depth + 1);
-		Visit(FBox2D(FVector2D(Mid.X, B.Min.Y), FVector2D(B.Max.X, Mid.Y)), Depth + 1);
-		Visit(FBox2D(FVector2D(B.Min.X, Mid.Y), FVector2D(Mid.X, B.Max.Y)), Depth + 1);
-		Visit(FBox2D(Mid, B.Max), Depth + 1);
-	};
-
-	for (int32 j = 0; j < Ny; ++j)
-	{
-		for (int32 i = 0; i < Nx; ++i)
-		{
-			const FVector2D Min = Bounds.Min + FVector2D(i * Cell.X, j * Cell.Y);
-			Visit(FBox2D(Min, Min + Cell), 0);
-		}
-	}
-
-	if (Out.Num() == 0)
-	{
-		// Degenerate polygon: a single panel around the centroid, a third of the bounds in size.
-		const FVector2D C = Centroid(Polygon);
-		Out.Add(FBox2D(C - Size / 6.f, C + Size / 6.f));
-	}
-
-	// Inset every panel; drop the ones that would collapse.
-	TArray<FBox2D> Inset;
-	for (const FBox2D& B : Out)
-	{
-		FBox2D I(B.Min + FVector2D(EdgeMarginCm, EdgeMarginCm), B.Max - FVector2D(EdgeMarginCm, EdgeMarginCm));
-		if (I.Max.X - I.Min.X >= 20.f && I.Max.Y - I.Min.Y >= 20.f) Inset.Add(I);
-	}
-	if (Inset.Num() == 0) Inset = Out;
-	return Inset;
-}
-
-void ARoomPlannerManager::RebuildCeilingLights()
-{
-	ClearCeilingLights();
-	if (!bAutoCeilingLights) return;
-
+	bRoomLightsDirty = false;
+	AppliedRoomLightSettingsHash = APlannerRoomLightActor::ComputeSettingsHash(RoomLightSettings);
 	UWorld* World = GetWorld();
-	if (!World || World->GetNetMode() == NM_DedicatedServer) return; // lights are local rendering only
-
-	// Shared setup for both light types.
-	auto ConfigureCommon = [this](ULocalLightComponent* Light, const FVector& Pos)
+	if (!RoomLightSettings.bEnabled || !World || World->GetNetMode() == NM_DedicatedServer)
 	{
-		Light->SetMobility(EComponentMobility::Movable);
-		Light->SetupAttachment(SceneRoot);
-		Light->SetAbsolute(true, true, true);
-		Light->SetRelativeLocationAndRotation(Pos, FRotator(-90.f, 0.f, 0.f)); // absolute → world; facing straight down
-		Light->SetIntensityUnits(ELightUnits::Lumens);
-		Light->bUseTemperature = true;
-		Light->SetTemperature(CeilingLightTemperatureK);
-		Light->SetLightColor(FLinearColor::White);
-		Light->SetCastShadows(bCeilingLightsCastShadows);
-		Light->bCastVolumetricShadow = false;
-		Light->SetAffectTranslucentLighting(true);
-		Light->SetIndirectLightingIntensity(CeilingLightIndirectIntensity);
-		Light->SetVisibility(!b2DViewMode); // 3D only; SetViewMode toggles this flag without rebuilding
-	};
+		ClearRoomLights(); // lights are local rendering only
+		return;
+	}
 
+	// Room IDs are re-assigned by every detection pass, so lights are matched by CONTENT: a light whose signature
+	// (room polygon, ceiling height, settings) equals a current room is kept as it is (its shadows, GI and mask
+	// atlas slot survive edits elsewhere); every other light is destroyed and a new one is built. A split room
+	// therefore gets two new lights, a merge one, and nothing stale or duplicated can survive.
+	TMap<uint32, TArray<TObjectPtr<APlannerRoomLightActor>>> Reusable;
+	for (const auto& Pair : RoomLights)
+	{
+		if (Pair.Value && IsValid(Pair.Value))
+		{
+			Reusable.FindOrAdd(Pair.Value->BuildSignature).Add(Pair.Value);
+		}
+	}
+	RoomLights.Empty();
+
+	int32 Kept = 0, Built = 0;
 	for (const auto& Pair : Rooms)
 	{
 		const FRoomData& Room = Pair.Value;
 		if (Room.FloorPolygon.Num() < 3) continue;
 
-		const float CeilZ = Room.CeilingHeightCm > 0.f ? Room.CeilingHeightCm : 280.f;
-		const float AreaM2 = FMath::Max(FMath::Abs(Room.AreaM2), 1.f);
-		const float RoomBudgetLm = CeilingLightLumensPerM2 * AreaM2 * FMath::Max(CeilingLightIntensityScale, 0.f);
-		const float LightZ = CeilZ - CeilingLightDropCm;
-
-		if (bUseRectLights)
+		APlannerRoomLightActor* Light = nullptr;
+		const uint32 Signature = APlannerRoomLightActor::ComputeBuildSignature(Room, RoomLightSettings);
+		if (TArray<TObjectPtr<APlannerRoomLightActor>>* Same = Reusable.Find(Signature))
 		{
-			// ── Luminous ceiling panels ──────────────────────────────────────────────
-			const TArray<FBox2D> Panels = ComputeCeilingLightPanels(Room.FloorPolygon, CeilingPanelMaxSizeCm, CeilingPanelEdgeMarginCm);
-			if (Panels.Num() == 0) continue;
-
-			float TotalPanelArea = 0.f;
-			for (const FBox2D& B : Panels) TotalPanelArea += B.GetArea();
-			TotalPanelArea = FMath::Max(TotalPanelArea, 1.f);
-
-			for (const FBox2D& B : Panels)
+			if (Same->Num() > 0)
 			{
-				URectLightComponent* Light = NewObject<URectLightComponent>(this, URectLightComponent::StaticClass(), NAME_None, RF_Transient);
-				if (!Light) continue;
-				const FVector2D C = B.GetCenter();
-				const FVector2D S = B.GetSize();
-				ConfigureCommon(Light, FVector(C.X, C.Y, LightZ));
-
-				// Pitch −90°: local +X (emission) → world −Z, local Y → world Y, local Z → world +X.
-				Light->SetSourceWidth(S.Y);
-				Light->SetSourceHeight(S.X);
-				// Barn doors keep the emission close to a cosine lobe below the panel; the walls are lit by the
-				// panel's own extent instead of by grazing rays from far across the room.
-				// Barn doors fully open (engine default 88°): any restriction leaves the top of the walls on Lumen
-				// indirect alone, where the radiosity probes show as periodic blobs. The bright band a panel edge
-				// paints on the nearest wall is handled by the 60 cm edge inset (distance), not by masking.
-				Light->SetBarnDoorAngle(88.f);
-				Light->SetBarnDoorLength(20.f);
-				// Each panel takes the room budget in proportion to its area, min / max per panel like the spots.
-				const float PanelLm = FMath::Min(RoomBudgetLm * (B.GetArea() / TotalPanelArea), FMath::Max(CeilingPanelMaxLumens, 1.f) * FMath::Max(CeilingLightIntensityScale, 0.f));
-				Light->SetIntensity(PanelLm);
-				Light->SetAttenuationRadius(FMath::Clamp(CeilZ * 2.f + FMath::Max(S.X, S.Y), 600.f, 2500.f));
-				Light->SetSpecularScale(0.6f);
-				Light->RegisterComponent();
-				CeilingLights.Add(Light);
+				Light = Same->Pop();
+				++Kept;
 			}
 		}
-		else
+		if (!Light)
 		{
-			// ── Grid of downward spot lights (previous solution, kept for comparison) ──
-			const float Spacing = ResolveCeilingLightSpacing(CeilZ);
-			const float Clearance = FMath::Max(CeilingLightWallClearanceCm, Spacing * 0.25f);
-			const TArray<FVector> Positions = ComputeCeilingLightPositions(Room.FloorPolygon, CeilZ, Spacing, Clearance, CeilingLightDropCm);
-			if (Positions.Num() == 0) continue;
+			FActorSpawnParameters Params;
+			Params.Owner = this;
+			Params.ObjectFlags |= RF_Transient;
+			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			Light = World->SpawnActor<APlannerRoomLightActor>(APlannerRoomLightActor::StaticClass(), FTransform::Identity, Params);
+			if (!Light) continue;
+			Light->Build(Room, RoomLightSettings);
+			++Built;
+		}
+		Light->RoomID = Room.RoomID;
+		Light->SetShown(!b2DViewMode);
+		RoomLights.Add(Room.RoomID, Light);
+	}
 
-			const float Lumens = FMath::Clamp(CeilingLightLumensPerM2 * AreaM2 / Positions.Num(), CeilingLightMinLumens, FMath::Max(CeilingLightMinLumens, CeilingLightMaxLumens))
-				* FMath::Max(CeilingLightIntensityScale, 0.f);
-			const float Attenuation = FMath::Clamp(CeilZ * 1.6f + Spacing * 0.6f, 500.f, 1500.f);
-
-			for (const FVector& Pos : Positions)
-			{
-				USpotLightComponent* Light = NewObject<USpotLightComponent>(this, USpotLightComponent::StaticClass(), NAME_None, RF_Transient);
-				if (!Light) continue;
-				ConfigureCommon(Light, Pos);
-				Light->SetIntensity(Lumens);
-				Light->SetInnerConeAngle(5.f);
-				Light->SetOuterConeAngle(89.f); // < 90°: nothing is emitted above the light's own plane
-				Light->SetAttenuationRadius(Attenuation);
-				Light->SetSourceRadius(20.f);
-				Light->SetSoftSourceRadius(40.f);
-				Light->SetSpecularScale(0.4f);
-				Light->RegisterComponent();
-				CeilingLights.Add(Light);
-			}
+	for (auto& Pair : Reusable)
+	{
+		for (TObjectPtr<APlannerRoomLightActor>& Unused : Pair.Value)
+		{
+			if (Unused && IsValid(Unused)) Unused->Destroy();
 		}
 	}
+	UE_LOG(LogTemp, Log, TEXT("[RoomLight] rebuild: %d room(s), %d light(s) kept, %d built."), RoomLights.Num(), Kept, Built);
+}
+
+void ARoomPlannerManager::SetRoomLightSettings(const FPlannerRoomLightSettings& NewSettings)
+{
+	RoomLightSettings = NewSettings;
+	RebuildRoomLights();
+}
+
+int32 ARoomPlannerManager::GetCeilingLightCount() const
+{
+	int32 Total = 0;
+	for (const auto& Pair : RoomLights)
+	{
+		if (Pair.Value) Total += Pair.Value->GetLightCount();
+	}
+	return Total;
+}
+
+int32 ARoomPlannerManager::GetRoomCeilingLightCount(int32 RoomID) const
+{
+	const TObjectPtr<APlannerRoomLightActor>* Found = RoomLights.Find(RoomID);
+	return (Found && *Found) ? (*Found)->GetLightCount() : 0;
+}
+
+APlannerRoomLightActor* ARoomPlannerManager::GetRoomLight(int32 RoomID) const
+{
+	const TObjectPtr<APlannerRoomLightActor>* Found = RoomLights.Find(RoomID);
+	return Found ? Found->Get() : nullptr;
 }
 
 void ARoomPlannerManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -6250,8 +6024,8 @@ void ARoomPlannerManager::UpdatePlannerLumenMode(bool bWantHitLightingGI)
 
 void ARoomPlannerManager::SetAutoCeilingLightsEnabled(bool bEnabled)
 {
-	bAutoCeilingLights = bEnabled;
-	RebuildCeilingLights();
+	RoomLightSettings.bEnabled = bEnabled;
+	RebuildRoomLights();
 }
 
 #if !UE_BUILD_SHIPPING
@@ -6272,28 +6046,18 @@ static FAutoConsoleCommandWithWorldAndArgs GPlannerCeilingLightsCmd(
 		}
 		else
 		{
-			Manager->SetAutoCeilingLightsEnabled(Manager->bAutoCeilingLights);
+			Manager->SetAutoCeilingLightsEnabled(Manager->RoomLightSettings.bEnabled);
 		}
-		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.CeilingLights: enabled=%d, lights=%d"), Manager->bAutoCeilingLights ? 1 : 0, Manager->GetCeilingLightCount());
-	}));
-
-static FAutoConsoleCommandWithWorldAndArgs GPlannerCeilingLightTypeCmd(
-	TEXT("planner.CeilingLightType"),
-	TEXT("planner.CeilingLightType rect|spot — rebuilds the automatic ceiling lights with luminous panels (rect) or the downward spot grid (spot)."),
-	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
-	{
-		ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(World);
-		if (!Manager)
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.CeilingLights: enabled=%d, room lights=%d, light components=%d"), Manager->RoomLightSettings.bEnabled ? 1 : 0, Manager->GetRoomsForDebug().Num(), Manager->GetCeilingLightCount());
+		for (const auto& RoomPair : Manager->GetRoomsForDebug())
 		{
-			UE_LOG(LogTemp, Error, TEXT("[MaxiMallConstructor] planner.CeilingLightType: no planner manager in this world (run while playing)."));
-			return;
+			const APlannerRoomLightActor* RL = Manager->GetRoomLight(RoomPair.Key);
+			UE_LOG(LogTemp, Log, TEXT("    room %d: %.1f m², ceiling %.0f cm, polygon %d pts → panel %d pts, %d light, rect %.0f×%.0f cm, coverage %.2f, %.0f lm, panel %.0f cd/m²"),
+				RoomPair.Key, RoomPair.Value.AreaM2, RoomPair.Value.CeilingHeightCm, RoomPair.Value.FloorPolygon.Num(),
+				RL ? RL->SurfacePolygon.Num() : 0, Manager->GetRoomCeilingLightCount(RoomPair.Key),
+				RL ? RL->LightRectSizeCm.X : 0.f, RL ? RL->LightRectSizeCm.Y : 0.f, RL ? RL->MaskCoverage : 0.f,
+				RL ? RL->EmittedLumens : 0.f, RL ? RL->PanelLuminanceNits : 0.f);
 		}
-		if (Args.Num() > 0)
-		{
-			Manager->bUseRectLights = !Args[0].Equals(TEXT("spot"), ESearchCase::IgnoreCase);
-			Manager->SetAutoCeilingLightsEnabled(Manager->bAutoCeilingLights);
-		}
-		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.CeilingLightType = %s (lights=%d)"), Manager->bUseRectLights ? TEXT("rect") : TEXT("spot"), Manager->GetCeilingLightCount());
 	}));
 
 static FAutoConsoleCommandWithWorldAndArgs GPlannerExposureCmd(
@@ -6383,10 +6147,10 @@ static FAutoConsoleCommandWithWorldAndArgs GPlannerCeilingLightScaleCmd(
 		}
 		if (Args.Num() > 0)
 		{
-			Manager->CeilingLightIntensityScale = FMath::Max(0.f, FCString::Atof(*Args[0]));
-			Manager->SetAutoCeilingLightsEnabled(Manager->bAutoCeilingLights);
+			Manager->RoomLightSettings.IntensityScale = FMath::Max(0.f, FCString::Atof(*Args[0]));
+			Manager->RebuildRoomLightsPublic();
 		}
-		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.CeilingLightScale = %.2f (lumens/m² %.0f, min %.0f, max %.0f, lights=%d)"),
-			Manager->CeilingLightIntensityScale, Manager->CeilingLightLumensPerM2, Manager->CeilingLightMinLumens, Manager->CeilingLightMaxLumens, Manager->GetCeilingLightCount());
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.CeilingLightScale = %.2f (lumens/m² %.0f, lights=%d)"),
+			Manager->RoomLightSettings.IntensityScale, Manager->RoomLightSettings.LumensPerM2, Manager->GetCeilingLightCount());
 	}));
 #endif
