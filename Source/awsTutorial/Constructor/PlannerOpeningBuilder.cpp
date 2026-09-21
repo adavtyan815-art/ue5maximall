@@ -14,9 +14,14 @@ void FPlannerMeshBuffers::Reset()
 
 FPlannerMeshBuffers& FPlannerSectionedMesh::Get(EPlannerOpeningMaterial Kind, const FLinearColor& Color)
 {
+	return Get(Kind, Color, FSurfaceFinish());
+}
+
+FPlannerMeshBuffers& FPlannerSectionedMesh::Get(EPlannerOpeningMaterial Kind, const FLinearColor& Color, const FSurfaceFinish& Finish)
+{
 	for (FSection& Section : Sections)
 	{
-		if (Section.Kind == Kind && Section.Color.Equals(Color, 0.002f))
+		if (Section.Kind == Kind && Section.Color.Equals(Color, 0.002f) && Section.Finish == Finish)
 		{
 			return Section.Buffers;
 		}
@@ -24,6 +29,7 @@ FPlannerMeshBuffers& FPlannerSectionedMesh::Get(EPlannerOpeningMaterial Kind, co
 	FSection* Added = new FSection();
 	Added->Kind = Kind;
 	Added->Color = Color;
+	Added->Finish = Finish;
 	Sections.Add(Added);
 	return Added->Buffers;
 }

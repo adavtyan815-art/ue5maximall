@@ -2422,6 +2422,46 @@ void AAwsTutorial_PlayerController::Server_SetFloorFinish_Implementation(int32 R
 }
 bool AAwsTutorial_PlayerController::Server_SetFloorFinish_Validate(int32 RoomID, FSurfaceFinish Finish) { return true; }
 
+void AAwsTutorial_PlayerController::Server_SetWallFaceFinish_Implementation(int32 SegmentID, bool bLeftFace, FSurfaceFinish Finish)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetWallFaceFinish(SegmentID, bLeftFace, Finish);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_SetWallFaceFinish_Validate(int32 SegmentID, bool bLeftFace, FSurfaceFinish Finish) { return true; }
+
+void AAwsTutorial_PlayerController::Server_SetCeilingFinish_Implementation(int32 RoomID, FSurfaceFinish Finish)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetCeilingFinish(RoomID, Finish);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_SetCeilingFinish_Validate(int32 RoomID, FSurfaceFinish Finish) { return true; }
+
+void AAwsTutorial_PlayerController::Server_SetBaseboardFinish_Implementation(int32 RoomID, FSurfaceFinish Finish)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetBaseboardFinish(RoomID, Finish);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_SetBaseboardFinish_Validate(int32 RoomID, FSurfaceFinish Finish) { return true; }
+
+void AAwsTutorial_PlayerController::Server_SetOpeningTrimFinish_Implementation(int32 SegmentID, int32 OpeningIndex, FSurfaceFinish Finish)
+{
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
+	{
+		Manager->SetOpeningTrimFinish(SegmentID, OpeningIndex, Finish);
+		Manager->OnRep_ReplicatedRoomJSON();
+	}
+}
+bool AAwsTutorial_PlayerController::Server_SetOpeningTrimFinish_Validate(int32 SegmentID, int32 OpeningIndex, FSurfaceFinish Finish) { return true; }
+
 void AAwsTutorial_PlayerController::Server_AddPlacedObject_Implementation(const FString& AssetID, FVector Location, FRotator Rotation, FVector Scale)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))

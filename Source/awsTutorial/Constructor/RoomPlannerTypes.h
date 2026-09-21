@@ -52,15 +52,6 @@ enum class EOpeningSwingDirection : uint8
 	Outward  UMETA(DisplayName = "Outward (opens out of the room)")
 };
 
-/** Look of the unlit exterior view seen through the planner's doors and windows in 3D. */
-UENUM(BlueprintType)
-enum class EPlannerExteriorLook : uint8
-{
-	Day       UMETA(DisplayName = "Day"),
-	Overcast  UMETA(DisplayName = "Overcast"),
-	Evening   UMETA(DisplayName = "Evening")
-};
-
 /** Kind of finishing applied to a wall or floor surface. */
 UENUM(BlueprintType)
 enum class ESurfaceFinishType : uint8
@@ -79,7 +70,9 @@ enum class EPlannerSelectionKind : uint8
 	Opening     UMETA(DisplayName = "Door / Window"),
 	Floor       UMETA(DisplayName = "Floor"),
 	Object      UMETA(DisplayName = "Interior object"),
-	CabinetSet  UMETA(DisplayName = "Cabinet set")
+	CabinetSet  UMETA(DisplayName = "Cabinet set"),
+	Ceiling     UMETA(DisplayName = "Ceiling"),
+	Baseboard   UMETA(DisplayName = "Baseboard")
 };
 
 /** What a pending click-to-place operation will create. */
@@ -193,6 +186,10 @@ struct FWallOpening
 	/** Look of the door / window / archway (PlannerOpeningStyles ID, serialized as "style"). None = the type's default style. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	FName Style;
+
+	/** Finishing of the trim (lining, casing, window frame, sill board), serialized as "trim". Unset = the style's colours (REQ-13). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	FSurfaceFinish TrimFinish;
 };
 
 USTRUCT(BlueprintType)
@@ -222,9 +219,19 @@ struct FWallSegment
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	FString MaterialID = TEXT("DefaultWall");
 
-	/** Applied finishing (paint / tile) for the whole wall (REQ-13). */
+	/**
+	 * Applied finishing (paint / tile) of the wall's LEFT face (Normal = (-Dir.Y, Dir.X)), serialized as "finish" (REQ-13).
+	 * Layouts saved before per-face finishing stored one finish for the whole wall under this key; it is loaded onto both faces.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	FSurfaceFinish Finish;
+
+	/** Applied finishing of the wall's RIGHT face, serialized as "finishRight" (REQ-13). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
+	FSurfaceFinish FinishRight;
+
+	const FSurfaceFinish& GetFaceFinish(bool bLeftFace) const { return bLeftFace ? Finish : FinishRight; }
+	FSurfaceFinish& GetFaceFinish(bool bLeftFace) { return bLeftFace ? Finish : FinishRight; }
 
 	/** True when the wall's LEFT face (Normal = (-Dir.Y, Dir.X)) faces a detected room interior. Derived, not serialized. */
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
@@ -268,9 +275,30 @@ struct FRoomData
 	/** Applied floor finishing (REQ-13). */
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
 	FSurfaceFinish FloorFinish;
+
+	/** Applied ceiling finishing (REQ-13). */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FSurfaceFinish CeilingFinish;
+
+	/** Applied baseboard finishing (REQ-13). */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FSurfaceFinish BaseboardFinish;
+
+	/**
+	 * Tile grid frame of this room's floor and ceiling (world XY, cm; derived, not serialized): the grid starts at a corner of the
+	 * room's interior wall faces and runs along its longest wall. UVs stay metric (1 UV = 1 m).
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FVector2D SurfaceUVOrigin = FVector2D::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FVector2D SurfaceUVAxisU = FVector2D(1.f, 0.f);
+
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FVector2D SurfaceUVAxisV = FVector2D(0.f, 1.f);
 };
 
-/** Floor finish record keyed by room centroid (rooms are re-detected on every rebuild). */
+/** Room surface (floor / ceiling / baseboard) finish record keyed by room centroid (rooms are re-detected on every rebuild). */
 USTRUCT(BlueprintType)
 struct FFloorFinishRecord
 {

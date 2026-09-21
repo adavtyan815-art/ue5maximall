@@ -7,6 +7,7 @@
 #include "RoomPlannerTypes.h"
 #include "ProceduralWallActor.h"
 #include "ProceduralMeshComponent.h"
+#include "PlannerFinishLayout.h"
 #include "RoomPlannerManager.generated.h"
 
 class UDataTable;
@@ -14,6 +15,7 @@ class UMaterialInstanceDynamic;
 class AShowroomBooth;
 class APlannerPlacedObjectActor;
 class FJsonObject;
+class FJsonValue;
 class ULocalLightComponent;
 class UPostProcessComponent;
 class UTexture2D;
@@ -83,6 +85,14 @@ public:
 	/** Selected floor (RoomID) or -1. */
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
 	int32 SelectedRoomID = -1;
+
+	/** Which surface of SelectedRoomID is selected: Floor, Ceiling or Baseboard (REQ-13). */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	EPlannerSelectionKind SelectedRoomSurface = EPlannerSelectionKind::Floor;
+
+	/** Face of SelectedSegmentID that is selected for finishing: true = left face (Normal = (-Dir.Y, Dir.X)), false = right face (REQ-13). */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	bool bSelectedWallFaceLeft = true;
 
 	/** Selected placed interior object InstanceID, or empty. */
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
@@ -278,12 +288,6 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Exterior")
 	bool bShowExteriorBackdrop = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Exterior")
-	EPlannerExteriorLook ExteriorLook = EPlannerExteriorLook::Day;
-
-	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Exterior")
-	void SetExteriorLook(EPlannerExteriorLook NewLook);
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Exterior")
 	void SetExteriorBackdropEnabled(bool bEnabled);
@@ -619,6 +623,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Selection")
 	int32 SelectFloorAtWorldPos(const FVector& WorldPos);
 
+	/** Selects the floor, ceiling or baseboard (Surface) of the room at WorldPos. Returns the RoomID or -1. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Selection")
+	int32 SelectRoomSurfaceAtWorldPos(const FVector& WorldPos, EPlannerSelectionKind Surface);
+
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Selection")
 	bool SelectPlacedObject(const FString& InstanceID);
 
@@ -685,19 +693,57 @@ public:
 
 	// ── REQ-13: finishing ───────────────────────────────────────────────────
 
+	/** Sets the finish of BOTH faces of a wall. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
 	bool SetWallFinish(int32 SegmentID, const FSurfaceFinish& Finish);
+
+	/** Sets the finish of one face of a wall; the other face keeps its own. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	bool SetWallFaceFinish(int32 SegmentID, bool bLeftFace, const FSurfaceFinish& Finish);
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
 	bool SetFloorFinish(int32 RoomID, const FSurfaceFinish& Finish);
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	bool SetCeilingFinish(int32 RoomID, const FSurfaceFinish& Finish);
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	bool SetBaseboardFinish(int32 RoomID, const FSurfaceFinish& Finish);
+
+	/** Sets the finish of a door / window / archway trim (lining, casing, window frame, sill board). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	bool SetOpeningTrimFinish(int32 SegmentID, int32 OpeningIndex, const FSurfaceFinish& Finish);
+
+	/** Finish of the wall's left face. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
 	bool GetWallFinish(int32 SegmentID, FSurfaceFinish& OutFinish) const;
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	bool GetWallFaceFinish(int32 SegmentID, bool bLeftFace, FSurfaceFinish& OutFinish) const;
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
 	bool GetFloorFinish(int32 RoomID, FSurfaceFinish& OutFinish) const;
 
-	/** Finish of whatever is selected (wall, floor or object). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	bool GetCeilingFinish(int32 RoomID, FSurfaceFinish& OutFinish) const;
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	bool GetBaseboardFinish(int32 RoomID, FSurfaceFinish& OutFinish) const;
+
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	bool GetOpeningTrimFinish(int32 SegmentID, int32 OpeningIndex, FSurfaceFinish& OutFinish) const;
+
+	/** True when the selected wall face looks into a detected room. */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Finish")
+	bool IsSelectedWallFaceInterior() const;
+
+	/** Material of a finish (paint / tile instance), shared by every surface using the same finish; null for an unset finish. */
+	UMaterialInterface* GetFinishMaterial(const FSurfaceFinish& Finish);
+
+	/** Reads a wall's face finishes from its layout JSON object ("finish" = left face, "finishRight"; older layouts: "finish" on both). */
+	static void ReadWallFaceFinishes(const TSharedPtr<FJsonObject>& WallObj, FSurfaceFinish& OutLeft, FSurfaceFinish& OutRight);
+
+	/** Finish of whatever is selected (wall face, door / window trim, floor, ceiling, baseboard or object). */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
 	bool GetSelectedSurfaceFinish(FSurfaceFinish& OutFinish) const;
 
@@ -712,7 +758,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
 	TArray<FPlannerCatalogEntry> GetAvailableTiles() const;
 
-	/** True when the current selection can receive a finish (wall without opening selected, floor, or object). */
+	/** True when the current selection can receive a finish (wall face, door / window trim, floor, ceiling, baseboard, or object). */
 	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Finish")
 	bool CanApplyFinishToSelection() const;
 
@@ -981,6 +1027,13 @@ private:
 	/** Floor finishes keyed by room centroid so they survive room re-detection. */
 	TArray<FFloorFinishRecord> FloorFinishes;
 
+	/** Ceiling and baseboard finishes, keyed like FloorFinishes (REQ-13). */
+	TArray<FFloorFinishRecord> CeilingFinishes;
+	TArray<FFloorFinishRecord> BaseboardFinishes;
+
+	/** Tile-grid frames of every wall face, recomputed with the corner joints (REQ-13). */
+	TMap<int32, FPlannerWallFaceUV> WallFaceUVFrames;
+
 	/** Placed interior objects (REQ-17). */
 	TMap<FString, FPlacedFurnitureData> PlacedObjects;
 
@@ -996,6 +1049,17 @@ private:
 	/** Per-room floor finish material instances (section index = RoomID - 1). */
 	UPROPERTY(Transient)
 	TMap<int32, TObjectPtr<UMaterialInterface>> FloorSectionMaterials;
+
+	/** Per-room ceiling / baseboard materials (section index = RoomID - 1). */
+	UPROPERTY(Transient)
+	TMap<int32, TObjectPtr<UMaterialInterface>> CeilingSectionMaterials;
+
+	UPROPERTY(Transient)
+	TMap<int32, TObjectPtr<UMaterialInterface>> BaseboardSectionMaterials;
+
+	/** Finish materials shared per finish (see GetFinishMaterial). */
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UMaterialInterface>> FinishMaterialCache;
 
 	bool b2DViewMode = false;
 	bool bIsDrawingWall = false;
@@ -1051,6 +1115,9 @@ private:
 	 */
 	void ComputeAllCornerJoints();
 
+	/** Tile-grid frames of all wall faces from the current corner joints (see PlannerFinishLayout::ComputeWallFaceUVs). */
+	void ComputeWallFaceUVFrames();
+
 	/** Re-points every wall of NodeID to TargetNodeID and deletes NodeID. Refused if a wall would collapse or duplicate another. */
 	bool MergeNodeInto(int32 NodeID, int32 TargetNodeID);
 
@@ -1090,7 +1157,15 @@ private:
 	UMaterialInstanceDynamic* CreateFinishMaterialInstance(const FSurfaceFinish& Finish, UObject* Outer);
 	UMaterialInterface* ResolveFloorMaterialForRoom(const FRoomData& Room);
 	void ApplyWallFinishMaterials();
+	/** Brings one wall actor's face finish materials in line with its segment data. */
+	void ApplyWallFinishToActor(AProceduralWallActor* Actor, const FWallSegment& Seg);
 	const FFloorFinishRecord* FindFloorFinishRecord(const FVector2D& Centroid) const;
+	static const FFloorFinishRecord* FindRoomFinishRecord(const TArray<FFloorFinishRecord>& Records, const FVector2D& Centroid);
+	static void UpsertRoomFinishRecord(TArray<FFloorFinishRecord>& Records, const FVector2D& Centroid, const FSurfaceFinish& Finish);
+	static TArray<TSharedPtr<FJsonValue>> RoomFinishRecordsToJson(const TArray<FFloorFinishRecord>& Records);
+	static void RoomFinishRecordsFromJson(const TSharedPtr<FJsonObject>& Root, const TCHAR* Field, TArray<FFloorFinishRecord>& OutRecords);
+	/** Stores a ceiling / baseboard finish of a room and republishes; Surface is Ceiling or Baseboard. */
+	bool SetRoomSurfaceFinish(int32 RoomID, EPlannerSelectionKind Surface, const FSurfaceFinish& Finish);
 	UDataTable* ResolveTileCatalog() const;
 	UDataTable* ResolveObjectCatalog() const;
 	UDataTable* ResolveCabinetSetCatalog() const;

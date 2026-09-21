@@ -17,6 +17,7 @@ class UEditableTextBox;
 class UImage;
 class UWidget;
 class UPanelWidget;
+class UWrapBox;
 class UColorCatalogWidget;
 class UPlannerCatalogItemWidget;
 class UDragDropOperation;
@@ -34,6 +35,7 @@ class AWSTUTORIAL_API URoomPlannerWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
+	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
@@ -582,10 +584,6 @@ public:
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UButton> BtnDoorsClose;
 
-	/** Cycles the view behind doors and windows: day → overcast → evening. */
-	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
-	TObjectPtr<UButton> BtnExteriorLook;
-
 	/** Optional row holding the 3D view option buttons; follows their visibility. */
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
 	TObjectPtr<UWidget> ViewOptionsRow;
@@ -595,9 +593,6 @@ public:
 
 	UFUNCTION()
 	void OnDoorsCloseClicked();
-
-	UFUNCTION()
-	void OnExteriorLookClicked();
 
 	/** Optional row (caption + rotate buttons); follows the rotate buttons' visibility. */
 	UPROPERTY(meta = (BindWidgetOptional), BlueprintReadOnly, Category = "RoomPlanner|UI")
@@ -693,6 +688,20 @@ private:
 	UFUNCTION() void OnSwingRightClicked();
 	UFUNCTION() void OnSwingInwardClicked();
 	UFUNCTION() void OnSwingOutwardClicked();
+	/**
+	 * Tile catalog (DT_PlannerTiles) buttons, built in code: one button per tile, applying it to the selected wall face, floor,
+	 * ceiling or baseboard (REQ-13). The row is inserted under the paint button's row when the widget initializes.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<UWrapBox> TileRow;
+
+	/** Tile rows the TileRow buttons were built for ("" = not built). */
+	FString TileRowBuiltKey;
+
+	void EnsureTileRow();
+	void RefreshTileRow(bool bShow);
+	void OnTileButtonClicked(FName TileID);
+
 	UFUNCTION() void OnFinishPaintClicked();
 	UFUNCTION() void OnClearFinishClicked();
 	UFUNCTION() void OnRotateLeftClicked();

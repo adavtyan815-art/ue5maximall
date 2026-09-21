@@ -7,6 +7,7 @@
 #include "ProceduralMeshComponent.h"
 #include "RoomPlannerTypes.h"
 #include "PlannerOpeningBuilder.h"
+#include "PlannerFinishLayout.h"
 #include "ProceduralWallActor.generated.h"
 
 UCLASS()
@@ -23,11 +24,22 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
 	TObjectPtr<USceneComponent> SceneRoot;
 
-	/** Section 0: the wall body with its door / window holes (collision). */
+	/**
+	 * The wall body with its door / window holes (collision): section 0 = left face, 1 = right face. Each carries its own finish
+	 * (REQ-13); the top, sill tops, lintel soffits, reveals and end caps are split at the wall's mid-plane, each half belonging to the
+	 * face on its side.
+	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
 	TObjectPtr<UProceduralMeshComponent> WallProceduralMesh;
 
-	/** Door / window dressing fixed to the wall (thresholds, floor fills, frames); one section per material, no collision. */
+	static constexpr int32 LeftFaceSection = 0;
+	static constexpr int32 RightFaceSection = 1;
+	static constexpr int32 NumWallSections = 2;
+
+	/**
+	 * Door / window dressing fixed to the wall (thresholds, floor fills, frames); one section per material. In 3D only Visibility
+	 * traces hit it, so trim can be picked for finishing (REQ-13); no collision in 2D.
+	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
 	TObjectPtr<UProceduralMeshComponent> DressingMesh;
 
@@ -63,15 +75,24 @@ public:
 	void SetWallMaterial(UMaterialInterface* NewMaterial);
 
 	/**
-	 * Sets the finishing material (paint / tile dynamic instance) for this wall. Null clears it.
-	 * The finish material replaces the default white wall material on section 0 whenever the wall
-	 * is not selected (REQ-13).
+	 * Sets the finishing material (paint / tile dynamic instance) of BOTH faces of this wall. Null clears it.
+	 * A finish material replaces the default white wall material whenever the wall is not selected (REQ-13).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Wall")
 	void SetFinishMaterial(UMaterialInterface* NewFinishMaterial);
 
+	/** Finish of one face (REQ-13): the finish the material was built from and the material itself (null clears the face). */
+	void SetFaceFinish(bool bLeftFace, const FSurfaceFinish& Finish, UMaterialInterface* Material);
+
+	/** Tile-grid frame of both faces, so the pattern continues across openings and from wall to wall (REQ-13). Applied on the next RebuildWallMesh. */
+	void SetFaceUVFrame(const FPlannerWallFaceUV& InFaceUV) { FaceUV = InFaceUV; }
+	const FPlannerWallFaceUV& GetFaceUVFrame() const { return FaceUV; }
+
 	UFUNCTION(BlueprintCallable, Category = "Wall")
 	void SetSelectedHighlight(bool bSelected, int32 StencilValue = 2);
+
+	/** Highlights one face (0 left, 1 right; INDEX_NONE = both), including its half of the top, reveals and caps. */
+	void SetSelectedFaceHighlight(bool bSelected, int32 Face);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wall")
 	TArray<TObjectPtr<UProceduralMeshComponent>> OpeningHighlightMeshes;
@@ -80,13 +101,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wall|Materials")
 	TObjectPtr<UMaterialInterface> BaseWallMaterial;
 
-	/** Finishing material currently applied to the wall (dynamic instance created by the manager). */
+	/** Finishing material currently applied to the wall's left face (dynamic instance created by the manager). */
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Wall|Materials")
 	TObjectPtr<UMaterialInterface> FinishMaterial;
 
 	/** The finish FinishMaterial was built from; lets the manager skip rebuilding the instance on every mesh rebuild. */
 	UPROPERTY(Transient)
 	FSurfaceFinish AppliedFinish;
+
+	/** Finishing material currently applied to the wall's right face. */
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Wall|Materials")
+	TObjectPtr<UMaterialInterface> FinishMaterialRight;
+
+	/** The finish FinishMaterialRight was built from. */
+	UPROPERTY(Transient)
+	FSurfaceFinish AppliedFinishRight;
 
 	/** Kept for compatibility; leaf materials are resolved by the owning ARoomPlannerManager (its LeafMaterial overrides every leaf). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wall|Materials")
@@ -106,8 +135,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Wall")
 	void ClearAllOpeningHighlights();
 
-	/** Material used for section 0 when the wall is not selected: finish, else base, else engine white. */
+	/** Material of the left face when the wall is not selected: finish, else base, else engine white. */
 	UMaterialInterface* ResolveNormalMaterial() const;
+
+	/** Material of one wall body section when not selected: that face's finish, else base. */
+	UMaterialInterface* ResolveSectionMaterial(int32 Section) const;
 
 	/**
 	 * True when the leaf hinge of this opening sits at the wall's START node.
@@ -171,6 +203,18 @@ private:
 
 	float DressingStartCover[2] = { 0.f, 0.f };
 	float DressingEndCover[2] = { 0.f, 0.f };
+
+	FPlannerWallFaceUV FaceUV;
+
+	/** Selection highlight state of the wall body (see SetSelectedFaceHighlight). */
+	bool bHighlightShown = false;
+	int32 HighlightFace = INDEX_NONE;
+
+	/** Base wall material: BaseWallMaterial, else engine white. */
+	UMaterialInterface* ResolveBaseMaterial() const;
+	UMaterialInterface* ResolveSelectionMaterial() const;
+	/** Applies highlight / finish / base materials to the wall body sections. */
+	void ApplyWallSectionMaterials();
 
 	TArray<FLeafPose> LeafPoses;
 	TArray<float> LeafOpenFractions;

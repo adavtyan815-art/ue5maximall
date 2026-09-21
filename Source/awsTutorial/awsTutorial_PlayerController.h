@@ -145,6 +145,20 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_SetFloorFinish(int32 RoomID, FSurfaceFinish Finish);
 
+	/** REQ-13: finish of one wall face; the other face keeps its own. */
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetWallFaceFinish(int32 SegmentID, bool bLeftFace, FSurfaceFinish Finish);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetCeilingFinish(int32 RoomID, FSurfaceFinish Finish);
+
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetBaseboardFinish(int32 RoomID, FSurfaceFinish Finish);
+
+	/** REQ-13: finish of a door / window / archway trim. */
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
+	void Server_SetOpeningTrimFinish(int32 SegmentID, int32 OpeningIndex, FSurfaceFinish Finish);
+
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_AddPlacedObject(const FString& AssetID, FVector Location, FRotator Rotation, FVector Scale);
 

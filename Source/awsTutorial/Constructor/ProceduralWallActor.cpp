@@ -56,8 +56,13 @@ AProceduralWallActor::AProceduralWallActor()
 
 	DressingMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("DressingMesh"));
 	DressingMesh->SetupAttachment(SceneRoot);
-	DressingMesh->bUseAsyncCooking = false; // never has collision: the synchronous path does not allocate a body setup per update
+	DressingMesh->bUseAsyncCooking = false; // 2D: no collision, and the synchronous path does not allocate a body setup per update
+	DressingMesh->bUseComplexAsSimpleCollision = true;
 	DressingMesh->SetCastShadow(true);
+	// 3D: only Visibility traces (click / hover) see the trim, so it can be picked for finishing; pawns and cameras pass through it.
+	DressingMesh->SetCollisionObjectType(ECC_WorldDynamic);
+	DressingMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	DressingMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	DressingMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	// Plan symbols are drawing aids, not objects: no shadows, no ray-traced or GI presence.
@@ -102,13 +107,18 @@ void AProceduralWallActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AProceduralWallActor::SetWallMaterial(UMaterialInterface* NewMaterial)
 {
 	BaseWallMaterial = NewMaterial;
-	if (WallProceduralMesh && BaseWallMaterial)
+	if (BaseWallMaterial)
 	{
-		WallProceduralMesh->SetMaterial(0, BaseWallMaterial);
+		ApplyWallSectionMaterials();
 	}
 }
 
 void AProceduralWallActor::SetSelectedHighlight(bool bSelected, int32 StencilValue)
+{
+	SetSelectedFaceHighlight(bSelected, INDEX_NONE);
+}
+
+void AProceduralWallActor::SetSelectedFaceHighlight(bool bSelected, int32 Face)
 {
 	if (!WallProceduralMesh)
 	{
@@ -118,58 +128,36 @@ void AProceduralWallActor::SetSelectedHighlight(bool bSelected, int32 StencilVal
 	// Disable Custom Depth Stencil pass
 	WallProceduralMesh->SetRenderCustomDepth(false);
 
-	if (bSelected)
-	{
-		// Apply M_WallSelection ONLY on selection
-		UMaterialInterface* SelMat = WallSelectionMaterial ? WallSelectionMaterial.Get() : nullptr;
-		if (!SelMat)
-		{
-			SelMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_WallSelection.M_WallSelection"));
-		}
-		if (!SelMat)
-		{
-			SelMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_WallSelection.M_WallSelection"));
-		}
-
-		if (SelMat)
-		{
-			WallProceduralMesh->SetMaterial(0, SelMat);
-		}
-	}
-	else
-	{
-		// Restore the wall's own material: applied finish (paint / tile) if any, else the default white.
-		if (UMaterialInterface* NormalMat = ResolveNormalMaterial())
-		{
-			WallProceduralMesh->SetMaterial(0, NormalMat);
-		}
-	}
+	bHighlightShown = bSelected;
+	HighlightFace = (Face == LeftFaceSection || Face == RightFaceSection) ? Face : INDEX_NONE;
+	ApplyWallSectionMaterials();
 }
 
 void AProceduralWallActor::SetFinishMaterial(UMaterialInterface* NewFinishMaterial)
 {
 	FinishMaterial = NewFinishMaterial;
-	if (WallProceduralMesh && WallProceduralMesh->GetNumSections() > 0)
-	{
-		// Only touch the live material when the wall is not currently showing the selection material.
-		UMaterialInterface* Current = WallProceduralMesh->GetMaterial(0);
-		const bool bShowingSelection = (Current != nullptr && Current == WallSelectionMaterial.Get());
-		if (!bShowingSelection)
-		{
-			if (UMaterialInterface* NormalMat = ResolveNormalMaterial())
-			{
-				WallProceduralMesh->SetMaterial(0, NormalMat);
-			}
-		}
-	}
+	FinishMaterialRight = NewFinishMaterial;
+	AppliedFinishRight = AppliedFinish;
+	ApplyWallSectionMaterials(); // a highlighted section keeps the selection material until the highlight is cleared
 }
 
-UMaterialInterface* AProceduralWallActor::ResolveNormalMaterial() const
+void AProceduralWallActor::SetFaceFinish(bool bLeftFace, const FSurfaceFinish& Finish, UMaterialInterface* Material)
 {
-	if (FinishMaterial)
+	if (bLeftFace)
 	{
-		return FinishMaterial.Get();
+		AppliedFinish = Finish;
+		FinishMaterial = Material;
 	}
+	else
+	{
+		AppliedFinishRight = Finish;
+		FinishMaterialRight = Material;
+	}
+	ApplyWallSectionMaterials();
+}
+
+UMaterialInterface* AProceduralWallActor::ResolveBaseMaterial() const
+{
 	UMaterialInterface* NormalMat = BaseWallMaterial ? BaseWallMaterial.Get() : nullptr;
 	if (!NormalMat)
 	{
@@ -180,6 +168,47 @@ UMaterialInterface* AProceduralWallActor::ResolveNormalMaterial() const
 		NormalMat = UMaterial::GetDefaultMaterial(MD_Surface);
 	}
 	return NormalMat;
+}
+
+UMaterialInterface* AProceduralWallActor::ResolveNormalMaterial() const
+{
+	return ResolveSectionMaterial(LeftFaceSection);
+}
+
+UMaterialInterface* AProceduralWallActor::ResolveSectionMaterial(int32 Section) const
+{
+	if (Section == LeftFaceSection && FinishMaterial) return FinishMaterial.Get();
+	if (Section == RightFaceSection && FinishMaterialRight) return FinishMaterialRight.Get();
+	return ResolveBaseMaterial();
+}
+
+UMaterialInterface* AProceduralWallActor::ResolveSelectionMaterial() const
+{
+	UMaterialInterface* SelMat = WallSelectionMaterial ? WallSelectionMaterial.Get() : nullptr;
+	if (!SelMat)
+	{
+		SelMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_WallSelection.M_WallSelection"));
+	}
+	if (!SelMat)
+	{
+		SelMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_WallSelection.M_WallSelection"));
+	}
+	return SelMat;
+}
+
+void AProceduralWallActor::ApplyWallSectionMaterials()
+{
+	if (!WallProceduralMesh) return;
+	UMaterialInterface* SelMat = bHighlightShown ? ResolveSelectionMaterial() : nullptr;
+	const int32 NumSections = FMath::Min(WallProceduralMesh->GetNumSections(), NumWallSections);
+	for (int32 Section = 0; Section < NumSections; ++Section)
+	{
+		const bool bHighlighted = SelMat && (HighlightFace == INDEX_NONE || HighlightFace == Section);
+		if (UMaterialInterface* Mat = bHighlighted ? SelMat : ResolveSectionMaterial(Section))
+		{
+			WallProceduralMesh->SetMaterial(Section, Mat);
+		}
+	}
 }
 
 bool AProceduralWallActor::IsHingeAtStart(const FWallOpening& Opening, bool bLeftSideIsInterior)
@@ -222,6 +251,14 @@ void AProceduralWallActor::SetPresentation(bool bIn3D)
 	if (PlanSymbolMesh)
 	{
 		PlanSymbolMesh->SetVisibility(!bIn3D);
+	}
+	if (DressingMesh)
+	{
+		const ECollisionEnabled::Type WantCollision = bIn3D ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision;
+		if (DressingMesh->GetCollisionEnabled() != WantCollision)
+		{
+			DressingMesh->SetCollisionEnabled(WantCollision);
+		}
 	}
 	ApplyAllLeafPoses();
 }
@@ -356,7 +393,18 @@ void AProceduralWallActor::CommitSections(UProceduralMeshComponent* Component, c
 	for (const FPlannerSectionedMesh::FSection& Section : Mesh.Sections)
 	{
 		if (Section.Buffers.IsEmpty()) continue;
-		UMaterialInterface* Material = ResolveOpeningMaterial(Section.Kind, Section.Color);
+		UMaterialInterface* Material = nullptr;
+		if (Section.Finish.IsSet())
+		{
+			if (ARoomPlannerManager* Manager = Cast<ARoomPlannerManager>(GetOwner()))
+			{
+				Material = Manager->GetFinishMaterial(Section.Finish); // trim finishing (REQ-13)
+			}
+		}
+		if (!Material)
+		{
+			Material = ResolveOpeningMaterial(Section.Kind, Section.Color);
+		}
 		if (!Material) continue; // e.g. no glass material in this build
 		const FPlannerMeshBuffers& B = Section.Buffers;
 		Component->CreateMeshSection(SectionIndex, B.Vertices, B.Triangles, B.Normals, B.UVs, TArray<FColor>(), B.Tangents, bCreateCollision);
@@ -381,7 +429,12 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	}
 
 	WallProceduralMesh->ClearAllMeshSections();
-	if (DressingMesh) DressingMesh->ClearAllMeshSections();
+	if (DressingMesh)
+	{
+		// Trim is clickable only in 3D; 2D edits rebuild walls every frame, so they do not cook its collision there.
+		DressingMesh->bUseAsyncCooking = bPresentation3D;
+		DressingMesh->ClearAllMeshSections();
+	}
 	if (PlanSymbolMesh) PlanSymbolMesh->ClearAllMeshSections();
 
 	for (UProceduralMeshComponent* Comp : OpeningHighlightMeshes)
@@ -493,7 +546,43 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		}
 	}
 
-	FPlannerMeshBuffers Wall;
+	// Each face goes to its own section so it carries its own finish. Face UVs follow the manager's tile-grid frame: U runs along the
+	// wall without restarting at openings and continues from wall to wall, V is the height; 1 UV = 1 m (REQ-13).
+	FPlannerMeshBuffers FaceBuffers[2];
+	auto FaceQuad = [&](int32 Face, const FVector& A, const FVector& B, const FVector& C, const FVector& D)
+	{
+		auto UV = [&](const FVector& P) { return FVector2D(FaceUV.U(Face, (float)AlongOf(FVector2D(P.X, P.Y))) / 100.f, P.Z / 100.f); };
+		PlannerMeshBuilder::AddQuadUV(FaceBuffers[Face], A, B, C, D, Face == 0 ? LeftNormalVector : RightNormalVector, UV(A), UV(B), UV(C), UV(D));
+	};
+	// Strips across the wall depth (top, sill top, lintel soffit, reveal, end cap), given by their left-face edge (L0 -> L1) and
+	// right-face edge (R0 -> R1): each half, up to the mid-plane, belongs to the face on its side, so a face finish covers it. Its UVs
+	// unfold the face's grid over the edge: a horizontal strip keeps the face's columns and continues its rows into the depth; a
+	// vertical strip keeps the rows and continues the columns. WrapSign (vertical strips): +1 where the strip turns off the face while
+	// moving along +Dir (start reveal, end cap), -1 otherwise (end reveal, start cap).
+	auto DepthStrip = [&](const FVector& L0, const FVector& L1, const FVector& R1, const FVector& R0, const FVector& Normal, float WrapSign)
+	{
+		const FVector M0 = (L0 + R0) * 0.5f;
+		const FVector M1 = (L1 + R1) * 0.5f;
+		const bool bHorizontal = FMath::Abs(Normal.Z) > 0.5f;
+		auto AddHalf = [&](int32 Face, const FVector& A, const FVector& B, const FVector& C, const FVector& D, const FVector& FaceEdgePoint)
+		{
+			const float EdgeU = FaceUV.U(Face, (float)AlongOf(FVector2D(FaceEdgePoint.X, FaceEdgePoint.Y)));
+			auto UV = [&](const FVector& P)
+			{
+				const float Side = (float)FVector2D::DotProduct(FVector2D(P.X, P.Y) - StartPos, Normal2D);
+				const float DepthFromFace = FMath::Max(0.f, Face == 0 ? HalfThickness - Side : HalfThickness + Side);
+				if (bHorizontal)
+				{
+					const float V = (float)P.Z + (Normal.Z > 0. ? DepthFromFace : -DepthFromFace);
+					return FVector2D(FaceUV.U(Face, (float)AlongOf(FVector2D(P.X, P.Y))) / 100.f, V / 100.f);
+				}
+				return FVector2D((EdgeU + WrapSign * FaceUV.Sign[Face] * DepthFromFace) / 100.f, (float)P.Z / 100.f);
+			};
+			PlannerMeshBuilder::AddQuadUV(FaceBuffers[Face], A, B, C, D, Normal, UV(A), UV(B), UV(C), UV(D));
+		};
+		AddHalf(0, L0, L1, M1, M0, L0);
+		AddHalf(1, M0, M1, R1, R0, R0);
+	};
 	float CurrentDist = 0.f;
 
 	for (int32 Index : ValidIndices)
@@ -510,9 +599,9 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 			const FVector2D SecSR = FacePoint(CurrentDist, false);
 			const FVector2D SecER = FacePoint(OpenStart, false);
 
-			PlannerMeshBuilder::AddQuad(Wall, V3(SecSL, 0.f), V3(SecEL, 0.f), V3(SecEL, WallHeight), V3(SecSL, WallHeight), LeftNormalVector);
-			PlannerMeshBuilder::AddQuad(Wall, V3(SecER, 0.f), V3(SecSR, 0.f), V3(SecSR, WallHeight), V3(SecER, WallHeight), RightNormalVector);
-			PlannerMeshBuilder::AddQuad(Wall, V3(SecSL, WallHeight), V3(SecEL, WallHeight), V3(SecER, WallHeight), V3(SecSR, WallHeight), UpVector);
+			FaceQuad(0, V3(SecSL, 0.f), V3(SecEL, 0.f), V3(SecEL, WallHeight), V3(SecSL, WallHeight));
+			FaceQuad(1, V3(SecER, 0.f), V3(SecSR, 0.f), V3(SecSR, WallHeight), V3(SecER, WallHeight));
+			DepthStrip(V3(SecSL, WallHeight), V3(SecEL, WallHeight), V3(SecER, WallHeight), V3(SecSR, WallHeight), UpVector, 0.f);
 		}
 
 		// Opening section (Wall above/below opening)
@@ -527,26 +616,26 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		// Sub-opening wall below sill (Windows)
 		if (SillZ > 0.f)
 		{
-			PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, 0.f), V3(OpEL, 0.f), V3(OpEL, SillZ), V3(OpSL, SillZ), LeftNormalVector);
-			PlannerMeshBuilder::AddQuad(Wall, V3(OpER, 0.f), V3(OpSR, 0.f), V3(OpSR, SillZ), V3(OpER, SillZ), RightNormalVector);
+			FaceQuad(0, V3(OpSL, 0.f), V3(OpEL, 0.f), V3(OpEL, SillZ), V3(OpSL, SillZ));
+			FaceQuad(1, V3(OpER, 0.f), V3(OpSR, 0.f), V3(OpSR, SillZ), V3(OpER, SillZ));
 			// Sill top jamb
-			PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, SillZ), V3(OpEL, SillZ), V3(OpER, SillZ), V3(OpSR, SillZ), UpVector);
+			DepthStrip(V3(OpSL, SillZ), V3(OpEL, SillZ), V3(OpER, SillZ), V3(OpSR, SillZ), UpVector, 0.f);
 		}
 
 		// Sub-opening wall above lintel
 		if (LintelZ < WallHeight)
 		{
-			PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, LintelZ), V3(OpEL, LintelZ), V3(OpEL, WallHeight), V3(OpSL, WallHeight), LeftNormalVector);
-			PlannerMeshBuilder::AddQuad(Wall, V3(OpER, LintelZ), V3(OpSR, LintelZ), V3(OpSR, WallHeight), V3(OpER, WallHeight), RightNormalVector);
+			FaceQuad(0, V3(OpSL, LintelZ), V3(OpEL, LintelZ), V3(OpEL, WallHeight), V3(OpSL, WallHeight));
+			FaceQuad(1, V3(OpER, LintelZ), V3(OpSR, LintelZ), V3(OpSR, WallHeight), V3(OpER, WallHeight));
 			// Lintel bottom jamb
-			PlannerMeshBuilder::AddQuad(Wall, V3(OpEL, LintelZ), V3(OpSL, LintelZ), V3(OpSR, LintelZ), V3(OpER, LintelZ), -UpVector);
+			DepthStrip(V3(OpEL, LintelZ), V3(OpSL, LintelZ), V3(OpSR, LintelZ), V3(OpER, LintelZ), -UpVector, 0.f);
 			// Top Face above lintel
-			PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, WallHeight), V3(OpEL, WallHeight), V3(OpER, WallHeight), V3(OpSR, WallHeight), UpVector);
+			DepthStrip(V3(OpSL, WallHeight), V3(OpEL, WallHeight), V3(OpER, WallHeight), V3(OpSR, WallHeight), UpVector, 0.f);
 		}
 
 		// Left & right reveals (jambs): each faces INTO the opening (the start jamb toward the wall's end and vice versa).
-		PlannerMeshBuilder::AddQuad(Wall, V3(OpSL, SillZ), V3(OpSR, SillZ), V3(OpSR, LintelZ), V3(OpSL, LintelZ), JambNormal(OpSL, OpSR, EndNormalVector));
-		PlannerMeshBuilder::AddQuad(Wall, V3(OpER, SillZ), V3(OpEL, SillZ), V3(OpEL, LintelZ), V3(OpER, LintelZ), JambNormal(OpER, OpEL, StartNormalVector));
+		DepthStrip(V3(OpSL, SillZ), V3(OpSL, LintelZ), V3(OpSR, LintelZ), V3(OpSR, SillZ), JambNormal(OpSL, OpSR, EndNormalVector), 1.f);
+		DepthStrip(V3(OpEL, SillZ), V3(OpEL, LintelZ), V3(OpER, LintelZ), V3(OpER, SillZ), JambNormal(OpER, OpEL, StartNormalVector), -1.f);
 
 		CurrentDist = OpenEnd;
 	}
@@ -559,30 +648,34 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		const FVector2D SecSR = FacePoint(CurrentDist, false);
 		const FVector2D SecER = ER2D;
 
-		PlannerMeshBuilder::AddQuad(Wall, V3(SecSL, 0.f), V3(SecEL, 0.f), V3(SecEL, WallHeight), V3(SecSL, WallHeight), LeftNormalVector);
-		PlannerMeshBuilder::AddQuad(Wall, V3(SecER, 0.f), V3(SecSR, 0.f), V3(SecSR, WallHeight), V3(SecER, WallHeight), RightNormalVector);
-		PlannerMeshBuilder::AddQuad(Wall, V3(SecSL, WallHeight), V3(SecEL, WallHeight), V3(SecER, WallHeight), V3(SecSR, WallHeight), UpVector);
+		FaceQuad(0, V3(SecSL, 0.f), V3(SecEL, 0.f), V3(SecEL, WallHeight), V3(SecSL, WallHeight));
+		FaceQuad(1, V3(SecER, 0.f), V3(SecSR, 0.f), V3(SecSR, WallHeight), V3(SecER, WallHeight));
+		DepthStrip(V3(SecSL, WallHeight), V3(SecEL, WallHeight), V3(SecER, WallHeight), V3(SecSR, WallHeight), UpVector, 0.f);
 	}
 
 	// Start Cap Face (if open end)
 	if (bStartCap)
 	{
-		PlannerMeshBuilder::AddQuad(Wall, V3(SR2D, 0.f), V3(SL2D, 0.f), V3(SL2D, WallHeight), V3(SR2D, WallHeight), StartNormalVector);
+		DepthStrip(V3(SL2D, 0.f), V3(SL2D, WallHeight), V3(SR2D, WallHeight), V3(SR2D, 0.f), StartNormalVector, -1.f);
 	}
 
 	// End Cap Face (if open end)
 	if (bEndCap)
 	{
-		PlannerMeshBuilder::AddQuad(Wall, V3(EL2D, 0.f), V3(ER2D, 0.f), V3(ER2D, WallHeight), V3(EL2D, WallHeight), EndNormalVector);
+		DepthStrip(V3(EL2D, 0.f), V3(EL2D, WallHeight), V3(ER2D, WallHeight), V3(ER2D, 0.f), EndNormalVector, 1.f);
 	}
 
-	WallProceduralMesh->CreateMeshSection(0, Wall.Vertices, Wall.Triangles, Wall.Normals, Wall.UVs, TArray<FColor>(), Wall.Tangents, bCreateCollision);
-
-	// Apply the wall's normal material (finish if any, else clean default white).
-	if (UMaterialInterface* NormalMat = ResolveNormalMaterial())
+	for (int32 Face = 0; Face < 2; ++Face)
 	{
-		WallProceduralMesh->SetMaterial(0, NormalMat);
+		const FPlannerMeshBuffers& B = FaceBuffers[Face];
+		WallProceduralMesh->CreateMeshSection(Face == 0 ? LeftFaceSection : RightFaceSection, B.Vertices, B.Triangles, B.Normals, B.UVs,
+			TArray<FColor>(), B.Tangents, bCreateCollision);
 	}
+
+	// The wall's normal materials (finish if any, else clean default white); the manager re-applies any selection highlight.
+	bHighlightShown = false;
+	HighlightFace = INDEX_NONE;
+	ApplyWallSectionMaterials();
 
 	// Generate 3D red translucent selection boxes with guaranteed 1-to-1 index match to WallData.Openings
 	UMaterialInterface* OpeningMat = OpeningSelectionMaterial ? OpeningSelectionMaterial.Get() : nullptr;
@@ -681,7 +774,7 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 			const float NextStart = (i + 1 < ValidIndices.Num()) ? ClampedStart(WallData.Openings[ValidIndices[i + 1]]) : 1.0e6f;
 			BuildOpeningVisuals(ValidIndices[i], Frame, PrevEnd, NextStart, Dressing, Plan);
 		}
-		CommitSections(DressingMesh, Dressing, false);
+		CommitSections(DressingMesh, Dressing, bPresentation3D);
 		if (PlanSymbolMesh && !Plan.IsEmpty())
 		{
 			PlanSymbolMesh->CreateMeshSection(0, Plan.Vertices, Plan.Triangles, Plan.Normals, Plan.UVs, TArray<FColor>(), Plan.Tangents, false);
@@ -722,7 +815,7 @@ void AProceduralWallActor::BuildOpeningVisuals(int32 OpeningIndex, const FWallBu
 	const FVector AxisZ = FVector::UpVector;
 	auto FrameBox = [&](const FVector& Min, const FVector& Max, uint8 Faces)
 	{
-		PlannerMeshBuilder::AddBox(Dressing.Get(EPlannerOpeningMaterial::Frame, Style.FrameColor), Origin, AxisX, AxisY, AxisZ, Min, Max, Faces);
+		PlannerMeshBuilder::AddBox(Dressing.Get(EPlannerOpeningMaterial::Frame, Style.FrameColor, Op.TrimFinish), Origin, AxisX, AxisY, AxisZ, Min, Max, Faces);
 	};
 	const uint8 NoEnds = EPlannerBoxFace::All & ~(EPlannerBoxFace::NegX | EPlannerBoxFace::PosX);
 
@@ -772,7 +865,7 @@ void AProceduralWallActor::BuildOpeningVisuals(int32 OpeningIndex, const FWallBu
 					continue; // no room on this face (corner, neighbour, ceiling): a clipped casing looks worse than none
 				}
 				const float FaceSign = FaceIdx == 0 ? 1.f : -1.f;
-				PlannerOpeningGeometry::AddMitredCasing(Dressing.Get(EPlannerOpeningMaterial::Frame, Style.FrameColor),
+				PlannerOpeningGeometry::AddMitredCasing(Dressing.Get(EPlannerOpeningMaterial::Frame, Style.FrameColor, Op.TrimFinish),
 					Origin + AxisY * (FaceSign * HT), AxisX, AxisY * FaceSign, InnerStart, InnerEnd, CasingBottom, InnerTop, Width, CasingDepth);
 			}
 		}

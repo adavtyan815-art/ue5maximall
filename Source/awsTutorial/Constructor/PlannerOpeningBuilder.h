@@ -41,13 +41,15 @@ enum class EPlannerLeafDesign : uint8
 	FullGlass,   // narrow frame around one tall glass field
 };
 
-/** Geometry grouped into one section per (material role, colour). */
+/** Geometry grouped into one section per (material role, colour, finish). */
 struct AWSTUTORIAL_API FPlannerSectionedMesh
 {
 	struct FSection
 	{
 		EPlannerOpeningMaterial Kind = EPlannerOpeningMaterial::Frame;
 		FLinearColor Color = FLinearColor::White;
+		/** When set, the section is drawn with this finish (REQ-13 trim finishing) instead of the role / colour material. */
+		FSurfaceFinish Finish;
 		FPlannerMeshBuffers Buffers;
 	};
 
@@ -55,6 +57,7 @@ struct AWSTUTORIAL_API FPlannerSectionedMesh
 	TIndirectArray<FSection> Sections;
 
 	FPlannerMeshBuffers& Get(EPlannerOpeningMaterial Kind, const FLinearColor& Color);
+	FPlannerMeshBuffers& Get(EPlannerOpeningMaterial Kind, const FLinearColor& Color, const FSurfaceFinish& Finish);
 	bool IsEmpty() const;
 };
 

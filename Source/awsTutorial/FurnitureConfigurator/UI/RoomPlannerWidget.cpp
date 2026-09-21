@@ -26,10 +26,19 @@
 #include "FurnitureConfigurator/UI/PlannerStyleButton.h"
 #include "Constructor/PlannerOpeningStyles.h"
 #include "Blueprint/WidgetTree.h"
+#include "Components/WrapBox.h"
 #include "Components/WrapBoxSlot.h"
+#include "Components/VerticalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Styling/CoreStyle.h"
+
+void URoomPlannerWidget::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+	// Before the Slate tree exists: a panel built later takes its children in slot order, so the tile row lands where it is inserted.
+	EnsureTileRow();
+}
 
 void URoomPlannerWidget::NativeConstruct()
 {
@@ -166,11 +175,6 @@ void URoomPlannerWidget::NativeConstruct()
 	{
 		BtnDoorsClose->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnDoorsCloseClicked);
 		BtnDoorsClose->SetToolTipText(FText::FromString(TEXT("Закрыть все двери и окна")));
-	}
-	if (BtnExteriorLook)
-	{
-		BtnExteriorLook->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnExteriorLookClicked);
-		BtnExteriorLook->SetToolTipText(FText::FromString(TEXT("Вид за окном: день / пасмурно / вечер")));
 	}
 
 	if (BtnSwingLeft) BtnSwingLeft->SetToolTipText(FText::FromString(TEXT("Петли слева (вид изнутри комнаты)")));
@@ -629,11 +633,10 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 	if (BtnPresetRoom) BtnPresetRoom->SetVisibility(ToolsVis);
 	if (Image_1) Image_1->SetVisibility(ToolsVis);
 
-	// 3D view options: door / window leaves and the exterior look.
+	// 3D view options: door / window leaves.
 	const ESlateVisibility ViewOptionsVis = bIs2D ? ESlateVisibility::Collapsed : ESlateVisibility::Visible;
 	if (BtnDoorsOpen) BtnDoorsOpen->SetVisibility(ViewOptionsVis);
 	if (BtnDoorsClose) BtnDoorsClose->SetVisibility(ViewOptionsVis);
-	if (BtnExteriorLook) BtnExteriorLook->SetVisibility(ViewOptionsVis);
 	if (ViewOptionsRow) ViewOptionsRow->SetVisibility(bIs2D ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
 	{
 		const bool bLeavesOpen = PlannerManager && PlannerManager->GetDefaultOpeningLeavesOpen();
@@ -1166,6 +1169,10 @@ FString URoomPlannerWidget::GetSelectionTitleText() const
 	}
 	case EPlannerSelectionKind::Floor:
 		return TEXT("Пол");
+	case EPlannerSelectionKind::Ceiling:
+		return TEXT("Потолок");
+	case EPlannerSelectionKind::Baseboard:
+		return TEXT("Плинтус");
 	case EPlannerSelectionKind::Object:
 	{
 		FString AssetID;
@@ -1896,20 +1903,6 @@ void URoomPlannerWidget::OnDoorsCloseClicked()
 	UpdateViewModeButtonStyles();
 }
 
-void URoomPlannerWidget::OnExteriorLookClicked()
-{
-	if (!PlannerManager) return;
-	const EPlannerExteriorLook Next =
-		PlannerManager->ExteriorLook == EPlannerExteriorLook::Day ? EPlannerExteriorLook::Overcast :
-		PlannerManager->ExteriorLook == EPlannerExteriorLook::Overcast ? EPlannerExteriorLook::Evening : EPlannerExteriorLook::Day;
-	PlannerManager->SetExteriorLook(Next);
-	if (BtnExteriorLook)
-	{
-		const TCHAR* LookName = Next == EPlannerExteriorLook::Day ? TEXT("день") : (Next == EPlannerExteriorLook::Overcast ? TEXT("пасмурно") : TEXT("вечер"));
-		BtnExteriorLook->SetToolTipText(FText::FromString(FString::Printf(TEXT("Вид за окном: %s (нажмите, чтобы сменить)"), LookName)));
-	}
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // REQ-13 / REQ-14: finishing
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1918,7 +1911,7 @@ void URoomPlannerWidget::OpenPaintCatalogForSelection()
 {
 	if (!PlannerManager || !PlannerManager->CanApplyFinishToSelection())
 	{
-		HandleOperationRejected(TEXT("Сначала выберите стену, пол или объект"));
+		HandleOperationRejected(TEXT("Сначала выберите поверхность: стену, пол, потолок, плинтус, дверь / окно или объект"));
 		return;
 	}
 
@@ -2007,21 +2000,36 @@ bool URoomPlannerWidget::ApplyFinishToSelection(const FSurfaceFinish& Finish)
 	switch (PlannerManager->GetSelectionKind())
 	{
 	case EPlannerSelectionKind::Wall:
-		PC->Server_SetWallFinish(PlannerManager->SelectedSegmentID, Finish);
+		// Only the selected face; the other face of the wall keeps its own finish.
+		PC->Server_SetWallFaceFinish(PlannerManager->SelectedSegmentID, PlannerManager->bSelectedWallFaceLeft, Finish);
+		return true;
+	case EPlannerSelectionKind::Opening:
+		if (Finish.Type == ESurfaceFinishType::Tile)
+		{
+			HandleOperationRejected(TEXT("Плитку можно назначить только стене, полу, потолку или плинтусу"));
+			return false;
+		}
+		PC->Server_SetOpeningTrimFinish(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, Finish);
 		return true;
 	case EPlannerSelectionKind::Floor:
 		PC->Server_SetFloorFinish(PlannerManager->SelectedRoomID, Finish);
 		return true;
+	case EPlannerSelectionKind::Ceiling:
+		PC->Server_SetCeilingFinish(PlannerManager->SelectedRoomID, Finish);
+		return true;
+	case EPlannerSelectionKind::Baseboard:
+		PC->Server_SetBaseboardFinish(PlannerManager->SelectedRoomID, Finish);
+		return true;
 	case EPlannerSelectionKind::Object:
 		if (Finish.Type == ESurfaceFinishType::Tile)
 		{
-			HandleOperationRejected(TEXT("Плитку можно назначить только стене или полу"));
+			HandleOperationRejected(TEXT("Плитку можно назначить только стене, полу, потолку или плинтусу"));
 			return false;
 		}
 		PC->Server_SetPlacedObjectFinish(PlannerManager->SelectedObjectID, Finish);
 		return true;
 	default:
-		HandleOperationRejected(TEXT("Сначала выберите стену, пол или объект"));
+		HandleOperationRejected(TEXT("Сначала выберите поверхность: стену, пол, потолок, плинтус, дверь / окно или объект"));
 		return false;
 	}
 }
@@ -2043,16 +2051,30 @@ bool URoomPlannerWidget::GetSelectedSurfaceFinish(FSurfaceFinish& OutFinish) con
 
 FString URoomPlannerWidget::GetSelectedFinishText() const
 {
+	// Which surface the finish goes to (a wall has two faces; a door / window finish goes to its trim).
+	FString Surface;
+	if (PlannerManager)
+	{
+		switch (PlannerManager->GetSelectionKind())
+		{
+		case EPlannerSelectionKind::Wall:      Surface = PlannerManager->IsSelectedWallFaceInterior() ? TEXT("Сторона в комнату: ") : TEXT("Наружная сторона: "); break;
+		case EPlannerSelectionKind::Opening:   Surface = TEXT("Наличник / рама: "); break;
+		case EPlannerSelectionKind::Ceiling:   Surface = TEXT("Потолок: "); break;
+		case EPlannerSelectionKind::Baseboard: Surface = TEXT("Плинтус: "); break;
+		default: break;
+		}
+	}
+
 	FSurfaceFinish F;
 	if (!GetSelectedSurfaceFinish(F) || !F.IsSet())
 	{
-		return TEXT("—");
+		return Surface + TEXT("—");
 	}
 	if (F.Type == ESurfaceFinishType::Paint)
 	{
-		return FString::Printf(TEXT("Краска %s"), *F.GetKey());
+		return Surface + FString::Printf(TEXT("Краска %s"), *F.GetKey());
 	}
-	return FString::Printf(TEXT("Плитка %s (%.0f см)"), *F.TileAssetID, F.TileSizeCm);
+	return Surface + FString::Printf(TEXT("Плитка %s (%.0f см)"), *F.TileAssetID, F.TileSizeCm);
 }
 
 TArray<FFinishAreaEntry> URoomPlannerWidget::GetFinishAreas() const
@@ -2082,11 +2104,93 @@ void URoomPlannerWidget::UpdateFinishUI()
 		TxtFinishInfo->SetText(FText::FromString(bCanFinish ? GetSelectedFinishText() : FString()));
 		TxtFinishInfo->SetVisibility(bCanFinish ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
+	// Tiles go on surfaces (wall faces, floors, ceilings, baseboards), not on door / window trim or objects.
+	const EPlannerSelectionKind FinishKind = PlannerManager->GetSelectionKind();
+	RefreshTileRow(bCanFinish && FinishKind != EPlannerSelectionKind::Object && FinishKind != EPlannerSelectionKind::Opening);
 	if (TxtFinishAreas)
 	{
 		const bool bHasWalls = PlannerManager && PlannerManager->GetWallCount() > 0;
 		TxtFinishAreas->SetText(FText::FromString(bHasWalls ? GetFinishAreaSummaryText() : FString()));
 	}
+}
+
+void URoomPlannerWidget::EnsureTileRow()
+{
+	if (TileRow || !WidgetTree || !BtnFinishPaint) return;
+
+	// Place the row below the paint button's own row (FinishRow), in the nearest ancestor that stacks its children vertically.
+	UWidget* Anchor = BtnFinishPaint;
+	UPanelWidget* Parent = Anchor->GetParent();
+	while (Parent && !Parent->IsA<UVerticalBox>() && !Parent->IsA<UScrollBox>())
+	{
+		Anchor = Parent;
+		Parent = Parent->GetParent();
+	}
+	if (!Parent)
+	{
+		Anchor = BtnFinishPaint;
+		Parent = BtnFinishPaint->GetParent();
+	}
+	if (!Parent || !Parent->CanHaveMultipleChildren()) return;
+
+	TileRow = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(), TEXT("TileRow"));
+	if (!TileRow) return;
+	TileRow->SetVisibility(ESlateVisibility::Collapsed);
+	UPanelSlot* RowSlot = Parent->InsertChildAt(Parent->GetChildIndex(Anchor) + 1, TileRow);
+	const FMargin RowPadding(0.f, 2.f);
+	if (UVerticalBoxSlot* VerticalSlot = Cast<UVerticalBoxSlot>(RowSlot)) VerticalSlot->SetPadding(RowPadding);
+	else if (UHorizontalBoxSlot* HorizontalSlot = Cast<UHorizontalBoxSlot>(RowSlot)) HorizontalSlot->SetPadding(RowPadding);
+}
+
+void URoomPlannerWidget::RefreshTileRow(bool bShow)
+{
+	if (!TileRow) return;
+	TileRow->SetVisibility(bShow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	if (!bShow || !PlannerManager || !WidgetTree) return;
+
+	const TArray<FPlannerCatalogEntry> Tiles = PlannerManager->GetAvailableTiles();
+	FString Key;
+	for (const FPlannerCatalogEntry& Tile : Tiles)
+	{
+		Key += Tile.ID + TEXT(";");
+	}
+	if (Key == TileRowBuiltKey) return;
+
+	TileRow->ClearChildren();
+	for (const FPlannerCatalogEntry& Tile : Tiles)
+	{
+		UPlannerStyleButton* Button = WidgetTree->ConstructWidget<UPlannerStyleButton>(UPlannerStyleButton::StaticClass());
+		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+		if (!Button || !Label) continue;
+
+		Label->SetText(Tile.DisplayName);
+		Label->SetFont(FCoreStyle::GetDefaultFontStyle("Regular", 10));
+		// The button shows the tile's colour; the label stays readable on it.
+		const bool bDarkTile = Tile.Color.GetLuminance() < 0.35f;
+		Label->SetColorAndOpacity(FSlateColor(bDarkTile ? FLinearColor::White : FLinearColor(0.04f, 0.04f, 0.04f, 1.f)));
+		Button->AddChild(Label);
+		Button->StyleID = FName(*Tile.ID);
+		Button->SetBackgroundColor(Tile.Color);
+		Button->SetToolTipText(FText::FromString(FString::Printf(TEXT("Плитка: %s"), *Tile.DisplayName.ToString())));
+		Button->OnStyleClicked.BindUObject(this, &URoomPlannerWidget::OnTileButtonClicked);
+		Button->BindClick();
+
+		if (UWrapBoxSlot* WrapSlot = Cast<UWrapBoxSlot>(TileRow->AddChild(Button)))
+		{
+			WrapSlot->SetPadding(FMargin(2.f));
+		}
+	}
+	TileRowBuiltKey = Key;
+}
+
+void URoomPlannerWidget::OnTileButtonClicked(FName TileID)
+{
+	if (ApplyTileToSelection(TileID) && PlannerManager)
+	{
+		// As with paint: hide the selection highlight so the new finish is visible; the selection itself stays active.
+		PlannerManager->SetSelectionHighlightSuppressed(true);
+	}
+	UpdateFinishUI();
 }
 
 void URoomPlannerWidget::OnFinishPaintClicked() { OpenPaintCatalogForSelection(); }
