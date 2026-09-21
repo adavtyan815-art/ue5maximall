@@ -1315,16 +1315,13 @@ void ARoomPlannerManager::RebuildRooms()
 			Room.BaseboardFinish = Rec->Finish;
 		}
 
-		// Walls along the room outline, per polygon edge: half thickness and walk-through openings (which interrupt the baseboard).
+		// Half thickness of the wall on each outline edge (the floor / ceiling tile grid starts at the interior wall-face corner).
 		TArray<float> EdgeHalfThickness;
 		EdgeHalfThickness.Init(10.f, VertCount);
-		TArray<TArray<FVector2D>> EdgeCuts; // (from, to) in cm along FloorPolygon[i] -> FloorPolygon[i + 1]
-		EdgeCuts.SetNum(VertCount);
 		for (int32 i = 0; i < VertCount; ++i)
 		{
 			const FVector2D P1 = FloorPolygon[i];
 			const FVector2D P2 = FloorPolygon[(i + 1) % VertCount];
-			const float EdgeLen = FVector2D::Distance(P1, P2);
 			for (const TPair<int32, FWallSegment>& SegPair : WallSegments)
 			{
 				const FWallNode* SegStart = Nodes.Find(SegPair.Value.StartNodeID);
@@ -1333,39 +1330,7 @@ void ARoomPlannerManager::RebuildRooms()
 				const bool bForward = SegStart->Position.Equals(P1, 0.5f) && SegEnd->Position.Equals(P2, 0.5f);
 				const bool bBackward = SegStart->Position.Equals(P2, 0.5f) && SegEnd->Position.Equals(P1, 0.5f);
 				if (!bForward && !bBackward) continue;
-				const FWallSegment& CutSeg = SegPair.Value;
-				EdgeHalfThickness[i] = CutSeg.Thickness * 0.5f;
-
-				// RebuildWallMesh cuts holes only where both faces run straight (clamped next to a mitred corner): use the same span.
-				const FVector2D SegS = SegStart->Position;
-				const FVector2D SegE = SegEnd->Position;
-				const float SegLen = FVector2D::Distance(SegS, SegE);
-				const FVector2D SegDir = (SegE - SegS).GetSafeNormal();
-				const FVector2D SegLeft(-SegDir.Y, SegDir.X);
-				const float SegHalf = CutSeg.Thickness * 0.5f;
-				FVector2D CornerSL = SegS + SegLeft * SegHalf, CornerSR = SegS - SegLeft * SegHalf;
-				FVector2D CornerEL = SegE + SegLeft * SegHalf, CornerER = SegE - SegLeft * SegHalf;
-				if (const FWallCornerJoint* J = CornerJoints.Find(MakeJointKey(SegPair.Key, CutSeg.StartNodeID)))
-				{
-					CornerSL = J->Left;
-					CornerSR = J->Right;
-				}
-				if (const FWallCornerJoint* J = CornerJoints.Find(MakeJointKey(SegPair.Key, CutSeg.EndNodeID)))
-				{
-					CornerEL = J->Left;
-					CornerER = J->Right;
-				}
-				auto AlongSeg = [&SegS, &SegDir](const FVector2D& P) { return (float)FVector2D::DotProduct(P - SegS, SegDir); };
-				const float JointLo = FMath::Clamp(FMath::Max(FMath::Min(AlongSeg(CornerSL), AlongSeg(CornerEL)), FMath::Min(AlongSeg(CornerSR), AlongSeg(CornerER))), 0.f, SegLen);
-				const float JointHi = FMath::Clamp(FMath::Min(FMath::Max(AlongSeg(CornerSL), AlongSeg(CornerEL)), FMath::Max(AlongSeg(CornerSR), AlongSeg(CornerER))), JointLo, SegLen);
-
-				for (const FWallOpening& Op : CutSeg.Openings)
-				{
-					if (Op.SillHeight >= 11.f) continue;
-					const float S0 = FMath::Clamp(Op.DistanceFromStart - Op.Width * 0.5f, JointLo, JointHi);
-					const float S1 = FMath::Clamp(Op.DistanceFromStart + Op.Width * 0.5f, JointLo, JointHi);
-					EdgeCuts[i].Add(bForward ? FVector2D(S0, S1) : FVector2D(EdgeLen - S1, EdgeLen - S0));
-				}
+				EdgeHalfThickness[i] = SegPair.Value.Thickness * 0.5f;
 				break;
 			}
 		}
@@ -1602,19 +1567,11 @@ void ARoomPlannerManager::RebuildRooms()
 			CeilingProceduralMesh->SetMaterial(RoomIdx, CeilMat);
 		}
 
-		// 6.3. Generate Baseboard Mesh Section: on the interior wall faces of the room, interrupted by walk-through openings (REQ-13).
-		if (BaseboardProceduralMesh)
-		{
-			FPlannerMeshBuffers Baseboard;
-			PlannerFinishLayout::BuildBaseboard(FloorPolygon, EdgeHalfThickness, EdgeCuts, 1.f, 10.f, 1.5f, Baseboard);
-			BaseboardProceduralMesh->CreateMeshSection(RoomIdx, Baseboard.Vertices, Baseboard.Triangles, Baseboard.Normals, Baseboard.UVs,
-				TArray<FColor>(), Baseboard.Tangents, true);
-			UMaterialInterface* BbMat = Room.BaseboardFinish.IsSet() ? GetFinishMaterial(Room.BaseboardFinish) : nullptr;
-			if (!BbMat) BbMat = BbMatInst ? BbMatInst : BaseMat;
-			BaseboardSectionMaterials.Add(Room.RoomID, BbMat);
-			BaseboardProceduralMesh->SetMaterial(RoomIdx, BbMat);
-		}
 	}
+
+	// 6.3. Baseboards: along every wall face that looks into a room. Walls that close no room (partitions ending inside a room,
+	// free-standing walls) are pruned from the room outlines above, so baseboards follow the walls themselves (REQ-13).
+	RebuildBaseboards(BbMatInst ? static_cast<UMaterialInterface*>(BbMatInst) : BaseMat);
 
 	if (FloorProceduralMesh) FloorProceduralMesh->SetVisibility(true);
 	if (CeilingProceduralMesh) CeilingProceduralMesh->SetVisibility(bCeilingVisible && !b2DViewMode);
@@ -5314,38 +5271,118 @@ void ARoomPlannerManager::ComputeWallFaceUVFrames()
 	Inputs.Reserve(SegIDs.Num());
 	for (int32 SegID : SegIDs)
 	{
-		const FWallSegment& Seg = WallSegments[SegID];
-		const FWallNode* StartNode = Nodes.Find(Seg.StartNodeID);
-		const FWallNode* EndNode = Nodes.Find(Seg.EndNodeID);
-		if (!StartNode || !EndNode) continue;
-
 		FPlannerWallFaceInput In;
-		In.SegmentID = SegID;
-		In.StartNodeID = Seg.StartNodeID;
-		In.EndNodeID = Seg.EndNodeID;
-		In.Start = StartNode->Position;
-		In.End = EndNode->Position;
-		// Same corner points RebuildAllWalls gives the wall mesh.
-		const FVector2D Dir = (In.End - In.Start).GetSafeNormal();
-		const FVector2D Normal(-Dir.Y, Dir.X);
-		const float Half = Seg.Thickness * 0.5f;
-		In.StartCorner[0] = In.Start + Normal * Half;
-		In.StartCorner[1] = In.Start - Normal * Half;
-		In.EndCorner[0] = In.End + Normal * Half;
-		In.EndCorner[1] = In.End - Normal * Half;
-		if (const FWallCornerJoint* J = CornerJoints.Find(MakeJointKey(SegID, Seg.StartNodeID)))
+		if (MakeWallFaceInput(SegID, In))
 		{
-			In.StartCorner[0] = J->Left;
-			In.StartCorner[1] = J->Right;
+			Inputs.Add(In);
 		}
-		if (const FWallCornerJoint* J = CornerJoints.Find(MakeJointKey(SegID, Seg.EndNodeID)))
-		{
-			In.EndCorner[0] = J->Left;
-			In.EndCorner[1] = J->Right;
-		}
-		Inputs.Add(In);
 	}
 	WallFaceUVFrames = PlannerFinishLayout::ComputeWallFaceUVs(Inputs);
+}
+
+bool ARoomPlannerManager::MakeWallFaceInput(int32 SegID, FPlannerWallFaceInput& Out) const
+{
+	const FWallSegment* Seg = WallSegments.Find(SegID);
+	const FWallNode* StartNode = Seg ? Nodes.Find(Seg->StartNodeID) : nullptr;
+	const FWallNode* EndNode = Seg ? Nodes.Find(Seg->EndNodeID) : nullptr;
+	if (!StartNode || !EndNode) return false;
+
+	Out = FPlannerWallFaceInput();
+	Out.SegmentID = SegID;
+	Out.StartNodeID = Seg->StartNodeID;
+	Out.EndNodeID = Seg->EndNodeID;
+	Out.Start = StartNode->Position;
+	Out.End = EndNode->Position;
+	// Same corner points RebuildAllWalls gives the wall mesh.
+	const FVector2D Dir = (Out.End - Out.Start).GetSafeNormal();
+	const FVector2D Normal(-Dir.Y, Dir.X);
+	const float Half = Seg->Thickness * 0.5f;
+	Out.StartCorner[0] = Out.Start + Normal * Half;
+	Out.StartCorner[1] = Out.Start - Normal * Half;
+	Out.EndCorner[0] = Out.End + Normal * Half;
+	Out.EndCorner[1] = Out.End - Normal * Half;
+	if (const FWallCornerJoint* J = CornerJoints.Find(MakeJointKey(SegID, Seg->StartNodeID)))
+	{
+		Out.StartCorner[0] = J->Left;
+		Out.StartCorner[1] = J->Right;
+	}
+	if (const FWallCornerJoint* J = CornerJoints.Find(MakeJointKey(SegID, Seg->EndNodeID)))
+	{
+		Out.EndCorner[0] = J->Left;
+		Out.EndCorner[1] = J->Right;
+	}
+	return true;
+}
+
+void ARoomPlannerManager::RebuildBaseboards(UMaterialInterface* DefaultMaterial)
+{
+	if (!BaseboardProceduralMesh) return;
+
+	TArray<int32> SegIDs;
+	WallSegments.GetKeys(SegIDs);
+	SegIDs.Sort();
+
+	// Every wall takes part (a face without a room still pairs the faces around a node); only faces that look into a room get one.
+	TArray<FPlannerBaseboardWall> BaseboardWalls;
+	BaseboardWalls.Reserve(SegIDs.Num());
+	for (int32 SegID : SegIDs)
+	{
+		FPlannerBaseboardWall Wall;
+		if (!MakeWallFaceInput(SegID, Wall.Wall)) continue;
+		const FWallSegment& Seg = WallSegments[SegID];
+		Wall.HalfThickness = Seg.Thickness * 0.5f;
+
+		const FVector2D Dir = (Wall.Wall.End - Wall.Wall.Start).GetSafeNormal();
+		const FVector2D Left(-Dir.Y, Dir.X);
+		const FVector2D Mid = (Wall.Wall.Start + Wall.Wall.End) * 0.5f;
+		for (int32 Face = 0; Face < 2; ++Face)
+		{
+			// The room a face looks into: the room containing a point just in front of it.
+			const FVector2D Probe = Mid + (Face == 0 ? Left : -Left) * (Wall.HalfThickness + 5.f);
+			Wall.FaceRoom[Face] = FindRoomAtWorldPos(FVector(Probe.X, Probe.Y, 0.f));
+		}
+
+		// Walk-through openings interrupt it over the span RebuildWallMesh cuts holes in (where both faces run straight).
+		const float Len = FVector2D::Distance(Wall.Wall.Start, Wall.Wall.End);
+		auto Along = [&Wall, &Dir](const FVector2D& P) { return (float)FVector2D::DotProduct(P - Wall.Wall.Start, Dir); };
+		const float LeftLo = FMath::Min(Along(Wall.Wall.StartCorner[0]), Along(Wall.Wall.EndCorner[0]));
+		const float LeftHi = FMath::Max(Along(Wall.Wall.StartCorner[0]), Along(Wall.Wall.EndCorner[0]));
+		const float RightLo = FMath::Min(Along(Wall.Wall.StartCorner[1]), Along(Wall.Wall.EndCorner[1]));
+		const float RightHi = FMath::Max(Along(Wall.Wall.StartCorner[1]), Along(Wall.Wall.EndCorner[1]));
+		const float HoleLo = FMath::Clamp(FMath::Max(LeftLo, RightLo), 0.f, Len);
+		const float HoleHi = FMath::Clamp(FMath::Min(LeftHi, RightHi), HoleLo, Len);
+		for (const FWallOpening& Op : Seg.Openings)
+		{
+			if (Op.SillHeight >= 11.f) continue; // windows keep the baseboard under them
+			Wall.Cuts.Add(FVector2D(FMath::Clamp(Op.DistanceFromStart - Op.Width * 0.5f, HoleLo, HoleHi),
+				FMath::Clamp(Op.DistanceFromStart + Op.Width * 0.5f, HoleLo, HoleHi)));
+		}
+		BaseboardWalls.Add(Wall);
+	}
+
+	TMap<int32, FPlannerMeshBuffers> ByRoom;
+	PlannerFinishLayout::BuildWallBaseboards(BaseboardWalls, 1.f, 10.f, 1.5f, ByRoom);
+
+	// One section per room, so finishes and selection address a room's baseboards like its floor and ceiling.
+	const FPlannerMeshBuffers NoBaseboard;
+	for (const TPair<int32, FRoomData>& Pair : Rooms)
+	{
+		const FPlannerMeshBuffers* Buffers = ByRoom.Find(Pair.Key);
+		if (!Buffers)
+		{
+			Buffers = &NoBaseboard;
+		}
+		const int32 Section = Pair.Key - 1;
+		BaseboardProceduralMesh->CreateMeshSection(Section, Buffers->Vertices, Buffers->Triangles, Buffers->Normals, Buffers->UVs,
+			TArray<FColor>(), Buffers->Tangents, true);
+		UMaterialInterface* Material = Pair.Value.BaseboardFinish.IsSet() ? GetFinishMaterial(Pair.Value.BaseboardFinish) : nullptr;
+		if (!Material)
+		{
+			Material = DefaultMaterial;
+		}
+		BaseboardSectionMaterials.Add(Pair.Key, Material);
+		BaseboardProceduralMesh->SetMaterial(Section, Material);
+	}
 }
 
 void ARoomPlannerManager::ReadWallFaceFinishes(const TSharedPtr<FJsonObject>& WallObj, FSurfaceFinish& OutLeft, FSurfaceFinish& OutRight)

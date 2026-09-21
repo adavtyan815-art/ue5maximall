@@ -24,11 +24,11 @@
 #include "ColorCatalog/ColorCatalogWidget.h"
 #include "FurnitureConfigurator/UI/PlannerCatalogItemWidget.h"
 #include "FurnitureConfigurator/UI/PlannerStyleButton.h"
+#include "FurnitureConfigurator/UI/PlannerTileCatalogWidget.h"
+#include "Components/ButtonSlot.h"
 #include "Constructor/PlannerOpeningStyles.h"
 #include "Blueprint/WidgetTree.h"
-#include "Components/WrapBox.h"
 #include "Components/WrapBoxSlot.h"
-#include "Components/VerticalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Styling/CoreStyle.h"
@@ -36,8 +36,8 @@
 void URoomPlannerWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
-	// Before the Slate tree exists: a panel built later takes its children in slot order, so the tile row lands where it is inserted.
-	EnsureTileRow();
+	// Before the Slate tree exists: a panel built later takes its children in slot order, so the button lands where it is inserted.
+	CreateTileCatalogButton();
 }
 
 void URoomPlannerWidget::NativeConstruct()
@@ -233,6 +233,14 @@ void URoomPlannerWidget::NativeDestruct()
 		ActivePlannerColorCatalog->RemoveFromParent();
 	}
 	ActivePlannerColorCatalog = nullptr;
+
+	if (::IsValid(ActivePlannerTileCatalog) && ActivePlannerTileCatalog->IsInViewport())
+	{
+		ActivePlannerTileCatalog->OnTileChosen.RemoveAll(this);
+		ActivePlannerTileCatalog->OnCatalogClosed.RemoveAll(this);
+		ActivePlannerTileCatalog->RemoveFromParent();
+	}
+	ActivePlannerTileCatalog = nullptr;
 
 	if (PlannerManager)
 	{
@@ -2105,8 +2113,16 @@ void URoomPlannerWidget::UpdateFinishUI()
 		TxtFinishInfo->SetVisibility(bCanFinish ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 	// Tiles go on surfaces (wall faces, floors, ceilings, baseboards), not on door / window trim or objects.
-	const EPlannerSelectionKind FinishKind = PlannerManager->GetSelectionKind();
-	RefreshTileRow(bCanFinish && FinishKind != EPlannerSelectionKind::Object && FinishKind != EPlannerSelectionKind::Opening);
+	if (BtnFinishTile)
+	{
+		BtnFinishTile->SetVisibility(CanTileSelection() ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+	if (ActivePlannerTileCatalog)
+	{
+		// The catalog stays open while another surface is picked in the scene; it waits while the selection cannot take a tile.
+		ActivePlannerTileCatalog->SetCardsEnabled(CanTileSelection());
+		ActivePlannerTileCatalog->SetActiveTile(GetSelectedSurfaceTileID());
+	}
 	if (TxtFinishAreas)
 	{
 		const bool bHasWalls = PlannerManager && PlannerManager->GetWallCount() > 0;
@@ -2114,84 +2130,142 @@ void URoomPlannerWidget::UpdateFinishUI()
 	}
 }
 
-void URoomPlannerWidget::EnsureTileRow()
+void URoomPlannerWidget::CreateTileCatalogButton()
 {
-	if (TileRow || !WidgetTree || !BtnFinishPaint) return;
+	if (BtnFinishTile || !WidgetTree || !BtnFinishPaint) return;
+	UPanelWidget* Row = BtnFinishPaint->GetParent();
+	if (!Row || !Row->CanHaveMultipleChildren()) return;
 
-	// Place the row below the paint button's own row (FinishRow), in the nearest ancestor that stacks its children vertically.
-	UWidget* Anchor = BtnFinishPaint;
-	UPanelWidget* Parent = Anchor->GetParent();
-	while (Parent && !Parent->IsA<UVerticalBox>() && !Parent->IsA<UScrollBox>())
+	BtnFinishTile = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("BtnFinishTile"));
+	if (!BtnFinishTile) return;
+
+	// Same look as the "Отделка" button beside it.
+	BtnFinishTile->SetStyle(BtnFinishPaint->GetStyle());
+	BtnFinishTile->SetBackgroundColor(BtnFinishPaint->GetBackgroundColor());
+	BtnFinishTile->SetColorAndOpacity(BtnFinishPaint->GetColorAndOpacity());
+
+	UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("BtnFinishTileLabel"));
+	Label->SetText(FText::FromString(TEXT("Плитка")));
+	const UTextBlock* PaintLabel = Cast<UTextBlock>(BtnFinishPaint->GetContent());
+	if (PaintLabel)
 	{
-		Anchor = Parent;
-		Parent = Parent->GetParent();
+		Label->SetFont(PaintLabel->GetFont());
+		Label->SetColorAndOpacity(PaintLabel->GetColorAndOpacity());
 	}
-	if (!Parent)
+	else
 	{
-		Anchor = BtnFinishPaint;
-		Parent = BtnFinishPaint->GetParent();
+		Label->SetFont(FCoreStyle::GetDefaultFontStyle("Bold", 13.5f));
+		Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	}
-	if (!Parent || !Parent->CanHaveMultipleChildren()) return;
-
-	TileRow = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(), TEXT("TileRow"));
-	if (!TileRow) return;
-	TileRow->SetVisibility(ESlateVisibility::Collapsed);
-	UPanelSlot* RowSlot = Parent->InsertChildAt(Parent->GetChildIndex(Anchor) + 1, TileRow);
-	const FMargin RowPadding(0.f, 2.f);
-	if (UVerticalBoxSlot* VerticalSlot = Cast<UVerticalBoxSlot>(RowSlot)) VerticalSlot->SetPadding(RowPadding);
-	else if (UHorizontalBoxSlot* HorizontalSlot = Cast<UHorizontalBoxSlot>(RowSlot)) HorizontalSlot->SetPadding(RowPadding);
-}
-
-void URoomPlannerWidget::RefreshTileRow(bool bShow)
-{
-	if (!TileRow) return;
-	TileRow->SetVisibility(bShow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
-	if (!bShow || !PlannerManager || !WidgetTree) return;
-
-	const TArray<FPlannerCatalogEntry> Tiles = PlannerManager->GetAvailableTiles();
-	FString Key;
-	for (const FPlannerCatalogEntry& Tile : Tiles)
+	if (UButtonSlot* LabelSlot = Cast<UButtonSlot>(BtnFinishTile->AddChild(Label)))
 	{
-		Key += Tile.ID + TEXT(";");
-	}
-	if (Key == TileRowBuiltKey) return;
-
-	TileRow->ClearChildren();
-	for (const FPlannerCatalogEntry& Tile : Tiles)
-	{
-		UPlannerStyleButton* Button = WidgetTree->ConstructWidget<UPlannerStyleButton>(UPlannerStyleButton::StaticClass());
-		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-		if (!Button || !Label) continue;
-
-		Label->SetText(Tile.DisplayName);
-		Label->SetFont(FCoreStyle::GetDefaultFontStyle("Regular", 10));
-		// The button shows the tile's colour; the label stays readable on it.
-		const bool bDarkTile = Tile.Color.GetLuminance() < 0.35f;
-		Label->SetColorAndOpacity(FSlateColor(bDarkTile ? FLinearColor::White : FLinearColor(0.04f, 0.04f, 0.04f, 1.f)));
-		Button->AddChild(Label);
-		Button->StyleID = FName(*Tile.ID);
-		Button->SetBackgroundColor(Tile.Color);
-		Button->SetToolTipText(FText::FromString(FString::Printf(TEXT("Плитка: %s"), *Tile.DisplayName.ToString())));
-		Button->OnStyleClicked.BindUObject(this, &URoomPlannerWidget::OnTileButtonClicked);
-		Button->BindClick();
-
-		if (UWrapBoxSlot* WrapSlot = Cast<UWrapBoxSlot>(TileRow->AddChild(Button)))
+		if (const UButtonSlot* PaintLabelSlot = PaintLabel ? Cast<UButtonSlot>(PaintLabel->Slot) : nullptr)
 		{
-			WrapSlot->SetPadding(FMargin(2.f));
+			LabelSlot->SetPadding(PaintLabelSlot->GetPadding());
+			LabelSlot->SetHorizontalAlignment(PaintLabelSlot->GetHorizontalAlignment());
+			LabelSlot->SetVerticalAlignment(PaintLabelSlot->GetVerticalAlignment());
 		}
 	}
-	TileRowBuiltKey = Key;
+
+	UPanelSlot* RowSlot = Row->InsertChildAt(Row->GetChildIndex(BtnFinishPaint) + 1, BtnFinishTile);
+	UHorizontalBoxSlot* TileSlot = Cast<UHorizontalBoxSlot>(RowSlot);
+	const UHorizontalBoxSlot* PaintSlot = Cast<UHorizontalBoxSlot>(BtnFinishPaint->Slot);
+	if (TileSlot && PaintSlot)
+	{
+		TileSlot->SetPadding(PaintSlot->GetPadding());
+		TileSlot->SetSize(PaintSlot->GetSize());
+		TileSlot->SetHorizontalAlignment(PaintSlot->GetHorizontalAlignment());
+		TileSlot->SetVerticalAlignment(PaintSlot->GetVerticalAlignment());
+	}
+
+	BtnFinishTile->SetToolTipText(FText::FromString(TEXT("Выбрать плитку из каталога для выбранной поверхности")));
+	BtnFinishTile->SetVisibility(ESlateVisibility::Collapsed);
+	BtnFinishTile->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnFinishTileClicked);
 }
 
-void URoomPlannerWidget::OnTileButtonClicked(FName TileID)
+bool URoomPlannerWidget::CanTileSelection() const
 {
-	if (ApplyTileToSelection(TileID) && PlannerManager)
+	if (!PlannerManager || !PlannerManager->CanApplyFinishToSelection()) return false;
+	const EPlannerSelectionKind Kind = PlannerManager->GetSelectionKind();
+	return Kind != EPlannerSelectionKind::Object && Kind != EPlannerSelectionKind::Opening;
+}
+
+FName URoomPlannerWidget::GetSelectedSurfaceTileID() const
+{
+	FSurfaceFinish Finish;
+	if (GetSelectedSurfaceFinish(Finish) && Finish.Type == ESurfaceFinishType::Tile && !Finish.TileAssetID.IsEmpty())
+	{
+		return FName(*Finish.TileAssetID);
+	}
+	return NAME_None;
+}
+
+void URoomPlannerWidget::OpenTileCatalogForSelection()
+{
+	if (!CanTileSelection())
+	{
+		HandleOperationRejected(TEXT("Сначала выберите поверхность для плитки: стену, пол, потолок или плинтус"));
+		return;
+	}
+	if (::IsValid(ActivePlannerTileCatalog) && ActivePlannerTileCatalog->IsInViewport())
+	{
+		return; // already open
+	}
+
+	// The catalog collapses this widget and later forces it back to Visible; remember the designed visibility.
+	VisibilityBeforeTileCatalog = GetVisibility();
+
+	UPlannerTileCatalogWidget* Catalog = UPlannerTileCatalogWidget::OpenForWidget(this, PlannerTileCatalogWidgetClass);
+	if (!Catalog)
+	{
+		return;
+	}
+	ActivePlannerTileCatalog = Catalog;
+	Catalog->SetTiles(PlannerManager->GetAvailableTiles());
+	Catalog->SetActiveTile(GetSelectedSurfaceTileID());
+	Catalog->OnTileChosen.AddUniqueDynamic(this, &URoomPlannerWidget::HandleTileChosen);
+	Catalog->OnCatalogClosed.AddUniqueDynamic(this, &URoomPlannerWidget::HandleTileCatalogClosed);
+}
+
+void URoomPlannerWidget::HandleTileChosen(FName TileID)
+{
+	const bool bApplied = ApplyTileToSelection(TileID);
+	if (bApplied && PlannerManager)
 	{
 		// As with paint: hide the selection highlight so the new finish is visible; the selection itself stays active.
 		PlannerManager->SetSelectionHighlightSuppressed(true);
 	}
+	if (ActivePlannerTileCatalog)
+	{
+		ActivePlannerTileCatalog->SetActiveTile(bApplied ? TileID : GetSelectedSurfaceTileID());
+	}
+}
+
+void URoomPlannerWidget::HandleTileCatalogClosed()
+{
+	if (ActivePlannerTileCatalog)
+	{
+		ActivePlannerTileCatalog->OnTileChosen.RemoveAll(this);
+		ActivePlannerTileCatalog->OnCatalogClosed.RemoveAll(this);
+	}
+	ActivePlannerTileCatalog = nullptr;
+
+	// CloseCatalog has just set this widget to Visible; restore the designed visibility instead.
+	if (VisibilityBeforeTileCatalog != ESlateVisibility::Collapsed && VisibilityBeforeTileCatalog != ESlateVisibility::Hidden)
+	{
+		SetVisibility(VisibilityBeforeTileCatalog);
+	}
+
+	// Re-establish the planner input mode for the current view (as after the colour catalog).
+	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
+	{
+		PC->ApplyRoomPlannerInputMode(CurrentViewMode == ERoomPlannerViewMode::View2D);
+	}
+
 	UpdateFinishUI();
 }
+
+void URoomPlannerWidget::OnFinishTileClicked() { OpenTileCatalogForSelection(); }
 
 void URoomPlannerWidget::OnFinishPaintClicked() { OpenPaintCatalogForSelection(); }
 void URoomPlannerWidget::OnClearFinishClicked() { ClearFinishOnSelection(); }

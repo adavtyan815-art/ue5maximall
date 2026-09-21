@@ -17,8 +17,8 @@ class UEditableTextBox;
 class UImage;
 class UWidget;
 class UPanelWidget;
-class UWrapBox;
 class UColorCatalogWidget;
+class UPlannerTileCatalogWidget;
 class UPlannerCatalogItemWidget;
 class UDragDropOperation;
 
@@ -157,6 +157,10 @@ public:
 	/** Opens the existing RAL/NCS colour catalog (WBP_ColorCatalog) for the selected wall / floor / object. Each swatch click applies live. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
 	void OpenPaintCatalogForSelection();
+
+	/** Opens the tile catalog (DT_PlannerTiles cards with preview pictures) for the selected wall face / floor / ceiling / baseboard. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	void OpenTileCatalogForSelection();
 
 	/** Applies a tile (DT_PlannerTiles row name, or a material asset path) to the selected wall / floor. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
@@ -354,6 +358,10 @@ public:
 	/** Colour catalog widget class used for paint finishing. Falls back to /Game/ColorCatalog/UI/WBP_ColorCatalog. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Finish")
 	TSubclassOf<UColorCatalogWidget> PlannerColorCatalogWidgetClass;
+
+	/** Tile catalog widget class. Empty = UPlannerTileCatalogWidget (layout built in code). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Finish")
+	TSubclassOf<UPlannerTileCatalogWidget> PlannerTileCatalogWidgetClass;
 
 	// ── CONFIGURABLE CHARACTER RELOCATION ─────────────────────────────────
 	/** Configurable spawn/relocation location when Room Planner opens (Default: -10000, 0, 0). */
@@ -689,18 +697,21 @@ private:
 	UFUNCTION() void OnSwingInwardClicked();
 	UFUNCTION() void OnSwingOutwardClicked();
 	/**
-	 * Tile catalog (DT_PlannerTiles) buttons, built in code: one button per tile, applying it to the selected wall face, floor,
-	 * ceiling or baseboard (REQ-13). The row is inserted under the paint button's row when the widget initializes.
+	 * "Плитка" button next to BtnFinishPaint ("Отделка") in its row, built in code with the same style when the widget initializes:
+	 * opens the tile catalog. Shown while a surface that takes tiles is selected (REQ-13).
 	 */
 	UPROPERTY(Transient)
-	TObjectPtr<UWrapBox> TileRow;
+	TObjectPtr<UButton> BtnFinishTile;
 
-	/** Tile rows the TileRow buttons were built for ("" = not built). */
-	FString TileRowBuiltKey;
+	void CreateTileCatalogButton();
+	/** True when the selection can take a tile: a wall face, floor, ceiling or baseboard. */
+	bool CanTileSelection() const;
+	/** Tile row of the selected surface's finish; None when it has no tile. */
+	FName GetSelectedSurfaceTileID() const;
 
-	void EnsureTileRow();
-	void RefreshTileRow(bool bShow);
-	void OnTileButtonClicked(FName TileID);
+	UFUNCTION() void OnFinishTileClicked();
+	UFUNCTION() void HandleTileChosen(FName TileID);
+	UFUNCTION() void HandleTileCatalogClosed();
 
 	UFUNCTION() void OnFinishPaintClicked();
 	UFUNCTION() void OnClearFinishClicked();
@@ -751,6 +762,12 @@ private:
 
 	/** Visibility of this widget before the RAL/NCS catalog collapsed it; restored on close instead of forcing Visible. */
 	ESlateVisibility VisibilityBeforePaintCatalog = ESlateVisibility::Visible;
+
+	UPROPERTY()
+	TObjectPtr<UPlannerTileCatalogWidget> ActivePlannerTileCatalog;
+
+	/** Visibility of this widget before the tile catalog collapsed it. */
+	ESlateVisibility VisibilityBeforeTileCatalog = ESlateVisibility::Visible;
 
 	float OperationMessageClearTime = 0.f;
 	EPlannerSelectionKind LastNotifiedSelectionKind = EPlannerSelectionKind::None;

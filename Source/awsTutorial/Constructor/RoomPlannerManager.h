@@ -1118,6 +1118,15 @@ private:
 	/** Tile-grid frames of all wall faces from the current corner joints (see PlannerFinishLayout::ComputeWallFaceUVs). */
 	void ComputeWallFaceUVFrames();
 
+	/** Centreline and face corner points of a wall, as RebuildAllWalls gives them to the wall mesh (corner joints must be current). */
+	bool MakeWallFaceInput(int32 SegID, FPlannerWallFaceInput& Out) const;
+
+	/**
+	 * Baseboards along every wall face that looks into a room, outer walls and interior partitions alike (REQ-13), one mesh section
+	 * per room (section index = RoomID - 1). DefaultMaterial is used where the room's baseboards have no finish.
+	 */
+	void RebuildBaseboards(UMaterialInterface* DefaultMaterial);
+
 	/** Re-points every wall of NodeID to TargetNodeID and deletes NodeID. Refused if a wall would collapse or duplicate another. */
 	bool MergeNodeInto(int32 NodeID, int32 TargetNodeID);
 

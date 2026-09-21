@@ -29,6 +29,18 @@ struct AWSTUTORIAL_API FPlannerWallFaceUV
 	float U(int32 Face, float AlongCm) const { return Offset[Face] + Sign[Face] * AlongCm; }
 };
 
+/** One wall for the baseboard pass. */
+struct AWSTUTORIAL_API FPlannerBaseboardWall
+{
+	/** Centreline, node IDs and the corner points of both faces, as the wall mesh uses them. */
+	FPlannerWallFaceInput Wall;
+	float HalfThickness = 10.f;
+	/** Room each face looks into ([0] left, [1] right); INDEX_NONE = no baseboard on that face. */
+	int32 FaceRoom[2] = { INDEX_NONE, INDEX_NONE };
+	/** (from, to) cm along the wall from its start node where a walk-through opening interrupts the baseboard on both faces. */
+	TArray<FVector2D> Cuts;
+};
+
 /** REQ-13: layout of finishes on planner surfaces (tile grids, baseboards). Pure geometry, no world access. */
 namespace PlannerFinishLayout
 {
@@ -66,11 +78,11 @@ namespace PlannerFinishLayout
 	}
 
 	/**
-	 * Baseboard standing on the interior wall faces of a room polygon (front face, top, end caps where it is interrupted).
-	 * EdgeCuts[i] lists (from, to) spans in cm along polygon edge i, measured from Polygon[i], where it is interrupted
-	 * (walk-through openings).
+	 * Baseboards on every wall face that looks into a room: outer walls and interior partitions alike, whether or not a wall
+	 * closes a room. Faces meeting at a corner or T-junction are mitred where their baseboards meet; a free wall end is wrapped
+	 * (both faces run past it and a piece crosses the end); walk-through openings interrupt it with closed ends. The geometry of
+	 * each face goes to the buffer of the room that face looks into.
 	 */
-	AWSTUTORIAL_API void BuildBaseboard(const TArray<FVector2D>& Polygon, const TArray<float>& EdgeHalfThickness,
-	                                    const TArray<TArray<FVector2D>>& EdgeCuts, float BottomZ, float Height, float Depth,
-	                                    FPlannerMeshBuffers& Out);
+	AWSTUTORIAL_API void BuildWallBaseboards(const TArray<FPlannerBaseboardWall>& Walls, float BottomZ, float Height, float Depth,
+	                                         TMap<int32, FPlannerMeshBuffers>& OutByRoom);
 }

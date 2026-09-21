@@ -24,6 +24,109 @@ namespace
 		}
 		return FVector2D(1.f, 0.f);
 	}
+
+	/** Face end id: (wall * 2 + face) * 2 + end; face 0 = left, 1 = right; end 0 = start node, 1 = end node. */
+	int32 FaceEndpointId(int32 Wall, int32 Face, int32 End)
+	{
+		return (Wall * 2 + Face) * 2 + End;
+	}
+
+	FVector2D WallDirection(const TArray<FPlannerWallFaceInput>& Walls, int32 Wall)
+	{
+		return (Walls[Wall].End - Walls[Wall].Start).GetSafeNormal();
+	}
+
+	FVector2D FaceEndCorner(const TArray<FPlannerWallFaceInput>& Walls, int32 Endpoint)
+	{
+		const FPlannerWallFaceInput& W = Walls[Endpoint / 4];
+		const int32 Face = (Endpoint / 2) % 2;
+		return (Endpoint % 2 == 0) ? W.StartCorner[Face] : W.EndCorner[Face];
+	}
+
+	/**
+	 * Pairs the face ends that continue each other at every node: around a node, the wedge between a wall and the next wall
+	 * counter-clockwise is bounded by the counter-clockwise face of the first and the clockwise face of the second. Returns, per face
+	 * end id, the id of the face end continuing it; INDEX_NONE at a free end.
+	 */
+	TArray<int32> LinkWallFaces(const TArray<FPlannerWallFaceInput>& Walls)
+	{
+		const int32 NumWalls = Walls.Num();
+		TArray<int32> Link;
+		Link.Init(INDEX_NONE, NumWalls * 4);
+
+		struct FNodeEntry
+		{
+			int32 Wall = 0;
+			int32 End = 0;
+			double Angle = 0.0;
+		};
+		TMap<int32, TArray<FNodeEntry>> ByNode;
+		for (int32 WallIdx = 0; WallIdx < NumWalls; ++WallIdx)
+		{
+			const FPlannerWallFaceInput& W = Walls[WallIdx];
+			const FVector2D Dir = W.End - W.Start;
+			if (Dir.SizeSquared() < 1.e-4f) continue;
+			ByNode.FindOrAdd(W.StartNodeID).Add({ WallIdx, 0, FMath::Atan2((double)Dir.Y, (double)Dir.X) });
+			ByNode.FindOrAdd(W.EndNodeID).Add({ WallIdx, 1, FMath::Atan2(-(double)Dir.Y, -(double)Dir.X) });
+		}
+		for (TPair<int32, TArray<FNodeEntry>>& Pair : ByNode)
+		{
+			TArray<FNodeEntry>& Entries = Pair.Value;
+			const int32 Count = Entries.Num();
+			if (Count < 2) continue;
+			Entries.Sort([](const FNodeEntry& A, const FNodeEntry& B) { return A.Angle < B.Angle || (A.Angle == B.Angle && A.Wall < B.Wall); });
+			for (int32 k = 0; k < Count; ++k)
+			{
+				const FNodeEntry& I = Entries[k];
+				const FNodeEntry& J = Entries[(k + 1) % Count];
+				if (I.Wall == J.Wall) continue;
+				// Leaving its start node, the counter-clockwise face of a wall is its left face; leaving its end node, its right face.
+				const int32 A = FaceEndpointId(I.Wall, I.End == 0 ? 0 : 1, I.End);
+				const int32 B = FaceEndpointId(J.Wall, J.End == 0 ? 1 : 0, J.End);
+				if (Link[A] == INDEX_NONE && Link[B] == INDEX_NONE)
+				{
+					Link[A] = B;
+					Link[B] = A;
+				}
+			}
+		}
+		return Link;
+	}
+
+	/**
+	 * Where each face end is visibly bounded. A mitred corner is shared already. A joint that is not mitred (T-junctions: the
+	 * through wall cannot mitre, so no face there is) leaves each face ending at its own node offset, hidden inside the other wall;
+	 * the visible corner is where the two face lines cross. Free and collinear ends keep their corner point.
+	 */
+	TArray<FVector2D> FaceMeetPoints(const TArray<FPlannerWallFaceInput>& Walls, const TArray<int32>& Link)
+	{
+		const int32 NumEndpoints = Walls.Num() * 4;
+		TArray<FVector2D> MeetPoint;
+		MeetPoint.SetNum(NumEndpoints);
+		for (int32 Endpoint = 0; Endpoint < NumEndpoints; ++Endpoint)
+		{
+			MeetPoint[Endpoint] = FaceEndCorner(Walls, Endpoint);
+		}
+		for (int32 Endpoint = 0; Endpoint < NumEndpoints; ++Endpoint)
+		{
+			const int32 Other = Link[Endpoint];
+			if (Other == INDEX_NONE || Other < Endpoint) continue;
+			const FVector2D PA = FaceEndCorner(Walls, Endpoint);
+			const FVector2D PB = FaceEndCorner(Walls, Other);
+			if (PA.Equals(PB, 0.01f)) continue;
+			const FVector2D DA = WallDirection(Walls, Endpoint / 4);
+			const FVector2D DB = WallDirection(Walls, Other / 4);
+			const double Denom = Cross2(DA, DB);
+			if (FMath::Abs(Denom) < 0.02) continue; // (nearly) collinear faces simply continue
+			const FVector2D Crossing = PA + DA * (float)(Cross2(PB - PA, DB) / Denom);
+			const float MaxShift = 0.5f * (float)FMath::Min(FVector2D::Distance(Walls[Endpoint / 4].Start, Walls[Endpoint / 4].End),
+				FVector2D::Distance(Walls[Other / 4].Start, Walls[Other / 4].End));
+			if (FVector2D::Distance(Crossing, PA) > MaxShift || FVector2D::Distance(Crossing, PB) > MaxShift) continue;
+			MeetPoint[Endpoint] = Crossing;
+			MeetPoint[Other] = Crossing;
+		}
+		return MeetPoint;
+	}
 }
 
 TMap<int32, FPlannerWallFaceUV> PlannerFinishLayout::ComputeWallFaceUVs(const TArray<FPlannerWallFaceInput>& Walls)
@@ -39,90 +142,12 @@ TMap<int32, FPlannerWallFaceUV> PlannerFinishLayout::ComputeWallFaceUVs(const TA
 		return Result;
 	}
 
-	// Face endpoint id: (wall * 2 + face) * 2 + end, end 0 = start node, 1 = end node.
-	auto EndpointId = [](int32 Wall, int32 Face, int32 End) { return (Wall * 2 + Face) * 2 + End; };
-	TArray<int32> Link;
-	Link.Init(INDEX_NONE, NumWalls * 4);
-
-	struct FNodeEntry
-	{
-		int32 Wall = 0;
-		int32 End = 0;
-		double Angle = 0.0;
-	};
-	TMap<int32, TArray<FNodeEntry>> ByNode;
-	for (int32 WallIdx = 0; WallIdx < NumWalls; ++WallIdx)
-	{
-		const FPlannerWallFaceInput& W = Walls[WallIdx];
-		const FVector2D Dir = W.End - W.Start;
-		if (Dir.SizeSquared() < 1.e-4f) continue;
-		ByNode.FindOrAdd(W.StartNodeID).Add({ WallIdx, 0, FMath::Atan2((double)Dir.Y, (double)Dir.X) });
-		ByNode.FindOrAdd(W.EndNodeID).Add({ WallIdx, 1, FMath::Atan2(-(double)Dir.Y, -(double)Dir.X) });
-	}
-
-	// Around a node, the wedge between a wall and the next wall counter-clockwise is bounded by the counter-clockwise face of the
-	// first and the clockwise face of the second: those two faces meet in that corner and continue each other.
-	for (TPair<int32, TArray<FNodeEntry>>& Pair : ByNode)
-	{
-		TArray<FNodeEntry>& Entries = Pair.Value;
-		const int32 Count = Entries.Num();
-		if (Count < 2) continue;
-		Entries.Sort([](const FNodeEntry& A, const FNodeEntry& B) { return A.Angle < B.Angle || (A.Angle == B.Angle && A.Wall < B.Wall); });
-		for (int32 k = 0; k < Count; ++k)
-		{
-			const FNodeEntry& I = Entries[k];
-			const FNodeEntry& J = Entries[(k + 1) % Count];
-			if (I.Wall == J.Wall) continue;
-			// Leaving its start node, the counter-clockwise face of a wall is its left face; leaving its end node, its right face.
-			const int32 A = EndpointId(I.Wall, I.End == 0 ? 0 : 1, I.End);
-			const int32 B = EndpointId(J.Wall, J.End == 0 ? 1 : 0, J.End);
-			if (Link[A] == INDEX_NONE && Link[B] == INDEX_NONE)
-			{
-				Link[A] = B;
-				Link[B] = A;
-			}
-		}
-	}
-
-	auto WallDir = [&Walls](int32 WallIdx) { return (Walls[WallIdx].End - Walls[WallIdx].Start).GetSafeNormal(); };
-	auto WallLength = [&Walls](int32 WallIdx) { return (float)FVector2D::Distance(Walls[WallIdx].Start, Walls[WallIdx].End); };
-	auto EndpointCorner = [&Walls](int32 Endpoint) -> FVector2D
-	{
-		const FPlannerWallFaceInput& W = Walls[Endpoint / 4];
-		const int32 Face = (Endpoint / 2) % 2;
-		return (Endpoint % 2 == 0) ? W.StartCorner[Face] : W.EndCorner[Face];
-	};
-
-	// Where two chained faces visibly meet. A mitred corner is shared already. A joint that is not mitred (T-junctions: the through
-	// wall cannot mitre, so no face there is) leaves each face ending at its own node offset, hidden inside the other wall; the
-	// visible corner is where the two face lines cross.
-	TArray<FVector2D> MeetPoint;
-	MeetPoint.SetNum(NumWalls * 4);
-	for (int32 Endpoint = 0; Endpoint < NumWalls * 4; ++Endpoint)
-	{
-		MeetPoint[Endpoint] = EndpointCorner(Endpoint);
-	}
-	for (int32 Endpoint = 0; Endpoint < NumWalls * 4; ++Endpoint)
-	{
-		const int32 Other = Link[Endpoint];
-		if (Other == INDEX_NONE || Other < Endpoint) continue;
-		const FVector2D PA = EndpointCorner(Endpoint);
-		const FVector2D PB = EndpointCorner(Other);
-		if (PA.Equals(PB, 0.01f)) continue;
-		const FVector2D DA = WallDir(Endpoint / 4);
-		const FVector2D DB = WallDir(Other / 4);
-		const double Denom = Cross2(DA, DB);
-		if (FMath::Abs(Denom) < 0.02) continue; // (nearly) collinear faces simply continue
-		const FVector2D Crossing = PA + DA * (float)(Cross2(PB - PA, DB) / Denom);
-		const float MaxShift = 0.5f * FMath::Min(WallLength(Endpoint / 4), WallLength(Other / 4));
-		if (FVector2D::Distance(Crossing, PA) > MaxShift || FVector2D::Distance(Crossing, PB) > MaxShift) continue;
-		MeetPoint[Endpoint] = Crossing;
-		MeetPoint[Other] = Crossing;
-	}
-
+	const TArray<int32> Link = LinkWallFaces(Walls);
+	const TArray<FVector2D> MeetPoint = FaceMeetPoints(Walls, Link);
+	auto EndpointId = [](int32 Wall, int32 Face, int32 End) { return FaceEndpointId(Wall, Face, End); };
 	auto CornerAlong = [&](int32 WallIdx, int32 Face, int32 End) -> float
 	{
-		return (float)FVector2D::DotProduct(MeetPoint[EndpointId(WallIdx, Face, End)] - Walls[WallIdx].Start, WallDir(WallIdx));
+		return (float)FVector2D::DotProduct(MeetPoint[EndpointId(WallIdx, Face, End)] - Walls[WallIdx].Start, WallDirection(Walls, WallIdx));
 	};
 
 	TArray<bool> Visited;
@@ -252,156 +277,285 @@ void PlannerFinishLayout::ComputeRoomSurfaceFrame(const TArray<FVector2D>& Polyg
 	OutAxisV = InwardEdgeNormal(Polygon, Longest);
 }
 
-void PlannerFinishLayout::BuildBaseboard(const TArray<FVector2D>& Polygon, const TArray<float>& EdgeHalfThickness,
-                                         const TArray<TArray<FVector2D>>& EdgeCuts, float BottomZ, float Height, float Depth,
-                                         FPlannerMeshBuffers& Out)
+void PlannerFinishLayout::BuildWallBaseboards(const TArray<FPlannerBaseboardWall>& Walls, float BottomZ, float Height, float Depth,
+                                              TMap<int32, FPlannerMeshBuffers>& OutByRoom)
 {
-	const int32 N = Polygon.Num();
-	if (N < 3 || Height <= 0.f || Depth <= 0.f) return;
+	const int32 NumWalls = Walls.Num();
+	if (NumWalls == 0 || Height <= 0.f || Depth <= 0.f) return;
 
-	TArray<float> FrontOffsets;
-	FrontOffsets.SetNum(N);
-	for (int32 i = 0; i < N; ++i)
+	TArray<FPlannerWallFaceInput> Inputs;
+	Inputs.Reserve(NumWalls);
+	for (const FPlannerBaseboardWall& W : Walls)
 	{
-		FrontOffsets[i] = (EdgeHalfThickness.IsValidIndex(i) ? EdgeHalfThickness[i] : 0.f) + Depth;
+		Inputs.Add(W.Wall);
 	}
-	const TArray<FVector2D> Back = OffsetInward(Polygon, EdgeHalfThickness); // on the interior wall faces
-	const TArray<FVector2D> Front = OffsetInward(Polygon, FrontOffsets);
+	const TArray<int32> Link = LinkWallFaces(Inputs);
+	const TArray<FVector2D> Meet = FaceMeetPoints(Inputs, Link);
+
 	const float TopZ = BottomZ + Height;
-	constexpr float Unbounded = 1.0e6f;
 	constexpr float MinSpan = 0.5f;
+	constexpr float Unbounded = 1.0e6f;
 
-	// Edges whose first / last span is empty because a cut reaches into the corner: the neighbour's mitred end there is then open.
-	TArray<bool> bStartOpen;
-	TArray<bool> bEndOpen;
-	bStartOpen.Init(false, N);
-	bEndOpen.Init(false, N);
-	for (int32 i = 0; i < N; ++i)
+	auto Dir = [&Inputs](int32 W) { return WallDirection(Inputs, W); };
+	auto FaceNormal = [&Dir](int32 W, int32 F)
 	{
-		if (!EdgeCuts.IsValidIndex(i) || EdgeCuts[i].Num() == 0) continue;
-		const FVector2D D = EdgeDirection(Polygon, i);
-		const float FrontLo = (float)FVector2D::DotProduct(Front[i] - Polygon[i], D);
-		const float FrontHi = (float)FVector2D::DotProduct(Front[(i + 1) % N] - Polygon[i], D);
-		float FirstFrom = Unbounded;
-		float LastTo = -Unbounded;
-		for (const FVector2D& Cut : EdgeCuts[i])
+		const FVector2D D = Dir(W);
+		const FVector2D Left(-D.Y, D.X);
+		return F == 0 ? Left : -Left;
+	};
+	auto Along = [&Inputs, &Dir](int32 W, const FVector2D& P) { return (float)FVector2D::DotProduct(P - Inputs[W].Start, Dir(W)); };
+	auto RoomOfEndpoint = [&Walls](int32 Endpoint) { return Walls[Endpoint / 4].FaceRoom[(Endpoint / 2) % 2]; };
+	auto HalfOf = [&Walls](int32 W) { return Walls[W].HalfThickness; };
+	auto UV = [](float S, float T) { return FVector2D(S / 100.f, T / 100.f); };
+	// True when P does not lie past the end corner of that face end (outside its wall). Where the corner joint was not mitred (a
+	// very acute or a nearly straight bend) the face lines can cross far beyond the walls; the baseboards must not follow them there.
+	auto WithinFaceEnd = [&](int32 Endpoint, const FVector2D& P)
+	{
+		const int32 WallIdx = Endpoint / 4;
+		const float CornerAt = Along(WallIdx, FaceEndCorner(Inputs, Endpoint));
+		const float PointAt = Along(WallIdx, P);
+		return (Endpoint % 2 == 0) ? PointAt >= CornerAt - 0.01f : PointAt <= CornerAt + 0.01f;
+	};
+	auto AddCap = [&](FPlannerMeshBuffers& Out, const FVector2D& A, const FVector2D& B, const FVector2D& Facing)
+	{
+		const float Width = (float)FVector2D::Distance(A, B);
+		if (Width < 0.01f) return;
+		PlannerMeshBuilder::AddQuadUV(Out, FVector(A.X, A.Y, BottomZ), FVector(B.X, B.Y, BottomZ), FVector(B.X, B.Y, TopZ), FVector(A.X, A.Y, TopZ),
+			FVector(Facing.X, Facing.Y, 0.f), UV(0.f, BottomZ), UV(Width, BottomZ), UV(Width, TopZ), UV(0.f, TopZ));
+	};
+
+	enum class EEndKind : uint8
+	{
+		Square,     // ends flat at the wall end / visible corner
+		Mitre,      // meets the baseboard of the face continuing it at a corner or T-junction
+		Collinear,  // meets the baseboard of the next wall in line (a wall split at a node)
+		Wrap,       // free wall end: runs past the end, where a piece crosses the wall end
+	};
+	struct FFaceEnd
+	{
+		EEndKind Kind = EEndKind::Square;
+		float BackAlong = 0.f;   // end of the edge on the wall face
+		float FrontAlong = 0.f;  // end of the front edge (Depth off the wall face)
+		FVector2D BackPoint = FVector2D::ZeroVector;
+		FVector2D FrontPoint = FVector2D::ZeroVector;
+		bool bPresent = false;   // the baseboard reaches this end (no walk-through opening in the way)
+	};
+	TArray<FFaceEnd> Ends;
+	Ends.SetNum(NumWalls * 4);
+
+	// 1. How each face's baseboard ends at each end of its wall.
+	for (int32 W = 0; W < NumWalls; ++W)
+	{
+		for (int32 F = 0; F < 2; ++F)
 		{
-			FirstFrom = FMath::Min(FirstFrom, (float)Cut.X);
-			LastTo = FMath::Max(LastTo, (float)Cut.Y);
+			const int32 Room = Walls[W].FaceRoom[F];
+			if (Room == INDEX_NONE) continue;
+			for (int32 E = 0; E < 2; ++E)
+			{
+				const int32 Ep = FaceEndpointId(W, F, E);
+				FFaceEnd& End = Ends[Ep];
+				const int32 Other = Link[Ep];
+				if (Other != INDEX_NONE && RoomOfEndpoint(Other) == Room)
+				{
+					const int32 W2 = Other / 4;
+					const int32 F2 = (Other / 2) % 2;
+					const FVector2D DA = Dir(W);
+					const FVector2D DB = Dir(W2);
+					const double Denom = Cross2(DA, DB);
+					if (FMath::Abs(Denom) < 0.02)
+					{
+						End.Kind = EEndKind::Collinear;
+						End.BackAlong = End.FrontAlong = Along(W, E == 0 ? Inputs[W].Start : Inputs[W].End);
+					}
+					else if (!WithinFaceEnd(Ep, Meet[Ep]) || !WithinFaceEnd(Other, Meet[Ep]))
+					{
+						End.Kind = EEndKind::Square; // the faces do not visibly meet: end flat at the wall's own corner
+						End.BackAlong = End.FrontAlong = Along(W, FaceEndCorner(Inputs, Ep));
+					}
+					else
+					{
+						const FVector2D FrontA = Inputs[W].Start + FaceNormal(W, F) * (HalfOf(W) + Depth);
+						const FVector2D FrontB = Inputs[W2].Start + FaceNormal(W2, F2) * (HalfOf(W2) + Depth);
+						const FVector2D FrontCross = FrontA + DA * (float)(Cross2(FrontB - FrontA, DB) / Denom);
+						const float Bound = 4.f * (FMath::Max(HalfOf(W), HalfOf(W2)) + Depth) + 1.f;
+						End.BackPoint = Meet[Ep];
+						End.BackAlong = Along(W, Meet[Ep]);
+						if (FVector2D::Distance(FrontCross, Meet[Ep]) <= Bound)
+						{
+							End.Kind = EEndKind::Mitre;
+							End.FrontPoint = FrontCross;
+							End.FrontAlong = Along(W, FrontCross);
+						}
+						else
+						{
+							End.Kind = EEndKind::Square; // very sharp corner: end flat at the visible corner
+							End.FrontAlong = End.BackAlong;
+						}
+					}
+				}
+				else if (Other == INDEX_NONE && Link[FaceEndpointId(W, 1 - F, E)] == INDEX_NONE && Walls[W].FaceRoom[1 - F] == Room)
+				{
+					End.Kind = EEndKind::Wrap;
+					End.BackAlong = Along(W, FaceEndCorner(Inputs, Ep));
+					End.FrontAlong = End.BackAlong + (E == 1 ? Depth : -Depth);
+				}
+				else
+				{
+					End.Kind = EEndKind::Square;
+					const bool bUseMeet = Other != INDEX_NONE && WithinFaceEnd(Ep, Meet[Ep]) && WithinFaceEnd(Other, Meet[Ep]);
+					End.BackAlong = End.FrontAlong = Along(W, bUseMeet ? Meet[Ep] : FaceEndCorner(Inputs, Ep));
+				}
+			}
 		}
-		bStartOpen[i] = FMath::Min(FirstFrom, FrontHi) - FrontLo < MinSpan;
-		bEndOpen[i] = FrontHi - FMath::Max(LastTo, FrontLo) < MinSpan;
 	}
 
-	for (int32 i = 0; i < N; ++i)
+	// 2. The runs of each face between walk-through openings.
+	for (int32 W = 0; W < NumWalls; ++W)
 	{
-		const int32 Next = (i + 1) % N;
-		const FVector2D P = Polygon[i];
-		const FVector2D D = EdgeDirection(Polygon, i);
-		const FVector2D In = InwardEdgeNormal(Polygon, i);
-		const float Half = EdgeHalfThickness.IsValidIndex(i) ? EdgeHalfThickness[i] : 0.f;
-		auto Along = [&P, &D](const FVector2D& Q) { return (float)FVector2D::DotProduct(Q - P, D); };
-		const float BackLo = Along(Back[i]);
-		const float BackHi = Along(Back[Next]);
-		const float FrontLo = Along(Front[i]);
-		const float FrontHi = Along(Front[Next]);
-		auto BackPoint = [&](float S, float Z) { const FVector2D Q = P + D * S + In * Half; return FVector(Q.X, Q.Y, Z); };
-		auto FrontPoint = [&](float S, float Z) { const FVector2D Q = P + D * S + In * (Half + Depth); return FVector(Q.X, Q.Y, Z); };
-		auto UV = [](float S, float T) { return FVector2D(S / 100.f, T / 100.f); };
-
-		auto AddSpan = [&](float From, float To, bool bCapFrom, bool bCapTo)
+		for (int32 F = 0; F < 2; ++F)
 		{
-			const float F0 = FMath::Max(From, FrontLo);
-			const float F1 = FMath::Min(To, FrontHi);
-			const float B0 = FMath::Max(From, BackLo);
-			const float B1 = FMath::Min(To, BackHi);
-			if (F1 - F0 < MinSpan) return;
+			const int32 Room = Walls[W].FaceRoom[F];
+			if (Room == INDEX_NONE) continue;
+			FPlannerMeshBuffers& Out = OutByRoom.FindOrAdd(Room);
+			FFaceEnd& StartEnd = Ends[FaceEndpointId(W, F, 0)];
+			FFaceEnd& EndEnd = Ends[FaceEndpointId(W, F, 1)];
+			const FVector2D S = Inputs[W].Start;
+			const FVector2D D = Dir(W);
+			const FVector2D N = FaceNormal(W, F);
+			const float H = HalfOf(W);
+			auto BackPoint = [&](float A, float Z) { const FVector2D Q = S + D * A + N * H; return FVector(Q.X, Q.Y, Z); };
+			auto FrontPoint = [&](float A, float Z) { const FVector2D Q = S + D * A + N * (H + Depth); return FVector(Q.X, Q.Y, Z); };
 
-			// Front face (toward the room)
-			PlannerMeshBuilder::AddQuadUV(Out, FrontPoint(F0, BottomZ), FrontPoint(F1, BottomZ), FrontPoint(F1, TopZ), FrontPoint(F0, TopZ),
-				FVector(In.X, In.Y, 0.f), UV(F0, BottomZ), UV(F1, BottomZ), UV(F1, TopZ), UV(F0, TopZ));
-			// Top (mitred at room corners: the wall-side edge and the front edge end at their own corner points)
-			if (B1 > B0)
+			auto AddSpan = [&](float From, float To, bool bCapFrom, bool bCapTo) -> bool
 			{
-				PlannerMeshBuilder::AddQuadUV(Out, BackPoint(B0, TopZ), BackPoint(B1, TopZ), FrontPoint(F1, TopZ), FrontPoint(F0, TopZ),
-					FVector::UpVector, UV(B0, 0.f), UV(B1, 0.f), UV(F1, Depth), UV(F0, Depth));
-			}
-			// End caps where the baseboard is interrupted
-			if (bCapFrom)
-			{
-				PlannerMeshBuilder::AddQuadUV(Out, BackPoint(F0, BottomZ), FrontPoint(F0, BottomZ), FrontPoint(F0, TopZ), BackPoint(F0, TopZ),
-					FVector(-D.X, -D.Y, 0.f), UV(0.f, BottomZ), UV(Depth, BottomZ), UV(Depth, TopZ), UV(0.f, TopZ));
-			}
-			if (bCapTo)
-			{
-				PlannerMeshBuilder::AddQuadUV(Out, FrontPoint(F1, BottomZ), BackPoint(F1, BottomZ), BackPoint(F1, TopZ), FrontPoint(F1, TopZ),
-					FVector(D.X, D.Y, 0.f), UV(0.f, BottomZ), UV(Depth, BottomZ), UV(Depth, TopZ), UV(0.f, TopZ));
-			}
-		};
+				const float F0 = FMath::Max(From, StartEnd.FrontAlong);
+				const float F1 = FMath::Min(To, EndEnd.FrontAlong);
+				const float B0 = FMath::Max(From, StartEnd.BackAlong);
+				const float B1 = FMath::Min(To, EndEnd.BackAlong);
+				if (F1 - F0 < MinSpan) return false;
+				// An opening reaching the free wall end leaves nothing along the face there, only the wrap's overhang: no baseboard.
+				const bool bAtWrap = (From <= -Unbounded && StartEnd.Kind == EEndKind::Wrap) || (To >= Unbounded && EndEnd.Kind == EEndKind::Wrap);
+				if (bAtWrap && B1 - B0 < MinSpan) return false;
 
-		TArray<FVector2D> Cuts = EdgeCuts.IsValidIndex(i) ? EdgeCuts[i] : TArray<FVector2D>();
-		Cuts.Sort([](const FVector2D& A, const FVector2D& B) { return A.X < B.X; });
-		float Cursor = -Unbounded;
-		bool bAfterCut = false;
-		for (const FVector2D& Cut : Cuts)
-		{
-			AddSpan(Cursor, Cut.X, bAfterCut, true);
-			Cursor = FMath::Max(Cursor, Cut.Y);
-			bAfterCut = true;
-		}
-		AddSpan(Cursor, Unbounded, bAfterCut, false);
-	}
-
-	// Close baseboard ends left exposed at the corners.
-	for (int32 v = 0; v < N; ++v)
-	{
-		const int32 Prev = (v + N - 1) % N;
-		const bool bNextOpen = bStartOpen[v]; // edge v starts at vertex v
-		const bool bPrevOpen = bEndOpen[Prev]; // edge Prev ends at vertex v
-
-		const FVector2D DPrev = EdgeDirection(Polygon, Prev);
-		const FVector2D DNext = EdgeDirection(Polygon, v);
-		if (FMath::Abs(Cross2(DPrev, DNext)) <= 1.e-3 && FVector2D::DotProduct(DPrev, DNext) > 0.0)
-		{
-			// In line (a wall split at a node): each baseboard ends square at the node at its own wall's depth. Cap the part of an end
-			// that the other baseboard does not meet (a thicker wall's end, or an end beside a doorway).
-			const FVector2D In = InwardEdgeNormal(Polygon, v);
-			const float HPrev = EdgeHalfThickness.IsValidIndex(Prev) ? EdgeHalfThickness[Prev] : 0.f;
-			const float HNext = EdgeHalfThickness.IsValidIndex(v) ? EdgeHalfThickness[v] : 0.f;
-			auto SquareCap = [&](float From, float To, const FVector2D& Facing)
-			{
-				if (To - From < 0.01f) return;
-				const FVector2D A = Polygon[v] + In * From;
-				const FVector2D B = Polygon[v] + In * To;
-				const float Width = To - From;
-				PlannerMeshBuilder::AddQuadUV(Out, FVector(A.X, A.Y, BottomZ), FVector(B.X, B.Y, BottomZ), FVector(B.X, B.Y, TopZ), FVector(A.X, A.Y, TopZ),
-					FVector(Facing.X, Facing.Y, 0.f),
-					FVector2D(0.f, BottomZ / 100.f), FVector2D(Width / 100.f, BottomZ / 100.f), FVector2D(Width / 100.f, TopZ / 100.f), FVector2D(0.f, TopZ / 100.f));
+				// Front, facing the room
+				PlannerMeshBuilder::AddQuadUV(Out, FrontPoint(F0, BottomZ), FrontPoint(F1, BottomZ), FrontPoint(F1, TopZ), FrontPoint(F0, TopZ),
+					FVector(N.X, N.Y, 0.f), UV(F0, BottomZ), UV(F1, BottomZ), UV(F1, TopZ), UV(F0, TopZ));
+				// Top: the wall-side edge and the front edge end at their own corner points, which mitres it
+				if (B1 > B0)
+				{
+					PlannerMeshBuilder::AddQuadUV(Out, BackPoint(B0, TopZ), BackPoint(B1, TopZ), FrontPoint(F1, TopZ), FrontPoint(F0, TopZ),
+						FVector::UpVector, UV(B0, 0.f), UV(B1, 0.f), UV(F1, Depth), UV(F0, Depth));
+				}
+				// Closed ends at openings
+				if (bCapFrom)
+				{
+					AddCap(Out, FVector2D(BackPoint(F0, 0.f)), FVector2D(FrontPoint(F0, 0.f)), -D);
+				}
+				if (bCapTo)
+				{
+					AddCap(Out, FVector2D(FrontPoint(F1, 0.f)), FVector2D(BackPoint(F1, 0.f)), D);
+				}
+				return true;
 			};
-			if (!bPrevOpen)
+
+			TArray<FVector2D> Cuts = Walls[W].Cuts;
+			Cuts.Sort([](const FVector2D& A, const FVector2D& B) { return A.X < B.X; });
+			float Cursor = -Unbounded;
+			bool bAfterCut = false;
+			bool bFirstSpan = true;
+			for (const FVector2D& Cut : Cuts)
 			{
-				SquareCap(bNextOpen ? HPrev : FMath::Max(HPrev, HNext + Depth), HPrev + Depth, DPrev);
+				const bool bMade = AddSpan(Cursor, (float)Cut.X, bAfterCut, true);
+				if (bFirstSpan)
+				{
+					StartEnd.bPresent = bMade;
+					bFirstSpan = false;
+				}
+				Cursor = FMath::Max(Cursor, (float)Cut.Y);
+				bAfterCut = true;
 			}
-			if (!bNextOpen)
+			const bool bLastMade = AddSpan(Cursor, Unbounded, bAfterCut, false);
+			if (bFirstSpan)
 			{
-				SquareCap(bPrevOpen ? HNext : FMath::Max(HNext, HPrev + Depth), HNext + Depth, -DNext);
+				StartEnd.bPresent = bLastMade;
 			}
-			continue;
+			EndEnd.bPresent = bLastMade;
 		}
+	}
 
-		if (bNextOpen == bPrevOpen) continue;  // both present (their mitres close each other) or both absent
-
-		const FVector2D Across = Front[v] - Back[v];
-		if (Across.SizeSquared() < 1.e-4f) continue;
-		FVector2D CapNormal = FVector2D(-Across.Y, Across.X).GetSafeNormal();
-		const FVector2D OpenSide = bNextOpen ? EdgeDirection(Polygon, v) : -EdgeDirection(Polygon, Prev);
-		if (FVector2D::DotProduct(CapNormal, OpenSide) < 0.0)
+	// 3. Close the ends that nothing else closes.
+	for (int32 W = 0; W < NumWalls; ++W)
+	{
+		for (int32 F = 0; F < 2; ++F)
 		{
-			CapNormal = -CapNormal;
+			const int32 Room = Walls[W].FaceRoom[F];
+			if (Room == INDEX_NONE) continue;
+			FPlannerMeshBuffers& Out = OutByRoom.FindOrAdd(Room);
+			const FVector2D S = Inputs[W].Start;
+			const FVector2D D = Dir(W);
+			const FVector2D N = FaceNormal(W, F);
+			const float H = HalfOf(W);
+			for (int32 E = 0; E < 2; ++E)
+			{
+				const int32 Ep = FaceEndpointId(W, F, E);
+				const FFaceEnd& End = Ends[Ep];
+				if (!End.bPresent) continue;
+				const FVector2D Outward = (E == 1) ? D : -D;
+				auto AtEnd = [&](float Lateral) { return S + D * End.FrontAlong + N * Lateral; };
+
+				switch (End.Kind)
+				{
+				case EEndKind::Square:
+					AddCap(Out, AtEnd(H), AtEnd(H + Depth), Outward);
+					break;
+
+				case EEndKind::Collinear:
+				{
+					// Cap what the next baseboard in line does not cover: all of it beside an opening, the step to a thinner wall.
+					const int32 Other = Link[Ep];
+					const float From = Ends[Other].bPresent ? FMath::Max(H, HalfOf(Other / 4) + Depth) : H;
+					if (H + Depth - From > 0.01f)
+					{
+						AddCap(Out, AtEnd(From), AtEnd(H + Depth), Outward);
+					}
+					break;
+				}
+
+				case EEndKind::Mitre:
+				{
+					const int32 Other = Link[Ep];
+					if (Ends[Other].bPresent) break; // the two baseboards close each other
+					// The other one stops short (an opening reaches the corner): close this mitred end along the mitre.
+					const FVector2D OpenSide = (Other % 2 == 0) ? Dir(Other / 4) : -Dir(Other / 4);
+					const FVector2D Across = End.FrontPoint - End.BackPoint;
+					FVector2D CapNormal = FVector2D(-Across.Y, Across.X).GetSafeNormal();
+					if (FVector2D::DotProduct(CapNormal, OpenSide) < 0.0)
+					{
+						CapNormal = -CapNormal;
+					}
+					AddCap(Out, End.BackPoint, End.FrontPoint, CapNormal);
+					break;
+				}
+
+				case EEndKind::Wrap:
+				{
+					if (!Ends[FaceEndpointId(W, 1 - F, E)].bPresent)
+					{
+						AddCap(Out, AtEnd(H), AtEnd(H + Depth), Outward);
+						break;
+					}
+					if (F != 0) break; // one piece across the wall end, built with the left face
+					const FVector2D FrontL = S + D * End.FrontAlong + N * (H + Depth);
+					const FVector2D FrontR = S + D * End.FrontAlong - N * (H + Depth);
+					const FVector2D BackL = S + D * End.BackAlong + N * H;
+					const FVector2D BackR = S + D * End.BackAlong - N * H;
+					AddCap(Out, FrontL, FrontR, Outward);
+					PlannerMeshBuilder::AddQuadUV(Out, FVector(BackL.X, BackL.Y, TopZ), FVector(BackR.X, BackR.Y, TopZ), FVector(FrontR.X, FrontR.Y, TopZ),
+						FVector(FrontL.X, FrontL.Y, TopZ), FVector::UpVector, UV(0.f, 0.f), UV(2.f * H, 0.f), UV(2.f * (H + Depth), Depth), UV(0.f, Depth));
+					break;
+				}
+				}
+			}
 		}
-		const float Width = (float)Across.Size();
-		PlannerMeshBuilder::AddQuadUV(Out, FVector(Back[v].X, Back[v].Y, BottomZ), FVector(Front[v].X, Front[v].Y, BottomZ),
-			FVector(Front[v].X, Front[v].Y, TopZ), FVector(Back[v].X, Back[v].Y, TopZ), FVector(CapNormal.X, CapNormal.Y, 0.f),
-			FVector2D(0.f, BottomZ / 100.f), FVector2D(Width / 100.f, BottomZ / 100.f), FVector2D(Width / 100.f, TopZ / 100.f), FVector2D(0.f, TopZ / 100.f));
 	}
 }
