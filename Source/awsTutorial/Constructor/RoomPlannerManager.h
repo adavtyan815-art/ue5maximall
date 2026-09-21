@@ -582,8 +582,8 @@ public:
 	// ── REQ-06: exact distances of an opening ───────────────────────────────
 
 	/**
-	 * Distances in cm from the opening edges to the left / right wall corner (seen from inside the room),
-	 * from the opening bottom to the floor, and edge-to-edge to the nearest neighbouring opening on the same wall.
+	 * Distances in cm from the opening edges to the left / right inner corner of the room-side wall face (seen from inside the room,
+	 * clear dimensions), from the opening bottom to the floor, and edge-to-edge to the nearest neighbouring opening on the same wall.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Openings")
 	bool GetOpeningDistances(int32 SegmentID, int32 OpeningIndex, float& OutLeftCornerCm, float& OutRightCornerCm, float& OutFloorCm, float& OutNeighborCm, bool& bOutHasNeighbor) const;
@@ -593,6 +593,19 @@ public:
 	/** Labels (with world positions) describing the current selection or the control point being dragged. Empty when nothing is selected. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Labels")
 	TArray<FPlannerDimensionLabel> GetSelectionDimensionLabels() const;
+
+	/**
+	 * Dimension lines of the selection, clear dimensions measured on the visible wall faces from the room's inner corners:
+	 * - a wall: its face length, beside the selected face;
+	 * - a control point being dragged: the live face length of every wall at it, on each wall's room side;
+	 * - an opening, beside the selected face: the chain inner corner → opening → inner corner (it adds up to the face length), the
+	 *   gap to the nearest neighbouring opening one row further out, the opening height and sill height along the face (3D), and for
+	 *   the top-down plan both heights in one caption on the other side of the wall;
+	 * - an interior object or cabinet set: the gap from each side of its footprint to the nearest wall face in front of it.
+	 * Empty when nothing is selected.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Labels")
+	TArray<FPlannerDimensionLine> GetSelectionDimensionLines() const;
 
 	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Selection")
 	EPlannerSelectionKind GetSelectionKind() const;
@@ -1120,6 +1133,24 @@ private:
 
 	/** Centreline and face corner points of a wall, as RebuildAllWalls gives them to the wall mesh (corner joints must be current). */
 	bool MakeWallFaceInput(int32 SegID, FPlannerWallFaceInput& Out) const;
+
+	/**
+	 * Face inputs of every wall (by segment ID) and the visible extent of each face, [index * 2 + face] (0 = left, 1 = right). While a
+	 * corner is dragged onto another corner or onto a wall, they are paired as the junction made on release will pair them.
+	 */
+	void GatherWallFaces(TArray<FPlannerWallFaceInput>& OutInputs, TMap<int32, int32>& OutIndexBySegment, TArray<FVector2D>& OutFaceExtents) const;
+
+	/** Visible extent of one wall face in cm along the wall from its start node: between the room's inner corners. */
+	bool GetVisibleWallFaceExtent(int32 SegmentID, bool bLeftFace, FVector2D& OutExtent) const;
+
+	/**
+	 * The face a wall's length is shown on when no face is picked: its room side; for a wall that bounds no room (an open chain, a
+	 * free-standing wall) the concave side, whose face is the shorter one.
+	 */
+	bool GetRoomSideFaceLeft(int32 SegmentID, const TMap<int32, int32>& IndexBySegment, const TArray<FVector2D>& FaceExtents) const;
+
+	/** Footprint of an actor's visible meshes in its own yaw frame: centre, unit X axis, half size (cm) and top height. */
+	bool GetActorFootprint(const AActor* Actor, FVector2D& OutCenter, FVector2D& OutAxisX, FVector2D& OutHalfSize, float& OutTopZ) const;
 
 	/**
 	 * Baseboards along every wall face that looks into a room, outer walls and interior partitions alike (REQ-13), one mesh section

@@ -469,6 +469,58 @@ struct FPlannerDimensionLabel
 	bool bOnScreen = false;
 };
 
+/**
+ * One architectural dimension of the selection (REQ-02/04/06): a line with arrows between two world points, parallel to what it
+ * measures, with extension lines from the measured points and the value centred on it. Distances are clear dimensions: measured on
+ * the visible wall faces, from the room's inner corners.
+ */
+USTRUCT(BlueprintType)
+struct FPlannerDimensionLine
+{
+	GENERATED_BODY()
+
+	/**
+	 * "length" (a wall, or each wall at a dragged corner), "distLeft" / "distRight" / "width" / "distNeighbor" / "height" / "sill"
+	 * (an opening, as in FPlannerDimensionLabel), "heightsPlan" (the opening's plan caption), "gapFront" / "gapBack" / "gapRight" /
+	 * "gapLeft" (an object's or cabinet set's gaps to the walls, in its own axes: +X front, +Y right).
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FString Key;
+
+	/** Ready-to-display value, e.g. "3.32 м". */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FString Text;
+
+	/** Measured distance in centimetres (= the distance between Start and End). */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	float Value = 0.f;
+
+	/** Arrow tips (world). */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FVector Start = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FVector End = FVector::ZeroVector;
+
+	/** The measured points on the wall face (world); extension lines lead from them to the arrow tips. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FVector StartRef = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FVector EndRef = FVector::ZeroVector;
+
+	/** Measured along Z (opening height, sill): drawn in 3D; it has no length in the top-down plan, which shows bPlanOnly instead. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	bool bVertical = false;
+
+	/**
+	 * For the top-down plan only: the vertical values in one caption (no line, Value 0) at Start, placed away from StartRef —
+	 * outside the wall, opposite the chain.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	bool bPlanOnly = false;
+};
+
 /** Finishing area per finish type / catalog entry (REQ-14). */
 USTRUCT(BlueprintType)
 struct FFinishAreaEntry

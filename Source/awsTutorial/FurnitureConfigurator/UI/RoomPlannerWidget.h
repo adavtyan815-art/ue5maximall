@@ -20,6 +20,7 @@ class UPanelWidget;
 class UColorCatalogWidget;
 class UPlannerTileCatalogWidget;
 class UPlannerCatalogItemWidget;
+class UPlannerDimensionOverlay;
 class UDragDropOperation;
 
 UENUM(BlueprintType)
@@ -39,6 +40,18 @@ public:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
+	/**
+	 * Parts of the layout built in code: the tile button next to "Отделка", the wrapping finish controls and the dimension line
+	 * overlay. Runs from NativeOnInitialized, before the Slate tree exists; safe to call again.
+	 */
+	void BuildRuntimeLayout();
+
+	/** Overlay the selected opening's dimension lines are drawn on (built by BuildRuntimeLayout). */
+	UPlannerDimensionOverlay* GetDimensionOverlay() const { return DimensionOverlay; }
+
+	/** The "Плитка" button built by BuildRuntimeLayout. */
+	UButton* GetFinishTileButton() const { return BtnFinishTile; }
 
 protected:
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -253,8 +266,13 @@ public:
 
 	// ── Root-level styling, same pattern as WBP_PreviewWindow's "UI Sizing - Size" (ConfiguratorMainWidget) ──
 
+	/** Tab shown first when bOpenCatalogTabOnStart is set. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
 	EPlannerPlacementKind DefaultCatalogTab = EPlannerPlacementKind::Object;
+
+	/** Opens DefaultCatalogTab when the planner opens. Off: no tab is active and the card area stays folded until a tab is clicked. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
+	bool bOpenCatalogTabOnStart = false;
 
 	/** Tab button colours — same semantics and defaults as the RAL / NCS selector (UColorCatalogWidget). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
@@ -299,12 +317,32 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
 	FSlateFontInfo CatalogTextFont;
 
-	/** Switches the catalog content (Object = «Интерьер», CabinetSet = «Тумбы») and the tab button styles. */
+	// ── Dimension lines of the selected door / window (REQ-06) ──
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Dimensions")
+	FLinearColor DimensionLineColor = FLinearColor(0.02f, 0.05f, 0.12f, 1.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Dimensions")
+	FLinearColor DimensionTextColor = FLinearColor(0.02f, 0.05f, 0.12f, 1.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Dimensions")
+	FLinearColor DimensionTextBackgroundColor = FLinearColor(1.f, 1.f, 1.f, 0.95f);
+
+	/** Font of the values on the dimension lines. Empty: Roboto Bold 11. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Dimensions")
+	FSlateFontInfo DimensionFont;
+
+	/** Switches the catalog content (Object = «Интерьер», CabinetSet = «Тумбы») and the tab button styles; opens the card area. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
 	void SetActiveCatalogTab(EPlannerPlacementKind Tab);
 
+	/** Tab of the card area; meaningful only while HasActiveCatalogTab() is true. */
 	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Objects")
 	EPlannerPlacementKind GetActiveCatalogTab() const { return ActiveCatalogTab; }
+
+	/** False until the user picks «Интерьер» or «Тумбы»: no tab is highlighted and the card area stays folded. */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Objects")
+	bool HasActiveCatalogTab() const { return bCatalogTabChosen; }
 
 	/** Shows / hides the tab bar and content area for the current view mode (2D only), then updates the separators. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
@@ -704,6 +742,23 @@ private:
 	TObjectPtr<UButton> BtnFinishTile;
 
 	void CreateTileCatalogButton();
+
+	/**
+	 * The finish row was one line as wide as its content, so "Отделка", "Плитка", "Сбросить отделку" and the finish description
+	 * ran past the side panel. The buttons go into a wrap box that breaks at the panel width; the description gets its own
+	 * line below them and wraps.
+	 */
+	void WrapFinishControls();
+
+	/** Full-screen, hit-test invisible overlay under the side panel (first child of the root canvas). */
+	void CreateDimensionOverlay();
+
+	/** Projects the selected opening's dimension lines to the screen and hands them to the overlay (cleared otherwise). */
+	void UpdateDimensionOverlay();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UPlannerDimensionOverlay> DimensionOverlay;
+
 	/** True when the selection can take a tile: a wall face, floor, ceiling or baseboard. */
 	bool CanTileSelection() const;
 	/** Tile row of the selected surface's finish; None when it has no tile. */
@@ -730,6 +785,9 @@ private:
 	bool bHelpBarHidden = false;
 
 	EPlannerPlacementKind ActiveCatalogTab = EPlannerPlacementKind::Object;
+
+	/** A catalog tab has been picked since the planner opened (see HasActiveCatalogTab). */
+	bool bCatalogTabChosen = false;
 
 	/** Image_line_* widgets found in the tree at construct, grouped by their parent panel. */
 	TArray<TWeakObjectPtr<UWidget>> SeparatorLines;

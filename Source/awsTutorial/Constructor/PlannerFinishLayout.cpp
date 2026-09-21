@@ -43,6 +43,16 @@ namespace
 		return (Endpoint % 2 == 0) ? W.StartCorner[Face] : W.EndCorner[Face];
 	}
 
+	/** True when P does not lie past the end corner of that face end, i.e. not beyond its wall. */
+	bool IsWithinFaceEnd(const TArray<FPlannerWallFaceInput>& Walls, int32 Endpoint, const FVector2D& P)
+	{
+		const FPlannerWallFaceInput& W = Walls[Endpoint / 4];
+		const FVector2D Dir = (W.End - W.Start).GetSafeNormal();
+		const double CornerAt = FVector2D::DotProduct(FaceEndCorner(Walls, Endpoint) - W.Start, Dir);
+		const double PointAt = FVector2D::DotProduct(P - W.Start, Dir);
+		return (Endpoint % 2 == 0) ? PointAt >= CornerAt - 0.01 : PointAt <= CornerAt + 0.01;
+	}
+
 	/**
 	 * Pairs the face ends that continue each other at every node: around a node, the wedge between a wall and the next wall
 	 * counter-clockwise is bounded by the counter-clockwise face of the first and the clockwise face of the second. Returns, per face
@@ -127,6 +137,42 @@ namespace
 		}
 		return MeetPoint;
 	}
+}
+
+FVector2D PlannerFinishLayout::VisibleFaceExtent(const TArray<FPlannerWallFaceInput>& Walls, int32 WallIndex, int32 Face)
+{
+	if (!Walls.IsValidIndex(WallIndex) || Face < 0 || Face > 1) return FVector2D::ZeroVector;
+	return VisibleFaceExtents(Walls)[WallIndex * 2 + Face];
+}
+
+TArray<FVector2D> PlannerFinishLayout::VisibleFaceExtents(const TArray<FPlannerWallFaceInput>& Walls)
+{
+	const TArray<int32> Link = LinkWallFaces(Walls);
+	const TArray<FVector2D> Meet = FaceMeetPoints(Walls, Link);
+	TArray<FVector2D> Extents;
+	Extents.SetNum(Walls.Num() * 2);
+	for (int32 WallIndex = 0; WallIndex < Walls.Num(); ++WallIndex)
+	{
+		const FPlannerWallFaceInput& Wall = Walls[WallIndex];
+		const FVector2D Dir = WallDirection(Walls, WallIndex);
+		auto Along = [&Wall, &Dir](const FVector2D& P) { return (float)FVector2D::DotProduct(P - Wall.Start, Dir); };
+		// Where the face meets the next one, when that point lies on both walls; otherwise (face lines crossing beyond a wall, as at a
+		// slight bend between walls of different thickness) the face's own corner.
+		auto Bound = [&](int32 Endpoint)
+		{
+			const int32 Other = Link[Endpoint];
+			return (Other != INDEX_NONE && IsWithinFaceEnd(Walls, Endpoint, Meet[Endpoint]) && IsWithinFaceEnd(Walls, Other, Meet[Endpoint]))
+				? Meet[Endpoint] : FaceEndCorner(Walls, Endpoint);
+		};
+		for (int32 Face = 0; Face < 2; ++Face)
+		{
+			const int32 StartEndpoint = FaceEndpointId(WallIndex, Face, 0);
+			const int32 EndEndpoint = FaceEndpointId(WallIndex, Face, 1);
+			Extents[WallIndex * 2 + Face] = FVector2D(FMath::Max(Along(FaceEndCorner(Walls, StartEndpoint)), Along(Bound(StartEndpoint))),
+				FMath::Min(Along(FaceEndCorner(Walls, EndEndpoint)), Along(Bound(EndEndpoint))));
+		}
+	}
+	return Extents;
 }
 
 TMap<int32, FPlannerWallFaceUV> PlannerFinishLayout::ComputeWallFaceUVs(const TArray<FPlannerWallFaceInput>& Walls)

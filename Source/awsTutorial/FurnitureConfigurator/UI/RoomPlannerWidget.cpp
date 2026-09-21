@@ -25,6 +25,10 @@
 #include "FurnitureConfigurator/UI/PlannerCatalogItemWidget.h"
 #include "FurnitureConfigurator/UI/PlannerStyleButton.h"
 #include "FurnitureConfigurator/UI/PlannerTileCatalogWidget.h"
+#include "FurnitureConfigurator/UI/PlannerDimensionOverlay.h"
+#include "Components/HorizontalBox.h"
+#include "Components/VerticalBox.h"
+#include "Components/WrapBox.h"
 #include "Components/ButtonSlot.h"
 #include "Constructor/PlannerOpeningStyles.h"
 #include "Blueprint/WidgetTree.h"
@@ -37,7 +41,14 @@ void URoomPlannerWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 	// Before the Slate tree exists: a panel built later takes its children in slot order, so the button lands where it is inserted.
+	BuildRuntimeLayout();
+}
+
+void URoomPlannerWidget::BuildRuntimeLayout()
+{
 	CreateTileCatalogButton();
+	WrapFinishControls();
+	CreateDimensionOverlay();
 }
 
 void URoomPlannerWidget::NativeConstruct()
@@ -201,6 +212,8 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnCatalogInterior) BtnCatalogInterior->SetToolTipText(FText::FromString(TEXT("Объекты интерьера: перетащите на пол или на стену")));
 	if (BtnCatalogCabinets) BtnCatalogCabinets->SetToolTipText(FText::FromString(TEXT("Комплекты тумб: перетащите к стене")));
 	ActiveCatalogTab = (DefaultCatalogTab == EPlannerPlacementKind::CabinetSet) ? EPlannerPlacementKind::CabinetSet : EPlannerPlacementKind::Object;
+	// Neither «Интерьер» nor «Тумбы» is active when the planner opens: the card area stays folded until a tab is clicked.
+	bCatalogTabChosen = bOpenCatalogTabOnStart;
 	CollectSeparatorLines();
 	RefreshCatalogPanels();
 	UpdateCatalogTabStyles();
@@ -666,11 +679,12 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 void URoomPlannerWidget::SetActiveCatalogTab(EPlannerPlacementKind Tab)
 {
 	const EPlannerPlacementKind NewTab = (Tab == EPlannerPlacementKind::CabinetSet) ? EPlannerPlacementKind::CabinetSet : EPlannerPlacementKind::Object;
-	const bool bChanged = (NewTab != ActiveCatalogTab);
+	const bool bChanged = !bCatalogTabChosen || NewTab != ActiveCatalogTab;
+	bCatalogTabChosen = true;
 	ActiveCatalogTab = NewTab;
 	if (bChanged)
 	{
-		RefreshCatalogPanels(); // the single content area is re-populated with the other catalog's cards
+		RefreshCatalogPanels(); // the single content area is (re-)populated with this tab's cards
 	}
 	UpdateCatalogTabStyles();
 	ApplyCatalogSectionVisibility();
@@ -679,9 +693,11 @@ void URoomPlannerWidget::SetActiveCatalogTab(EPlannerPlacementKind Tab)
 void URoomPlannerWidget::UpdateCatalogTabStyles()
 {
 	// Identical to UColorCatalogWidget::UpdateTabButtonStyles (RAL / NCS): active = ActiveTabColor, other = InactiveTabColor.
-	const bool bObjects = (ActiveCatalogTab == EPlannerPlacementKind::Object);
+	// Until a tab is picked both are inactive.
+	const bool bObjects = bCatalogTabChosen && ActiveCatalogTab == EPlannerPlacementKind::Object;
+	const bool bCabinets = bCatalogTabChosen && ActiveCatalogTab == EPlannerPlacementKind::CabinetSet;
 	if (BtnCatalogInterior) BtnCatalogInterior->SetBackgroundColor(bObjects ? ActiveTabColor : InactiveTabColor);
-	if (BtnCatalogCabinets) BtnCatalogCabinets->SetBackgroundColor(!bObjects ? ActiveTabColor : InactiveTabColor);
+	if (BtnCatalogCabinets) BtnCatalogCabinets->SetBackgroundColor(bCabinets ? ActiveTabColor : InactiveTabColor);
 }
 
 void URoomPlannerWidget::ApplyCatalogSectionVisibility()
@@ -691,7 +707,8 @@ void URoomPlannerWidget::ApplyCatalogSectionVisibility()
 	if (CatalogTabBar) CatalogTabBar->SetVisibility(Vis);
 	if (BtnCatalogInterior && !CatalogTabBar) BtnCatalogInterior->SetVisibility(Vis);
 	if (BtnCatalogCabinets && !CatalogTabBar) BtnCatalogCabinets->SetVisibility(Vis);
-	if (Catalog_Container) Catalog_Container->SetVisibility(Vis);
+	// The card area opens with the first tab click.
+	if (Catalog_Container) Catalog_Container->SetVisibility(bCatalogTabChosen ? Vis : ESlateVisibility::Collapsed);
 	UpdateSeparatorLines();
 }
 
@@ -1698,6 +1715,7 @@ TArray<FPlannerDimensionLabel> URoomPlannerWidget::GetSelectionLabels() const
 
 void URoomPlannerWidget::UpdateSelectionLabelsUI()
 {
+	UpdateDimensionOverlay();
 	if (!PlannerManager) return;
 
 	const bool bActive = PlannerManager->IsNodeDragActive() || PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None;
@@ -1754,13 +1772,21 @@ void URoomPlannerWidget::UpdateSelectionLabelsUI()
 	SetText(TxtDistFloor, FindLabel(TEXT("distFloor")));
 	SetText(TxtDistNeighbor, FindLabel(TEXT("distNeighbor")));
 
-	// Anchor the optional panel at the primary label's screen position
+	// Anchor the optional panel at the primary label's screen position. Walls (also while a corner is dragged) and doors / windows
+	// have their values on their dimension lines instead (drawn by the overlay), so the panel stays folded for them.
 	if (SelectionLabelPanel)
 	{
-		const FPlannerDimensionLabel* Anchor = FindLabel(TEXT("width"));
-		if (!Anchor) Anchor = FindLabel(TEXT("length"));
-		if (!Anchor) Anchor = FindLabel(TEXT("area"));
-		if (!Anchor) Anchor = FindLabel(TEXT("size"));
+		const EPlannerSelectionKind Kind = PlannerManager->GetSelectionKind();
+		const bool bValuesOnDimensionLines = DimensionOverlay
+			&& (PlannerManager->IsNodeDragActive() || Kind == EPlannerSelectionKind::Wall || Kind == EPlannerSelectionKind::Opening);
+		const FPlannerDimensionLabel* Anchor = nullptr;
+		if (!bValuesOnDimensionLines)
+		{
+			Anchor = FindLabel(TEXT("width"));
+			if (!Anchor) Anchor = FindLabel(TEXT("length"));
+			if (!Anchor) Anchor = FindLabel(TEXT("area"));
+			if (!Anchor) Anchor = FindLabel(TEXT("size"));
+		}
 		if (Anchor && Anchor->bOnScreen)
 		{
 			SelectionLabelPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -2183,6 +2209,121 @@ void URoomPlannerWidget::CreateTileCatalogButton()
 	BtnFinishTile->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnFinishTileClicked);
 }
 
+void URoomPlannerWidget::WrapFinishControls()
+{
+	if (!WidgetTree || !BtnFinishPaint) return;
+	UHorizontalBox* Row = Cast<UHorizontalBox>(BtnFinishPaint->GetParent());
+	if (!Row) return; // already wrapped, or a layout without the row
+
+	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("FinishColumn"));
+	UWrapBox* Buttons = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(), TEXT("FinishButtons"));
+	if (!Column || !Buttons) return;
+	// Like the row they replace: clicks between the buttons reach the plan logic as before.
+	Column->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	Buttons->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	Buttons->SetInnerSlotPadding(FVector2D(6.f, 6.f));
+
+	const TArray<UWidget*> Children = Row->GetAllChildren();
+	Row->ClearChildren();
+	bool bInfoWasInRow = false;
+	for (UWidget* Child : Children)
+	{
+		if (!Child) continue;
+		if (Child == TxtFinishInfo)
+		{
+			bInfoWasInRow = true;
+			continue;
+		}
+		if (UWrapBoxSlot* ButtonSlot = Buttons->AddChildToWrapBox(Child))
+		{
+			ButtonSlot->SetVerticalAlignment(VAlign_Center);
+		}
+	}
+	if (UVerticalBoxSlot* ButtonsSlot = Column->AddChildToVerticalBox(Buttons))
+	{
+		ButtonsSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+	if (bInfoWasInRow)
+	{
+		TxtFinishInfo->SetAutoWrapText(true);
+		// Designed white, it was only readable where it ran out over the viewport; inside the white side panel it takes the
+		// panel's text colour (a designer's darker colour is kept).
+		if (TxtFinishInfo->GetColorAndOpacity().GetSpecifiedColor().GetLuminance() > 0.6f)
+		{
+			TxtFinishInfo->SetColorAndOpacity(TxtFloorArea ? TxtFloorArea->GetColorAndOpacity() : FSlateColor(FLinearColor(0.048f, 0.072f, 0.112f, 1.f)));
+		}
+		if (UVerticalBoxSlot* InfoSlot = Column->AddChildToVerticalBox(TxtFinishInfo))
+		{
+			InfoSlot->SetHorizontalAlignment(HAlign_Fill);
+			InfoSlot->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
+		}
+	}
+	if (UHorizontalBoxSlot* ColumnSlot = Row->AddChildToHorizontalBox(Column))
+	{
+		// The row's full width (the side panel's width minus the row padding) is where the buttons wrap and the text breaks.
+		ColumnSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		ColumnSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+}
+
+void URoomPlannerWidget::CreateDimensionOverlay()
+{
+	if (DimensionOverlay || !WidgetTree) return;
+	UCanvasPanel* Root = Cast<UCanvasPanel>(WidgetTree->RootWidget);
+	if (!Root) return;
+
+	DimensionOverlay = WidgetTree->ConstructWidget<UPlannerDimensionOverlay>(UPlannerDimensionOverlay::StaticClass(), TEXT("DimensionOverlay"));
+	if (!DimensionOverlay) return;
+	DimensionOverlay->LineColor = DimensionLineColor;
+	DimensionOverlay->TextColor = DimensionTextColor;
+	DimensionOverlay->TextBackgroundColor = DimensionTextBackgroundColor;
+	if (DimensionFont.HasValidFont())
+	{
+		DimensionOverlay->Font = DimensionFont;
+	}
+	// First child of the root canvas: the side panel and every other overlay draw over the lines.
+	if (UCanvasPanelSlot* OverlaySlot = Cast<UCanvasPanelSlot>(Root->InsertChildAt(0, DimensionOverlay)))
+	{
+		OverlaySlot->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+		OverlaySlot->SetOffsets(FMargin(0.f));
+	}
+}
+
+void URoomPlannerWidget::UpdateDimensionOverlay()
+{
+	if (!DimensionOverlay) return;
+
+	TArray<FPlannerScreenDimension> ScreenDimensions;
+	APlayerController* PC = GetOwningPlayer();
+	if (PlannerManager && PC)
+	{
+		// Same projection as the selection labels: viewport pixels over the DPI scale = the root canvas' coordinates.
+		const float DPIScale = UWidgetLayoutLibrary::GetViewportScale(this);
+		auto ToScreen = [PC, DPIScale](const FVector& World, FVector2D& OutScreen)
+		{
+			if (!PC->ProjectWorldLocationToScreen(World, OutScreen)) return false;
+			if (DPIScale > 0.001f) OutScreen /= DPIScale;
+			return true;
+		};
+		// A vertical dimension shorter than this on screen shows only its value.
+		constexpr float MinVerticalLinePx = 40.f;
+		const bool bPlanView = (CurrentViewMode == ERoomPlannerViewMode::View2D);
+		for (const FPlannerDimensionLine& Line : PlannerManager->GetSelectionDimensionLines())
+		{
+			FPlannerScreenDimension Dimension;
+			if (!ToScreen(Line.Start, Dimension.Start) || !ToScreen(Line.End, Dimension.End)) continue;
+			// Seen from above the heights have no length: the plan shows them in one caption outside the wall; 3D draws the lines.
+			if (!PlannerDimensionLayout::ShowInView(Line.bVertical, Line.bPlanOnly, bPlanView, FVector2D::Distance(Dimension.Start, Dimension.End),
+				MinVerticalLinePx, Dimension.bTextOnly)) continue;
+			if (!ToScreen(Line.StartRef, Dimension.StartRef)) Dimension.StartRef = Dimension.Start;
+			if (!ToScreen(Line.EndRef, Dimension.EndRef)) Dimension.EndRef = Dimension.End;
+			Dimension.Text = Line.Text;
+			ScreenDimensions.Add(Dimension);
+		}
+	}
+	DimensionOverlay->SetDimensions(ScreenDimensions);
+}
+
 bool URoomPlannerWidget::CanTileSelection() const
 {
 	if (!PlannerManager || !PlannerManager->CanApplyFinishToSelection()) return false;
@@ -2353,6 +2494,10 @@ void URoomPlannerWidget::RefreshCatalogPanels()
 		}
 	}
 	Catalog_Container->ClearChildren();
+	if (!bCatalogTabChosen)
+	{
+		return; // no tab picked yet: no cards
+	}
 
 	const EPlannerPlacementKind Kind = ActiveCatalogTab;
 	const TArray<FPlannerCatalogEntry> Entries = (Kind == EPlannerPlacementKind::CabinetSet) ? GetAvailableCabinetSets() : GetAvailableObjects();

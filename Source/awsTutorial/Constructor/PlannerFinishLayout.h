@@ -54,6 +54,16 @@ namespace PlannerFinishLayout
 	 */
 	AWSTUTORIAL_API TMap<int32, FPlannerWallFaceUV> ComputeWallFaceUVs(const TArray<FPlannerWallFaceInput>& Walls);
 
+	/**
+	 * Where a face of Walls[WallIndex] is visibly bounded, in cm along the wall from its start node (X = start side, Y = end side):
+	 * at each end its corner point or, at a joint that is not mitred (T-junction, a thicker or angled neighbour), where it meets the
+	 * next wall's face, whichever lies further in.
+	 */
+	AWSTUTORIAL_API FVector2D VisibleFaceExtent(const TArray<FPlannerWallFaceInput>& Walls, int32 WallIndex, int32 Face);
+
+	/** VisibleFaceExtent of every face at once, indexed [WallIndex * 2 + Face]. */
+	AWSTUTORIAL_API TArray<FVector2D> VisibleFaceExtents(const TArray<FPlannerWallFaceInput>& Walls);
+
 	/** Signed area (cm²) of a polygon, positive for counter-clockwise vertex order. */
 	AWSTUTORIAL_API double SignedArea(const TArray<FVector2D>& Polygon);
 

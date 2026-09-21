@@ -35,6 +35,7 @@
 #include "Engine/Texture2D.h"
 #include "Constructor/PlannerOpeningBuilder.h"
 #include "Constructor/PlannerOpeningStyles.h"
+#include "Constructor/PlannerDimensions.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/Guid.h"
 #include "Framework/Application/SlateApplication.h"
@@ -4699,8 +4700,11 @@ bool ARoomPlannerManager::GetOpeningDistances(int32 SegmentID, int32 OpeningInde
 	const float Start = Op.DistanceFromStart - Op.Width * 0.5f;
 	const float End = Op.DistanceFromStart + Op.Width * 0.5f;
 
-	const float ToStartCorner = FMath::Max(0.f, Start);
-	const float ToEndCorner = FMath::Max(0.f, WallLen - End);
+	// Clear dimensions: from the inner corners of the room-side face (where it meets the adjoining walls).
+	FVector2D FaceExtent(0.f, WallLen);
+	GetVisibleWallFaceExtent(SegmentID, Seg->bLeftSideIsInterior, FaceExtent);
+	const float ToStartCorner = FMath::Max(0.f, Start - (float)FaceExtent.X);
+	const float ToEndCorner = FMath::Max(0.f, (float)FaceExtent.Y - End);
 
 	// Seen from inside the room: with the interior on the wall's LEFT face, the observer's
 	// right hand points to the START node (see AProceduralWallActor::IsHingeAtStart).
@@ -4752,25 +4756,32 @@ TArray<FPlannerDimensionLabel> ARoomPlannerManager::GetSelectionDimensionLabels(
 		Labels.Add(L);
 	};
 
-	auto WallLengthLabel = [&](int32 SegID)
+	// Clear length of a wall face, between the room's inner corners.
+	auto WallLengthLabel = [&](int32 SegID, bool bLeftFace)
 	{
 		const FWallSegment* Seg = WallSegments.Find(SegID);
 		if (!Seg || !Nodes.Contains(Seg->StartNodeID) || !Nodes.Contains(Seg->EndNodeID)) return;
 		const FVector2D P1 = Nodes[Seg->StartNodeID].Position;
 		const FVector2D P2 = Nodes[Seg->EndNodeID].Position;
-		const float LenCm = FVector2D::Distance(P1, P2);
+		FVector2D Extent(0.f, FVector2D::Distance(P1, P2));
+		GetVisibleWallFaceExtent(SegID, bLeftFace, Extent);
+		const float LenCm = FMath::Max(0.f, (float)(Extent.Y - Extent.X));
 		const FVector2D Mid = (P1 + P2) * 0.5f;
 		AddLabel(TEXT("length"), PlannerJsonKeys::FormatMeters(LenCm), LenCm, FVector(Mid.X, Mid.Y, Seg->Height + 15.f));
 	};
 
-	// While a control point is dragged: live length of every wall attached to it (REQ-02).
+	// While a control point is dragged: live length of every wall attached to it (REQ-02), on the same faces as the dimension lines.
 	if (DraggingNodeID != -1)
 	{
 		if (const FWallNode* Node = Nodes.Find(DraggingNodeID))
 		{
+			TArray<FPlannerWallFaceInput> Inputs;
+			TMap<int32, int32> IndexBySegment;
+			TArray<FVector2D> FaceExtents;
+			GatherWallFaces(Inputs, IndexBySegment, FaceExtents);
 			for (int32 SegID : Node->ConnectedSegmentIDs)
 			{
-				WallLengthLabel(SegID);
+				WallLengthLabel(SegID, (SegID == SelectedSegmentID) ? bSelectedWallFaceLeft : GetRoomSideFaceLeft(SegID, IndexBySegment, FaceExtents));
 			}
 		}
 		return Labels;
@@ -4780,7 +4791,7 @@ TArray<FPlannerDimensionLabel> ARoomPlannerManager::GetSelectionDimensionLabels(
 	{
 	case EPlannerSelectionKind::Wall:
 	{
-		WallLengthLabel(SelectedSegmentID);
+		WallLengthLabel(SelectedSegmentID, bSelectedWallFaceLeft);
 		if (const FWallSegment* Seg = WallSegments.Find(SelectedSegmentID))
 		{
 			if (Nodes.Contains(Seg->EndNodeID))
@@ -4803,7 +4814,7 @@ TArray<FPlannerDimensionLabel> ARoomPlannerManager::GetSelectionDimensionLabels(
 		const float WallLen = FVector2D::Distance(P1, P2);
 		const FVector2D Dir = (P2 - P1).GetSafeNormal();
 		const FVector2D Normal(-Dir.Y, Dir.X);
-		const FVector2D Interior = Seg->bLeftSideIsInterior ? Normal : -Normal;
+		const FVector2D Interior = bSelectedWallFaceLeft ? Normal : -Normal; // the picked face, as the dimension lines
 		const FVector2D Off = Interior * (Seg->Thickness * 0.5f + 5.f);
 
 		auto AlongWall = [&](float DistCm, float Z) { const FVector2D P = P1 + Dir * DistCm + Off; return FVector(P.X, P.Y, Z); };
@@ -4822,12 +4833,15 @@ TArray<FPlannerDimensionLabel> ARoomPlannerManager::GetSelectionDimensionLabels(
 		float L, R, Fl, Nb; bool bHasNb;
 		if (GetOpeningDistances(SelectedSegmentID, SelectedOpeningIndex, L, R, Fl, Nb, bHasNb))
 		{
-			// Physical positions along the wall for each gap (start-corner gap and end-corner gap).
-			const float ToStart = FMath::Max(0.f, Start);
-			const float ToEnd = FMath::Max(0.f, WallLen - End);
-			const FVector StartGapPos = AlongWall(Start * 0.5f, 25.f);
-			const FVector EndGapPos = AlongWall(End + ToEnd * 0.5f, 25.f);
-			if (Seg->bLeftSideIsInterior)
+			// Clear distances from the inner corners of the picked face (the same values as its dimension lines), each placed in the
+			// middle of its gap.
+			FVector2D FaceExtent(0.f, WallLen);
+			GetVisibleWallFaceExtent(SelectedSegmentID, bSelectedWallFaceLeft, FaceExtent);
+			const float ToStart = FMath::Max(0.f, Start - (float)FaceExtent.X);
+			const float ToEnd = FMath::Max(0.f, (float)FaceExtent.Y - End);
+			const FVector StartGapPos = AlongWall(((float)FaceExtent.X + Start) * 0.5f, 25.f);
+			const FVector EndGapPos = AlongWall((End + (float)FaceExtent.Y) * 0.5f, 25.f);
+			if (bSelectedWallFaceLeft)
 			{
 				AddLabel(TEXT("distRight"), PlannerJsonKeys::FormatMeters(ToStart), ToStart, StartGapPos);
 				AddLabel(TEXT("distLeft"), PlannerJsonKeys::FormatMeters(ToEnd), ToEnd, EndGapPos);
@@ -4880,10 +4894,15 @@ TArray<FPlannerDimensionLabel> ARoomPlannerManager::GetSelectionDimensionLabels(
 	{
 		if (const FPlacedCabinetSetData* D = CabinetSets.Find(SelectedCabinetSetID))
 		{
-			FVector Origin = D->Location, Extent(50.f, 50.f, 50.f);
-			if (AShowroomBooth* Booth = FindCabinetSetActor(SelectedCabinetSetID)) Booth->GetActorBounds(false, Origin, Extent);
-			const FString SizeText = FString::Printf(TEXT("%s  %.2f × %.2f м"), *D->ProductID.ToString(), Extent.X * 2.f / 100.f, Extent.Y * 2.f / 100.f);
-			AddLabel(TEXT("size"), SizeText, Extent.X * 2.f, Origin + FVector(0.f, 0.f, Extent.Z + 10.f));
+			// The footprint of its visible parts in its own axes, as its gap lines (the world box of a turned set is larger, and
+			// GetActorBounds also counts its trigger shapes).
+			FVector2D Center(D->Location.X, D->Location.Y);
+			FVector2D AxisX(1., 0.);
+			FVector2D HalfSize(50., 50.);
+			float TopZ = D->Location.Z + 100.f;
+			GetActorFootprint(FindCabinetSetActor(SelectedCabinetSetID), Center, AxisX, HalfSize, TopZ);
+			const FString SizeText = FString::Printf(TEXT("%s  %.2f × %.2f м"), *D->ProductID.ToString(), HalfSize.X * 2.f / 100.f, HalfSize.Y * 2.f / 100.f);
+			AddLabel(TEXT("size"), SizeText, HalfSize.X * 2.f, FVector(Center.X, Center.Y, TopZ + 10.f));
 		}
 		break;
 	}
@@ -4892,6 +4911,392 @@ TArray<FPlannerDimensionLabel> ARoomPlannerManager::GetSelectionDimensionLabels(
 	}
 
 	return Labels;
+}
+
+namespace PlannerDimensionPlacement
+{
+	constexpr float RowSpacing = 40.f;      // dimension rows stand this far apart, the first one this far off the face
+	constexpr float ChainZ = 2.f;           // just above the floor slab (its top is at 1 cm)
+	constexpr float JambOffset = 15.f;      // an opening's vertical dimensions stand this far beside it
+	constexpr float MinDimension = 0.5f;    // shorter distances (an opening flush with a corner) get no line
+	constexpr float CornerClearance = 5.f;  // vertical dimensions keep this far from the face's corners
+	constexpr float MinObjectGap = 1.f;     // an object side closer to a wall touches it
+	constexpr float MaxObjectGap = 2000.f;  // walls further away than this are not dimensioned
+
+	/** A wall and one of its faces: where dimension lines beside that face go. */
+	struct FFaceFrame
+	{
+		FVector2D P1 = FVector2D::ZeroVector;
+		FVector2D Dir = FVector2D(1., 0.);
+		FVector2D Normal = FVector2D(0., 1.);   // out of the face
+		float Length = 0.f;
+		float Face = 0.f;                       // distance from the centre line to the face
+		FVector2D Extent = FVector2D::ZeroVector; // visible part of the face, along the wall from its start node
+
+		FVector At(float Along, float Offset, float Z) const
+		{
+			const FVector2D P = P1 + Dir * Along + Normal * Offset;
+			return FVector(P.X, P.Y, Z);
+		}
+
+		/** A line along the face, Row rows out, with extension lines from the face. */
+		void AddAlong(TArray<FPlannerDimensionLine>& Lines, const TCHAR* Key, float From, float To, float Row) const
+		{
+			const float Value = To - From;
+			if (Value < MinDimension) return;
+			FPlannerDimensionLine Line;
+			Line.Key = Key;
+			Line.Value = Value;
+			Line.Text = PlannerJsonKeys::FormatMeters(Value);
+			Line.Start = At(From, Face + Row * RowSpacing, ChainZ);
+			Line.End = At(To, Face + Row * RowSpacing, ChainZ);
+			Line.StartRef = At(From, Face, ChainZ);
+			Line.EndRef = At(To, Face, ChainZ);
+			Lines.Add(Line);
+		}
+
+		/** A vertical line on the face beside a jamb, with extension lines from the jamb. */
+		void AddVertical(TArray<FPlannerDimensionLine>& Lines, const TCHAR* Key, const TCHAR* Prefix, float Jamb, float Beside, float FromZ, float ToZ) const
+		{
+			const float Value = ToZ - FromZ;
+			if (Value < MinDimension) return;
+			FPlannerDimensionLine Line;
+			Line.Key = Key;
+			Line.Value = Value;
+			Line.Text = FString(Prefix) + PlannerJsonKeys::FormatMeters(Value);
+			Line.Start = At(Beside, Face + 1.f, FromZ);
+			Line.End = At(Beside, Face + 1.f, ToZ);
+			Line.StartRef = At(Jamb, Face + 1.f, FromZ);
+			Line.EndRef = At(Jamb, Face + 1.f, ToZ);
+			Line.bVertical = true;
+			Lines.Add(Line);
+		}
+	};
+}
+
+void ARoomPlannerManager::GatherWallFaces(TArray<FPlannerWallFaceInput>& OutInputs, TMap<int32, int32>& OutIndexBySegment, TArray<FVector2D>& OutFaceExtents) const
+{
+	OutInputs.Reset();
+	OutIndexBySegment.Reset();
+	TArray<int32> SegIDs;
+	WallSegments.GetKeys(SegIDs);
+	SegIDs.Sort();
+	for (int32 SegID : SegIDs)
+	{
+		FPlannerWallFaceInput In;
+		if (!MakeWallFaceInput(SegID, In)) continue;
+		OutIndexBySegment.Add(SegID, OutInputs.Num());
+		OutInputs.Add(In);
+	}
+
+	// A dragged corner snapped onto another corner or onto another wall is only joined to it on release (TryConnectMovedNode).
+	// Pair its faces as that junction will, so the live lengths already end at the visible corners.
+	if (const FWallNode* Dragged = (DraggingNodeID != -1) ? Nodes.Find(DraggingNodeID) : nullptr)
+	{
+		const FVector2D P = Dragged->Position;
+		auto IsNeighbour = [&](int32 NodeID)
+		{
+			for (int32 SegID : Dragged->ConnectedSegmentIDs)
+			{
+				const FWallSegment* Seg = WallSegments.Find(SegID);
+				if (Seg && (Seg->StartNodeID == NodeID || Seg->EndNodeID == NodeID)) return true;
+			}
+			return false;
+		};
+		// MergeNodeInto refuses a merge that would duplicate a wall (both corners already walled to the same third corner).
+		auto WouldDuplicateWall = [&](const FWallNode& Target, int32 TargetID)
+		{
+			for (int32 SegID : Dragged->ConnectedSegmentIDs)
+			{
+				const FWallSegment* Seg = WallSegments.Find(SegID);
+				if (!Seg) continue;
+				const int32 OtherEnd = (Seg->StartNodeID == DraggingNodeID) ? Seg->EndNodeID : Seg->StartNodeID;
+				for (int32 TargetSegID : Target.ConnectedSegmentIDs)
+				{
+					const FWallSegment* TargetSeg = WallSegments.Find(TargetSegID);
+					if (TargetSeg && ((TargetSeg->StartNodeID == TargetID) ? TargetSeg->EndNodeID : TargetSeg->StartNodeID) == OtherEnd) return true;
+				}
+			}
+			return false;
+		};
+		int32 JoinID = INDEX_NONE;
+		for (const TPair<int32, FWallNode>& Pair : Nodes)
+		{
+			if (Pair.Key != DraggingNodeID && !IsNeighbour(Pair.Key) && Pair.Value.Position.Equals(P, 0.5f) && !WouldDuplicateWall(Pair.Value, Pair.Key))
+			{
+				JoinID = Pair.Key;
+				break;
+			}
+		}
+		if (JoinID == INDEX_NONE)
+		{
+			// Onto the middle of a wall: that wall is split there (the through wall of a T-junction, plain corners at the split), within
+			// the same limits as TryConnectMovedNode.
+			constexpr int32 SplitNodeID = -2;
+			for (int32 i = 0; i < OutInputs.Num(); ++i)
+			{
+				FPlannerWallFaceInput& Wall = OutInputs[i];
+				if (Wall.StartNodeID == DraggingNodeID || Wall.EndNodeID == DraggingNodeID) continue;
+				const float Len = FVector2D::Distance(Wall.Start, Wall.End);
+				if (Len < 40.f) continue;
+				const FVector2D Dir = (Wall.End - Wall.Start) / Len;
+				const float T = FVector2D::DotProduct(P - Wall.Start, Dir);
+				if (T < 20.f || T > Len - 20.f || FVector2D::Distance(Wall.Start + Dir * T, P) > 0.5f) continue;
+				const FWallSegment* Seg = WallSegments.Find(Wall.SegmentID);
+				const float Half = Seg ? Seg->Thickness * 0.5f : 10.f;
+				const FVector2D Left(-Dir.Y, Dir.X);
+				FPlannerWallFaceInput Second = Wall;
+				Second.SegmentID = -Wall.SegmentID - 1; // not a real segment; IndexBySegment keeps the first half
+				Second.Start = P;
+				Second.StartNodeID = SplitNodeID;
+				Second.StartCorner[0] = P + Left * Half;
+				Second.StartCorner[1] = P - Left * Half;
+				Wall.End = P;
+				Wall.EndNodeID = SplitNodeID;
+				Wall.EndCorner[0] = Second.StartCorner[0];
+				Wall.EndCorner[1] = Second.StartCorner[1];
+				OutInputs.Add(Second);
+				JoinID = SplitNodeID;
+				break;
+			}
+		}
+		if (JoinID != INDEX_NONE)
+		{
+			for (FPlannerWallFaceInput& Wall : OutInputs)
+			{
+				if (Wall.StartNodeID == DraggingNodeID) Wall.StartNodeID = JoinID;
+				if (Wall.EndNodeID == DraggingNodeID) Wall.EndNodeID = JoinID;
+			}
+		}
+	}
+	OutFaceExtents = PlannerFinishLayout::VisibleFaceExtents(OutInputs);
+}
+
+bool ARoomPlannerManager::GetRoomSideFaceLeft(int32 SegmentID, const TMap<int32, int32>& IndexBySegment, const TArray<FVector2D>& FaceExtents) const
+{
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg) return true;
+	for (const TPair<int32, FRoomData>& Pair : Rooms)
+	{
+		if (Pair.Value.WallSegmentIDs.Contains(SegmentID)) return Seg->bLeftSideIsInterior;
+	}
+	const int32* Index = IndexBySegment.Find(SegmentID);
+	if (!Index) return Seg->bLeftSideIsInterior;
+	const FVector2D Left = FaceExtents[*Index * 2];
+	const FVector2D Right = FaceExtents[*Index * 2 + 1];
+	return (Left.Y - Left.X) <= (Right.Y - Right.X) + 0.5f;
+}
+
+bool ARoomPlannerManager::GetVisibleWallFaceExtent(int32 SegmentID, bool bLeftFace, FVector2D& OutExtent) const
+{
+	TArray<FPlannerWallFaceInput> Inputs;
+	TMap<int32, int32> IndexBySegment;
+	TArray<FVector2D> FaceExtents;
+	GatherWallFaces(Inputs, IndexBySegment, FaceExtents);
+	const int32* Index = IndexBySegment.Find(SegmentID);
+	if (!Index) return false;
+	OutExtent = FaceExtents[*Index * 2 + (bLeftFace ? 0 : 1)];
+	return true;
+}
+
+bool ARoomPlannerManager::GetActorFootprint(const AActor* Actor, FVector2D& OutCenter, FVector2D& OutAxisX, FVector2D& OutHalfSize, float& OutTopZ) const
+{
+	if (!Actor) return false;
+	const FVector Forward = Actor->GetActorForwardVector();
+	FVector2D AxisX(Forward.X, Forward.Y);
+	if (!AxisX.Normalize()) AxisX = FVector2D(1., 0.);
+	const FVector2D AxisY(-AxisX.Y, AxisX.X);
+	const FVector2D Origin(Actor->GetActorLocation().X, Actor->GetActorLocation().Y);
+
+	// Visible meshes only, each local box through its own transform (as MeasureAttachmentDepth: booths carry trigger shapes).
+	FBox2D Local(ForceInit);
+	float TopZ = -TNumericLimits<float>::Max();
+	TArray<UStaticMeshComponent*> MeshComps;
+	Actor->GetComponents<UStaticMeshComponent>(MeshComps);
+	for (const UStaticMeshComponent* Comp : MeshComps)
+	{
+		if (!Comp || !Comp->GetStaticMesh() || !Comp->IsVisible()) continue;
+		const FBox Box = Comp->GetStaticMesh()->GetBoundingBox();
+		if (!Box.IsValid) continue;
+		const FTransform& TM = Comp->GetComponentTransform();
+		for (int32 Corner = 0; Corner < 8; ++Corner)
+		{
+			const FVector World = TM.TransformPosition(FVector((Corner & 1) ? Box.Max.X : Box.Min.X, (Corner & 2) ? Box.Max.Y : Box.Min.Y,
+				(Corner & 4) ? Box.Max.Z : Box.Min.Z));
+			const FVector2D Rel = FVector2D(World.X, World.Y) - Origin;
+			Local += FVector2D(FVector2D::DotProduct(Rel, AxisX), FVector2D::DotProduct(Rel, AxisY));
+			TopZ = FMath::Max(TopZ, (float)World.Z);
+		}
+	}
+	if (!Local.bIsValid) return false;
+	const FVector2D Mid = (Local.Min + Local.Max) * 0.5f;
+	OutCenter = Origin + AxisX * Mid.X + AxisY * Mid.Y;
+	OutAxisX = AxisX;
+	OutHalfSize = (Local.Max - Local.Min) * 0.5f;
+	OutTopZ = TopZ;
+	return true;
+}
+
+TArray<FPlannerDimensionLine> ARoomPlannerManager::GetSelectionDimensionLines() const
+{
+	using namespace PlannerDimensionPlacement;
+	TArray<FPlannerDimensionLine> Lines;
+
+	// Faces, corners and visible face extents of every wall, as the wall meshes use them (current while a corner is dragged too:
+	// every drag step rebuilds the walls and their corner joints).
+	TArray<FPlannerWallFaceInput> Inputs;
+	TMap<int32, int32> IndexBySegment;
+	TArray<FVector2D> FaceExtents;
+	GatherWallFaces(Inputs, IndexBySegment, FaceExtents);
+
+	auto MakeFrame = [&](int32 SegID, bool bLeftFace, FFaceFrame& Out)
+	{
+		const FWallSegment* Seg = WallSegments.Find(SegID);
+		const int32* Index = IndexBySegment.Find(SegID);
+		if (!Seg || !Index) return false;
+		const FPlannerWallFaceInput& In = Inputs[*Index];
+		Out.Length = FVector2D::Distance(In.Start, In.End);
+		if (Out.Length < 1.f) return false;
+		Out.P1 = In.Start;
+		Out.Dir = (In.End - In.Start) / Out.Length;
+		const FVector2D Left(-Out.Dir.Y, Out.Dir.X);
+		Out.Normal = bLeftFace ? Left : -Left;
+		Out.Face = Seg->Thickness * 0.5f;
+		Out.Extent = FaceExtents[*Index * 2 + (bLeftFace ? 0 : 1)];
+		return true;
+	};
+
+	// While a control point is dragged: the live length of every wall at it, on the picked face of a selected wall and on the room
+	// side of the others.
+	if (DraggingNodeID != -1)
+	{
+		if (const FWallNode* Node = Nodes.Find(DraggingNodeID))
+		{
+			for (int32 SegID : Node->ConnectedSegmentIDs)
+			{
+				const bool bLeftFace = (SegID == SelectedSegmentID) ? bSelectedWallFaceLeft : GetRoomSideFaceLeft(SegID, IndexBySegment, FaceExtents);
+				FFaceFrame Frame;
+				if (MakeFrame(SegID, bLeftFace, Frame))
+				{
+					Frame.AddAlong(Lines, TEXT("length"), Frame.Extent.X, Frame.Extent.Y, 1.f);
+				}
+			}
+		}
+		return Lines;
+	}
+
+	switch (GetSelectionKind())
+	{
+	case EPlannerSelectionKind::Wall:
+	{
+		FFaceFrame Frame;
+		if (MakeFrame(SelectedSegmentID, bSelectedWallFaceLeft, Frame))
+		{
+			Frame.AddAlong(Lines, TEXT("length"), Frame.Extent.X, Frame.Extent.Y, 1.f);
+		}
+		break;
+	}
+
+	case EPlannerSelectionKind::Opening:
+	{
+		const FWallSegment* Seg = WallSegments.Find(SelectedSegmentID);
+		FFaceFrame Frame;
+		if (!Seg || !Seg->Openings.IsValidIndex(SelectedOpeningIndex) || !MakeFrame(SelectedSegmentID, bSelectedWallFaceLeft, Frame)) break;
+		const FWallOpening& Op = Seg->Openings[SelectedOpeningIndex];
+		const float Start = Op.DistanceFromStart - Op.Width * 0.5f;
+		const float End = Op.DistanceFromStart + Op.Width * 0.5f;
+
+		// Row 1: inner corner -> opening -> inner corner. Seen from in front of a left face, the start node is on the right.
+		const TCHAR* StartSideKey = bSelectedWallFaceLeft ? TEXT("distRight") : TEXT("distLeft");
+		const TCHAR* EndSideKey = bSelectedWallFaceLeft ? TEXT("distLeft") : TEXT("distRight");
+		Frame.AddAlong(Lines, StartSideKey, Frame.Extent.X, Start, 1.f);
+		Frame.AddAlong(Lines, TEXT("width"), Start, End, 1.f);
+		Frame.AddAlong(Lines, EndSideKey, End, Frame.Extent.Y, 1.f);
+
+		// Row 2: the gap to the nearest neighbouring opening on the same wall.
+		float BestGap = TNumericLimits<float>::Max();
+		float GapFrom = 0.f;
+		float GapTo = 0.f;
+		for (int32 i = 0; i < Seg->Openings.Num(); ++i)
+		{
+			if (i == SelectedOpeningIndex) continue;
+			const FWallOpening& Other = Seg->Openings[i];
+			const float OStart = Other.DistanceFromStart - Other.Width * 0.5f;
+			const float OEnd = Other.DistanceFromStart + Other.Width * 0.5f;
+			if (OStart >= End && OStart - End < BestGap) { BestGap = OStart - End; GapFrom = End; GapTo = OStart; }
+			else if (OEnd <= Start && Start - OEnd < BestGap) { BestGap = Start - OEnd; GapFrom = OEnd; GapTo = Start; }
+		}
+		if (BestGap < TNumericLimits<float>::Max())
+		{
+			Frame.AddAlong(Lines, TEXT("distNeighbor"), GapFrom, GapTo, 2.f);
+		}
+
+		// Along the face: the opening height beside its end jamb, the sill height beside its start jamb. Each stays on the visible
+		// face, clear of its inner corners; without room it stands inside the opening.
+		auto BesideJamb = [&Frame](float Jamb, float OutSign)
+		{
+			const float Out = Jamb + OutSign * JambOffset;
+			return (Out >= Frame.Extent.X + CornerClearance && Out <= Frame.Extent.Y - CornerClearance) ? Out : Jamb - OutSign * JambOffset;
+		};
+		const int32 FirstVertical = Lines.Num();
+		Frame.AddVertical(Lines, TEXT("height"), TEXT("выс. "), End, BesideJamb(End, 1.f), Op.SillHeight, Op.SillHeight + Op.Height);
+		Frame.AddVertical(Lines, TEXT("sill"), TEXT("от пола "), Start, BesideJamb(Start, -1.f), 0.f, Op.SillHeight);
+
+		// The top-down plan has no length for heights: both values in one caption, centred on the opening on the other side of the
+		// wall (the chain is on this side), level with the wall top so it clears the wall's image in the straight-down view.
+		FString PlanCaption;
+		for (int32 i = FirstVertical; i < Lines.Num(); ++i)
+		{
+			PlanCaption += (PlanCaption.IsEmpty() ? TEXT("") : TEXT(" · ")) + Lines[i].Text;
+		}
+		if (!PlanCaption.IsEmpty())
+		{
+			FPlannerDimensionLine Caption;
+			Caption.Key = TEXT("heightsPlan");
+			Caption.Text = PlanCaption;
+			Caption.Value = 0.f; // a caption, not a length
+			Caption.Start = Caption.End = Frame.At(Op.DistanceFromStart, -(Frame.Face + 5.f), Seg->Height);
+			Caption.StartRef = Caption.EndRef = Frame.At(Op.DistanceFromStart, 0.f, Seg->Height);
+			Caption.bPlanOnly = true;
+			Lines.Add(Caption);
+		}
+		break;
+	}
+
+	case EPlannerSelectionKind::Object:
+	case EPlannerSelectionKind::CabinetSet:
+	{
+		// From each side of the footprint to the nearest wall face in front of it, level with the object's top (in the straight-down
+		// plan that runs from its visible outline).
+		const AActor* Actor = (GetSelectionKind() == EPlannerSelectionKind::Object)
+			? static_cast<const AActor*>(FindPlacedObjectActor(SelectedObjectID)) : static_cast<const AActor*>(FindCabinetSetActor(SelectedCabinetSetID));
+		FVector2D Center, AxisX, HalfSize;
+		float TopZ = 0.f;
+		if (!GetActorFootprint(Actor, Center, AxisX, HalfSize, TopZ)) break;
+		TArray<TArray<FVector2D>> WallOutlines;
+		for (const FPlannerWallFaceInput& In : Inputs)
+		{
+			WallOutlines.Add({ In.StartCorner[0], In.EndCorner[0], In.EndCorner[1], In.StartCorner[1] });
+		}
+		const float Z = FMath::Clamp(TopZ, ChainZ, 270.f);
+		for (const PlannerDimensions::FFootprintGap& Gap : PlannerDimensions::FootprintGapsToWalls(Center, AxisX, HalfSize, WallOutlines, MinObjectGap, MaxObjectGap))
+		{
+			static const TCHAR* const SideKeys[] = { TEXT("gapFront"), TEXT("gapBack"), TEXT("gapRight"), TEXT("gapLeft") };
+			FPlannerDimensionLine Line;
+			Line.Key = SideKeys[(int32)Gap.Side];
+			Line.Value = Gap.Distance;
+			Line.Text = PlannerJsonKeys::FormatMeters(Gap.Distance);
+			Line.Start = Line.StartRef = FVector(Gap.From.X, Gap.From.Y, Z);
+			Line.End = Line.EndRef = FVector(Gap.To.X, Gap.To.Y, Z);
+			Lines.Add(Line);
+		}
+		break;
+	}
+
+	default:
+		break;
+	}
+	return Lines;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
