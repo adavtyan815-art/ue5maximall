@@ -53,6 +53,9 @@ public:
 	/** The "Плитка" button built by BuildRuntimeLayout. */
 	UButton* GetFinishTileButton() const { return BtnFinishTile; }
 
+	/** The «Каталог» toolbar button built by BuildRuntimeLayout. */
+	UButton* GetCatalogToggleButton() const { return BtnCatalogToggle; }
+
 protected:
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -270,7 +273,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
 	EPlannerPlacementKind DefaultCatalogTab = EPlannerPlacementKind::Object;
 
-	/** Opens DefaultCatalogTab when the planner opens. Off: no tab is active and the card area stays folded until a tab is clicked. */
+	/**
+	 * Opens the catalog with DefaultCatalogTab when the planner opens. Off: the catalog (tabs and cards) stays folded until the
+	 * «Каталог» toolbar button opens it, and no tab is active until one is clicked.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
 	bool bOpenCatalogTabOnStart = false;
 
@@ -343,6 +349,13 @@ public:
 	/** False until the user picks «Интерьер» or «Тумбы»: no tab is highlighted and the card area stays folded. */
 	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Objects")
 	bool HasActiveCatalogTab() const { return bCatalogTabChosen; }
+
+	/** Opens or folds the catalog section (the «Интерьер» / «Тумбы» tabs and the cards), as the «Каталог» toolbar button does. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
+	void SetCatalogOpen(bool bOpen);
+
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Objects")
+	bool IsCatalogOpen() const { return bCatalogOpen; }
 
 	/** Shows / hides the tab bar and content area for the current view mode (2D only), then updates the separators. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
@@ -687,6 +700,10 @@ protected:
 	UFUNCTION()
 	void HandleSelectionChanged();
 
+	/** A room floor picked or let go: the floor area line follows it. */
+	UFUNCTION()
+	void HandleFloorSelected(int32 RoomID, float AreaM2);
+
 	UFUNCTION()
 	void HandlePaintColorItemSelected(const FColorCatalogItem& Item);
 
@@ -750,6 +767,25 @@ private:
 	 */
 	void WrapFinishControls();
 
+	/**
+	 * «Каталог» button at the end of the tool row ("Создать стену", "Выбрать", "4×4 м"), styled like "4×4 м": opens and folds the
+	 * catalog section. The row becomes a wrap box so the buttons break onto a second line instead of running past the side panel.
+	 */
+	void CreateCatalogToggleButton();
+
+	UFUNCTION() void OnCatalogToggleClicked();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> BtnCatalogToggle;
+
+	/** Background of the «Каталог» button while the catalog is folded (the style it was copied from). */
+	FLinearColor CatalogToggleIdleColor = FLinearColor(0.17f, 0.17f, 0.18f, 1.f);
+
+	/** The caption before the floor area ("Площадь пола" in the WBP) and its designed text. */
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> FloorAreaCaption;
+	FText FloorAreaCaptionText;
+
 	/** Full-screen, hit-test invisible overlay under the side panel (first child of the root canvas). */
 	void CreateDimensionOverlay();
 
@@ -788,6 +824,9 @@ private:
 
 	/** A catalog tab has been picked since the planner opened (see HasActiveCatalogTab). */
 	bool bCatalogTabChosen = false;
+
+	/** The catalog section is open (see SetCatalogOpen). */
+	bool bCatalogOpen = false;
 
 	/** Image_line_* widgets found in the tree at construct, grouped by their parent panel. */
 	TArray<TWeakObjectPtr<UWidget>> SeparatorLines;

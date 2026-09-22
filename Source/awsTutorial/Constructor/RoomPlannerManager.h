@@ -374,6 +374,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	int32 AddWall(int32 StartNodeID, int32 EndNodeID, float Thickness = 20.f, float Height = 280.f);
 
+	/**
+	 * A wall drawn from StartPos to EndPos (the plan's wall tool). Its ends join nearby corners and walls as AddNode does, and it is
+	 * joined to the plan along its length as well: split where it crosses other walls (they are split there too) and at corners it
+	 * passes over, and free wall ends stopping against it are drawn onto it. So a partition always divides the room it is drawn
+	 * across, whichever was drawn first. Returns the ID of its first piece, -1 if nothing was added.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	int32 AddWallBetweenPoints(const FVector2D& StartPos, const FVector2D& EndPos, float Thickness = 20.f, float Height = 280.f);
+
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool AddOpeningToWall(int32 SegmentID, EOpeningType Type, float DistFromStart, float Width = 90.f, float Height = 210.f, float SillHeight = 0.f);
 
@@ -1158,6 +1167,22 @@ private:
 	 */
 	void RebuildBaseboards(UMaterialInterface* DefaultMaterial);
 
+	/** Material RebuildRooms last gave rooms without a baseboard finish (baseboards are rebuilt with it when openings change). */
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> BaseboardDefaultMaterial;
+
+	/** True while RebuildRooms runs (it rebuilds the baseboards itself, at its end). */
+	bool bRebuildingRooms = false;
+
+	/** Outlines around each group of joined rooms, from the last RebuildRooms (what a layout before version 3 took as one room). */
+	TArray<TArray<FVector2D>> RoomGroupOutlines;
+
+	/**
+	 * Layouts saved before version 3 took rooms divided by walls as one room around all of them, so a floor, ceiling or baseboard
+	 * finish set then covered all of them: every room in that outline without a finish of its own gets a copy.
+	 */
+	void SpreadLegacyRoomFinishes();
+
 	/** Re-points every wall of NodeID to TargetNodeID and deletes NodeID. Refused if a wall would collapse or duplicate another. */
 	bool MergeNodeInto(int32 NodeID, int32 TargetNodeID);
 
@@ -1199,9 +1224,12 @@ private:
 	void ApplyWallFinishMaterials();
 	/** Brings one wall actor's face finish materials in line with its segment data. */
 	void ApplyWallFinishToActor(AProceduralWallActor* Actor, const FWallSegment& Seg);
-	const FFloorFinishRecord* FindFloorFinishRecord(const FVector2D& Centroid) const;
-	static const FFloorFinishRecord* FindRoomFinishRecord(const TArray<FFloorFinishRecord>& Records, const FVector2D& Centroid);
-	static void UpsertRoomFinishRecord(TArray<FFloorFinishRecord>& Records, const FVector2D& Centroid, const FSurfaceFinish& Finish);
+	/** Index of the stored finish record that belongs to a room (PlannerFinishLayout::AssignRecordsToRooms), or INDEX_NONE. */
+	int32 FindRoomRecordIndex(const TArray<FFloorFinishRecord>& Records, int32 RoomID) const;
+	/** Stores (or, with an unset finish, removes) a room's finish record, anchored inside that room. */
+	void SetRoomFinishRecord(TArray<FFloorFinishRecord>& Records, int32 RoomID, const FSurfaceFinish& Finish);
+	/** (from, to) cm along a wall from its start node where walk-through openings (doors, archways) cut it through. */
+	void GetWalkThroughSpans(int32 SegmentID, TArray<FVector2D>& OutSpans) const;
 	static TArray<TSharedPtr<FJsonValue>> RoomFinishRecordsToJson(const TArray<FFloorFinishRecord>& Records);
 	static void RoomFinishRecordsFromJson(const TSharedPtr<FJsonObject>& Root, const TCHAR* Field, TArray<FFloorFinishRecord>& OutRecords);
 	/** Stores a ceiling / baseboard finish of a room and republishes; Surface is Ceiling or Baseboard. */

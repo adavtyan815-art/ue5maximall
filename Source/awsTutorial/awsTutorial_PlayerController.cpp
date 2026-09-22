@@ -2199,9 +2199,8 @@ void AAwsTutorial_PlayerController::Server_CommitWall_Implementation(FVector2D S
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		int32 N1 = Manager->AddNode(StartPos);
-		int32 N2 = Manager->AddNode(EndPos);
-		Manager->AddWall(N1, N2, Thickness, Height);
+		// Joined to every wall it crosses or touches, so a partition divides the room it is drawn across.
+		Manager->AddWallBetweenPoints(StartPos, EndPos, Thickness, Height);
 		Manager->ReplicatedRoomJSON = Manager->ExportLayoutToJSON();
 		Manager->OnRep_ReplicatedRoomJSON();
 	}

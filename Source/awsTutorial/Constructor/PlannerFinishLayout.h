@@ -74,6 +74,28 @@ namespace PlannerFinishLayout
 	AWSTUTORIAL_API TArray<FVector2D> OffsetInward(const TArray<FVector2D>& Polygon, const TArray<float>& EdgeOffsets);
 
 	/**
+	 * A room's clear floor outline: every edge moved EdgeOffsets[i] (the half thickness of its wall) toward the interior, as
+	 * OffsetInward, except that where two walls of different thickness continue in line the outline steps (two points) instead of
+	 * running diagonally across the step.
+	 */
+	AWSTUTORIAL_API TArray<FVector2D> InteriorFacePolygon(const TArray<FVector2D>& Polygon, const TArray<float>& EdgeOffsets);
+
+	/** Even-odd point-in-polygon test (points on an edge may count either way). */
+	AWSTUTORIAL_API bool IsPointInPolygon(const FVector2D& Point, const TArray<FVector2D>& Polygon);
+
+	/** A point inside the polygon: its centroid when that lies inside, else the middle of the widest span across it at that height. */
+	AWSTUTORIAL_API FVector2D PolygonInteriorPoint(const TArray<FVector2D>& Polygon);
+
+	/**
+	 * Which stored per-room record (a finish kept by an anchor point) belongs to which room: a record belongs to the smallest room
+	 * whose outline contains its anchor; a record inside no room goes to the nearest room centroid within FallbackRadius that has
+	 * no record yet. Each room gets at most one record (the nearest to its centroid) and each record at most one room, so a finish
+	 * set on one room never shows on another. Returns, per room, the record index or INDEX_NONE.
+	 */
+	AWSTUTORIAL_API TArray<int32> AssignRecordsToRooms(const TArray<FVector2D>& RecordAnchors, const TArray<TArray<FVector2D>>& RoomPolygons,
+		const TArray<FVector2D>& RoomCentroids, float FallbackRadius);
+
+	/**
 	 * Tile grid frame of a room's floor and ceiling: origin at the interior wall-face corner where the longest wall of the room
 	 * starts, U along that wall, V into the room. EdgeHalfThickness[i] is the half thickness of the wall on polygon edge i.
 	 */

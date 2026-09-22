@@ -262,6 +262,14 @@ struct FRoomData
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
 	FVector2D Centroid = FVector2D::ZeroVector;
 
+	/** A point inside the room (its centroid when that lies inside): where the room's finishes are anchored. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	FVector2D InteriorPoint = FVector2D::ZeroVector;
+
+	/** The clear floor outline, along the inner faces of the room's walls (FloorPolygon runs along their centre lines). AreaM2 is its area. */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner")
+	TArray<FVector2D> NetFloorPolygon;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	FString FloorMaterialID = TEXT("DefaultFloor");
 

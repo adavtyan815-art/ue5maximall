@@ -197,12 +197,25 @@ bool FPlannerCatalogTabsFoldedTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Card area folded before a tab is clicked"), Widget->Catalog_Container->GetVisibility() == ESlateVisibility::Collapsed);
 	TestTrue(TEXT("«Интерьер» not highlighted"), Widget->BtnCatalogInterior->GetBackgroundColor().Equals(Widget->InactiveTabColor));
 	TestTrue(TEXT("«Тумбы» not highlighted"), Widget->BtnCatalogCabinets->GetBackgroundColor().Equals(Widget->InactiveTabColor));
-	TestTrue(TEXT("The tab buttons stay available"), Widget->CatalogTabBar == nullptr || Widget->CatalogTabBar->GetVisibility() != ESlateVisibility::Collapsed);
+	// The whole catalog (tabs and cards) is folded until the «Каталог» button opens it.
+	TestFalse(TEXT("Catalog folded when the planner opens"), Widget->IsCatalogOpen());
+	TestTrue(TEXT("Tabs hidden while folded"), Widget->CatalogTabBar == nullptr || Widget->CatalogTabBar->GetVisibility() == ESlateVisibility::Collapsed);
+	UButton* Toggle = Widget->GetCatalogToggleButton();
+	if (!TestNotNull(TEXT("«Каталог» button"), Toggle)) return false;
+	TestTrue(TEXT("«Каталог» button shown in 2D"), Toggle->GetVisibility() == ESlateVisibility::Visible);
+
+	// «Каталог»: the tabs appear, still no tab chosen, so no cards yet.
+	Widget->SetCatalogOpen(true);
+	TestTrue(TEXT("Opened: tabs shown"), Widget->CatalogTabBar == nullptr || Widget->CatalogTabBar->GetVisibility() != ESlateVisibility::Collapsed);
+	TestTrue(TEXT("Opened: no cards before a tab is clicked"), Widget->Catalog_Container->GetVisibility() == ESlateVisibility::Collapsed);
+	TestTrue(TEXT("Opened: the button shows it is on"), Toggle->GetBackgroundColor().Equals(Widget->ActiveTabColor));
 
 	// The same after a 3D round trip.
 	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	TestTrue(TEXT("3D: the «Каталог» button hides"), Toggle->GetVisibility() == ESlateVisibility::Collapsed);
+	TestTrue(TEXT("3D: tabs hidden"), Widget->CatalogTabBar == nullptr || Widget->CatalogTabBar->GetVisibility() == ESlateVisibility::Collapsed);
 	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
-	TestTrue(TEXT("Still folded after 3D and back"), Widget->Catalog_Container->GetVisibility() == ESlateVisibility::Collapsed);
+	TestTrue(TEXT("Still no cards after 3D and back"), Widget->Catalog_Container->GetVisibility() == ESlateVisibility::Collapsed);
 
 	// A click on «Тумбы» opens its cards.
 	Widget->SetActiveCatalogTab(EPlannerPlacementKind::CabinetSet);
@@ -223,6 +236,114 @@ bool FPlannerCatalogTabsFoldedTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Card area hidden in 3D"), Widget->Catalog_Container->GetVisibility() == ESlateVisibility::Collapsed);
 	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
 	TestTrue(TEXT("Card area back in 2D with the chosen tab"), Widget->Catalog_Container->GetVisibility() != ESlateVisibility::Collapsed);
+
+	// «Каталог» again folds everything; once more brings back the tab chosen before, with its cards.
+	Widget->SetCatalogOpen(false);
+	TestTrue(TEXT("Folded again: tabs and cards hidden"), Widget->Catalog_Container->GetVisibility() == ESlateVisibility::Collapsed
+		&& (Widget->CatalogTabBar == nullptr || Widget->CatalogTabBar->GetVisibility() == ESlateVisibility::Collapsed));
+	TestTrue(TEXT("Folded again: the button is off"), !Toggle->GetBackgroundColor().Equals(Widget->ActiveTabColor));
+	Widget->SetCatalogOpen(true);
+	TestTrue(TEXT("Reopened: the chosen tab's cards are back"), Widget->Catalog_Container->GetVisibility() != ESlateVisibility::Collapsed
+		&& Widget->BtnCatalogInterior->GetBackgroundColor().Equals(Widget->ActiveTabColor));
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool row: «Каталог» next to the tools, like them, inside the side panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerToolbarFitsTest, "MaxiMall.Planner.UI.ToolbarFitsPanel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerToolbarFitsTest::RunTest(const FString& Parameters)
+{
+	if (!FSlateApplication::IsInitialized())
+	{
+		AddInfo(TEXT("Skipped: no Slate application."));
+		return true;
+	}
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	if (!Widget) return false;
+	UButton* Toggle = Widget->GetCatalogToggleButton();
+	UWidget* Panel = Widget->WidgetTree ? Widget->WidgetTree->FindWidget(TEXT("LeftPanel")) : nullptr;
+	if (!TestNotNull(TEXT("«Каталог» button"), Toggle) || !TestNotNull(TEXT("BtnPresetRoom"), Widget->BtnPresetRoom.Get())
+		|| !TestNotNull(TEXT("BtnDrawWallTool"), Widget->BtnDrawWallTool.Get()) || !TestNotNull(TEXT("LeftPanel"), Panel)) return false;
+
+	// In the tool row, last, after "4×4 м"; styled like it.
+	UPanelWidget* Row = Toggle->GetParent();
+	TestTrue(TEXT("In the tool row with the other tools"), Cast<UWrapBox>(Row) != nullptr && Widget->BtnPresetRoom->GetParent() == Row && Widget->BtnDrawWallTool->GetParent() == Row);
+	TestTrue(TEXT("After «4×4 м»"), Row && Row->GetChildIndex(Toggle) == Row->GetChildrenCount() - 1);
+	const UTextBlock* Label = Cast<UTextBlock>(Toggle->GetContent());
+	const UTextBlock* PresetLabel = Cast<UTextBlock>(Widget->BtnPresetRoom->GetContent());
+	TestTrue(TEXT("Labelled «Каталог»"), Label && Label->GetText().ToString() == TEXT("Каталог"));
+	TestTrue(TEXT("Same font as the tools"), Label && PresetLabel && Label->GetFont().Size == PresetLabel->GetFont().Size
+		&& Label->GetFont().FontObject == PresetLabel->GetFont().FontObject && Label->GetFont().TypefaceFontName == PresetLabel->GetFont().TypefaceFontName);
+	TestTrue(TEXT("Same button style"), Toggle->GetStyle().Normal.GetResourceObject() == Widget->BtnPresetRoom->GetStyle().Normal.GetResourceObject());
+
+	// All four tools at once (a wall exists, so "Выбрать" shows): nothing runs past the side panel.
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World))
+	{
+		Manager->AddWallBetweenPoints(FVector2D(0., 0.), FVector2D(300., 0.));
+	}
+	const FVector2D ScreenSize(1920.f, 1080.f);
+	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+	const float PanelRight = RightEdge(Panel);
+	const UWidget* Tools[] = { Widget->BtnDrawWallTool.Get(), Widget->BtnSelectTool.Get(), Widget->BtnPresetRoom.Get(), Toggle };
+	for (const UWidget* Tool : Tools)
+	{
+		if (!Tool || Tool->GetVisibility() == ESlateVisibility::Collapsed) continue;
+		TestTrue(FString::Printf(TEXT("%s ends inside the side panel (%.1f <= %.1f)"), *Tool->GetName(), RightEdge(Tool), PanelRight), RightEdge(Tool) <= PanelRight + 0.5f);
+	}
+	TestTrue(TEXT("«Выбрать» shown with a wall"), Widget->BtnSelectTool && Widget->BtnSelectTool->GetVisibility() != ESlateVisibility::Collapsed);
+	const float ToggleHeight = (float)Toggle->GetCachedGeometry().GetLocalSize().Y;
+	const float PresetHeight = (float)Widget->BtnPresetRoom->GetCachedGeometry().GetLocalSize().Y;
+	TestTrue(FString::Printf(TEXT("As tall as the tools (%.1f / %.1f)"), ToggleHeight, PresetHeight), ToggleHeight > 1.f && FMath::IsNearlyEqual(ToggleHeight, PresetHeight, 0.5f));
+
+	FString OutDir;
+	if (FParse::Value(FCommandLine::Get(), TEXT("PlannerSnapshotDir="), OutDir) && FApp::CanEverRender())
+	{
+		Widget->SetCatalogOpen(true);
+		const FString File = FPaths::Combine(OutDir, TEXT("PlannerToolbar.png"));
+		if (SnapshotToPng(Slate.ToSharedRef(), ScreenSize, File)) AddInfo(FString::Printf(TEXT("Toolbar snapshot: %s"), *File));
+	}
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Floor area: the selected room's own
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerSelectedRoomAreaTest, "MaxiMall.Planner.UI.SelectedRoomArea",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerSelectedRoomAreaTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	if (!Widget) return false;
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	UTextBlock* Caption = Widget->WidgetTree ? Cast<UTextBlock>(Widget->WidgetTree->FindWidget(TEXT("TOTALFLOORAREA"))) : nullptr;
+	if (!TestNotNull(TEXT("Manager"), Manager) || !TestNotNull(TEXT("TxtFloorArea"), Widget->TxtFloorArea.Get())) return false;
+
+	// 6 x 4 m divided in two: 2.80 x 3.80 m clear each.
+	Manager->AddWallBetweenPoints(FVector2D(0., 0.), FVector2D(600., 0.));
+	Manager->AddWallBetweenPoints(FVector2D(600., 0.), FVector2D(600., 400.));
+	Manager->AddWallBetweenPoints(FVector2D(600., 400.), FVector2D(0., 400.));
+	Manager->AddWallBetweenPoints(FVector2D(0., 400.), FVector2D(0., 0.));
+	Manager->AddWallBetweenPoints(FVector2D(300., 0.), FVector2D(300., 400.));
+
+	Manager->SelectFloorAtWorldPos(FVector(150., 200., 0.));
+	TestEqual(TEXT("Room picked: its own net area"), Widget->TxtFloorArea->GetText().ToString(), FString(TEXT("10.64 м²")));
+	if (Caption) TestEqual(TEXT("Room picked: the caption says so"), Caption->GetText().ToString(), FString(TEXT("Площадь пола (комната)")));
+
+	Manager->ClearAllSelection();
+	TestEqual(TEXT("Nothing picked: all rooms together"), Widget->TxtFloorArea->GetText().ToString(), FString(TEXT("21.28 м²")));
+	if (Caption) TestEqual(TEXT("Nothing picked: the designed caption"), Caption->GetText().ToString(), FString(TEXT("Площадь пола")));
 	return true;
 }
 

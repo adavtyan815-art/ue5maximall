@@ -38,6 +38,7 @@
 #include "Constructor/PlannerDimensions.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/Guid.h"
+#include "Misc/ScopeExit.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -501,6 +502,107 @@ int32 ARoomPlannerManager::SplitWallSegment(int32 SegmentID, const FVector2D& Sp
 	return JunctionNodeID;
 }
 
+int32 ARoomPlannerManager::AddWallBetweenPoints(const FVector2D& StartPos, const FVector2D& EndPos, float Thickness, float Height)
+{
+	const int32 N1 = AddNode(StartPos);
+	const int32 N2 = AddNode(EndPos);
+	if (N1 == INDEX_NONE || N2 == INDEX_NONE || N1 == N2) return -1;
+	const FVector2D A = Nodes[N1].Position;
+	const FVector2D B = Nodes[N2].Position;
+	const float Len = FVector2D::Distance(A, B);
+	if (Len < 1.f) return -1;
+	const FVector2D Dir = (B - A) / Len;
+	auto Cross = [](const FVector2D& U, const FVector2D& V) { return (double)U.X * V.Y - (double)U.Y * V.X; };
+
+	// Where the new wall must join the plan, by distance along it: a node at each such point.
+	TArray<TPair<float, int32>> Stops;
+	auto HasStop = [&Stops](int32 NodeID) { return Stops.ContainsByPredicate([NodeID](const TPair<float, int32>& S) { return S.Value == NodeID; }); };
+
+	// 1. Walls it crosses: split there (both walls meet at a new corner).
+	struct FCrossing { int32 SegID; FVector2D Point; float T; };
+	TArray<FCrossing> Crossings;
+	for (const TPair<int32, FWallSegment>& Pair : WallSegments)
+	{
+		const FWallSegment& Seg = Pair.Value;
+		if (Seg.StartNodeID == N1 || Seg.EndNodeID == N1 || Seg.StartNodeID == N2 || Seg.EndNodeID == N2) continue;
+		const FWallNode* S0 = Nodes.Find(Seg.StartNodeID);
+		const FWallNode* S1 = Nodes.Find(Seg.EndNodeID);
+		if (!S0 || !S1) continue;
+		const FVector2D Edge = S1->Position - S0->Position;
+		const double SegLen = Edge.Size();
+		const double Denom = Cross(Dir, Edge);
+		if (SegLen < 1.0 || FMath::Abs(Denom) < 1.e-6 * SegLen) continue; // parallel
+		const FVector2D ToS0 = S0->Position - A;
+		const double T = Cross(ToS0, Edge) / Denom;          // along the new wall
+		const double U = Cross(ToS0, Dir) / Denom * SegLen;  // along the crossed wall
+		if (T > 1.0 && T < Len - 1.0 && U > 1.0 && U < SegLen - 1.0)
+		{
+			Crossings.Add({ Pair.Key, A + Dir * (float)T, (float)T });
+		}
+	}
+	for (const FCrossing& Crossing : Crossings)
+	{
+		const int32 Junction = SplitWallSegment(Crossing.SegID, Crossing.Point);
+		if (Junction != INDEX_NONE) Stops.Add(TPair<float, int32>(Crossing.T, Junction));
+	}
+
+	// 2. Corners it passes over, and free wall ends stopping against it (drawn onto it, as a corner dragged there would be).
+	TArray<int32> NodeIDs;
+	Nodes.GetKeys(NodeIDs);
+	bool bPulledAny = false;
+	for (int32 NodeID : NodeIDs)
+	{
+		if (NodeID == N1 || NodeID == N2 || HasStop(NodeID)) continue;
+		const FWallNode& Node = Nodes[NodeID];
+		const float T = FVector2D::DotProduct(Node.Position - A, Dir);
+		const float Dist = FVector2D::Distance(Node.Position, A + Dir * T);
+		if (T > 1.f && T < Len - 1.f && Dist <= 1.f)
+		{
+			Stops.Add(TPair<float, int32>(T, NodeID));
+			continue;
+		}
+		if (Node.ConnectedSegmentIDs.Num() != 1 || T < 20.f || T > Len - 20.f || Dist > Thickness * 0.5f + 20.f) continue;
+		// Only a wall that runs into the new one (not along it), and not the stub left beyond a crossing just split above.
+		const FWallSegment* Own = WallSegments.Find(Node.ConnectedSegmentIDs[0]);
+		if (!Own) continue;
+		const int32 OtherEnd = (Own->StartNodeID == NodeID) ? Own->EndNodeID : Own->StartNodeID;
+		const FWallNode* Other = Nodes.Find(OtherEnd);
+		if (!Other || HasStop(OtherEnd)) continue;
+		const FVector2D OwnDir = (Node.Position - Other->Position).GetSafeNormal();
+		if (FMath::Abs(Cross(Dir, OwnDir)) < 0.5) continue;
+		FString Refusal;
+		if (!CanMoveNode(NodeID, A + Dir * T, Refusal)) continue; // an optional join: no message when it cannot be made
+		if (ApplyNodeMove(NodeID, A + Dir * T, true))
+		{
+			Stops.Add(TPair<float, int32>(T, NodeID));
+			bPulledAny = true;
+		}
+	}
+
+	// 3. The wall itself, one piece between consecutive stops.
+	Stops.Sort([](const TPair<float, int32>& L, const TPair<float, int32>& R) { return L.Key < R.Key; });
+	int32 FirstPiece = -1;
+	int32 From = N1;
+	Stops.Add(TPair<float, int32>(Len, N2));
+	for (const TPair<float, int32>& Stop : Stops)
+	{
+		if (Stop.Value == From || !Nodes.Contains(From) || !Nodes.Contains(Stop.Value)) continue;
+		if (FVector2D::Distance(Nodes[From].Position, Nodes[Stop.Value].Position) < 1.f)
+		{
+			MergeNodeInto(Stop.Value, From); // two stops at one point: one corner, no zero-length wall
+			continue;
+		}
+		const int32 Piece = AddWall(From, Stop.Value, Thickness, Height);
+		if (FirstPiece == -1) FirstPiece = Piece;
+		From = Stop.Value;
+	}
+	if (bPulledAny && HasAuthority())
+	{
+		RefreshWallAttachedPlacements(); // items hung on a pulled wall follow it
+	}
+	return FirstPiece;
+}
+
 int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thickness, float Height)
 {
 	if (StartNodeID == EndNodeID || !Nodes.Contains(StartNodeID) || !Nodes.Contains(EndNodeID))
@@ -582,6 +684,7 @@ bool ARoomPlannerManager::AddOpeningToWall(int32 SegmentID, EOpeningType Type, f
 	}
 
 	RebuildAllWalls();
+	RebuildRooms(); // floor thresholds and baseboard gaps follow the openings
 	return true;
 }
 
@@ -882,6 +985,15 @@ void ARoomPlannerManager::RebuildAllWalls()
 	{
 		return; // ImportLayoutFromJSON rebuilds once when every wall and opening exists
 	}
+	// Baseboards stop at doors and archways: rebuild them with the walls, so a moved, resized, added or removed opening moves its
+	// gap with it (RebuildRooms does this itself, at its end).
+	ON_SCOPE_EXIT
+	{
+		if (!bRebuildingRooms && BaseboardDefaultMaterial && Rooms.Num() > 0)
+		{
+			RebuildBaseboards(BaseboardDefaultMaterial);
+		}
+	};
 
 	ComputeAllCornerJoints();
 	ComputeWallFaceUVFrames();
@@ -970,6 +1082,7 @@ void ARoomPlannerManager::RebuildRooms()
 		return; // ImportLayoutFromJSON rebuilds once when every wall and opening exists
 	}
 
+	TGuardValue<bool> RebuildingRooms(bRebuildingRooms, true);
 	Rooms.Empty();
 	bRoomLightsDirty = true; // every exit below (including "no closed room") must refresh the room lights
 	bExteriorBackdropDirty = true; // the enclosure follows the layout bounds
@@ -1081,6 +1194,73 @@ void ARoomPlannerManager::RebuildRooms()
 	};
 
 	TArray<TArray<FVector2D>> DetectedRoomPolygons;
+	RoomGroupOutlines.Reset();
+
+	// One traced loop of nodes: a room when it runs clockwise, the outline around a group of joined rooms when counter-clockwise.
+	auto ConsiderLoop = [&](const TArray<int32>& Loop)
+	{
+		TArray<FVector2D> Poly;
+		for (int32 NodeID : Loop)
+		{
+			if (Nodes.Contains(NodeID))
+			{
+				Poly.Add(Nodes[NodeID].Position);
+			}
+		}
+
+		// Clean consecutive duplicate vertices
+		TArray<FVector2D> CleanPoly;
+		for (int32 i = 0; i < Poly.Num(); ++i)
+		{
+			const FVector2D& P = Poly[i];
+			if (CleanPoly.Num() == 0 || FVector2D::DistSquared(P, CleanPoly.Last()) > 1.0f)
+			{
+				CleanPoly.Add(P);
+			}
+		}
+		if (CleanPoly.Num() >= 3 && FVector2D::DistSquared(CleanPoly[0], CleanPoly.Last()) < 1.0f)
+		{
+			CleanPoly.Pop();
+		}
+		if (CleanPoly.Num() < 3) return;
+
+		// Shoelace Formula for signed area
+		float TwiceArea = 0.f;
+		const int32 N = CleanPoly.Num();
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector2D& P1 = CleanPoly[i];
+			const FVector2D& P2 = CleanPoly[(i + 1) % N];
+			TwiceArea += (P1.X * P2.Y - P2.X * P1.Y);
+		}
+
+		// Bounding box size validation
+		FVector2D MinP = CleanPoly[0];
+		FVector2D MaxP = CleanPoly[0];
+		for (const FVector2D& Pt : CleanPoly)
+		{
+			MinP.X = FMath::Min(MinP.X, Pt.X);
+			MinP.Y = FMath::Min(MinP.Y, Pt.Y);
+			MaxP.X = FMath::Max(MaxP.X, Pt.X);
+			MaxP.Y = FMath::Max(MaxP.Y, Pt.Y);
+		}
+		if (MaxP.X - MinP.X < 25.f || MaxP.Y - MinP.Y < 25.f) return;
+
+		// Walking on to the next edge counter-clockwise from the way back traces every bounded face (a room) clockwise and the
+		// outline around a whole group of rooms counter-clockwise. Keep the rooms, turned counter-clockwise (interior on the left,
+		// as everything below expects) and starting at the same corner as before. A single room gives both with the same outline,
+		// which hid that only the outer outline had been kept: a layout divided into rooms came out as one room over all of them.
+		if (TwiceArea < -500.0f)
+		{
+			Algo::Reverse(CleanPoly);
+			CleanPoly.Insert(CleanPoly.Pop(), 0);
+			DetectedRoomPolygons.Add(CleanPoly);
+		}
+		else if (TwiceArea > 500.0f)
+		{
+			RoomGroupOutlines.Add(CleanPoly);
+		}
+	};
 
 	// 6. Trace all closed faces using the Left-Turn rule
 	for (const auto& NodePair : OutgoingEdges)
@@ -1148,67 +1328,30 @@ void ARoomPlannerManager::RebuildRooms()
 				}
 			}
 
-			// Validate simple cycle (no duplicate vertices in face circuit)
 			if (bValidFace && FaceCycle.Num() >= 3)
 			{
-				TSet<int32> UniqueNodes(FaceCycle);
-				if (UniqueNodes.Num() != FaceCycle.Num())
-				{
-					continue; // Discard non-simple / self-intersecting loops
-				}
-
-				TArray<FVector2D> Poly;
+				// A face that passes a node twice (a room with a closed loop inside it joined to it by one wall, or a closet touching it
+				// at a single corner) is split there into simple loops: the room itself, the loop around what it encloses, and the way
+				// along the joining wall and back (two nodes, dropped).
+				TArray<TArray<int32>> Loops;
+				TArray<int32> Walk;
 				for (int32 NodeID : FaceCycle)
 				{
-					if (Nodes.Contains(NodeID))
+					const int32 Earlier = Walk.Find(NodeID);
+					if (Earlier != INDEX_NONE)
 					{
-						Poly.Add(Nodes[NodeID].Position);
+						Loops.Add(TArray<int32>(Walk.GetData() + Earlier, Walk.Num() - Earlier));
+						Walk.SetNum(Earlier + 1);
+					}
+					else
+					{
+						Walk.Add(NodeID);
 					}
 				}
-
-				// Clean consecutive duplicate vertices
-				TArray<FVector2D> CleanPoly;
-				for (int32 i = 0; i < Poly.Num(); ++i)
+				Loops.Add(Walk);
+				for (const TArray<int32>& Loop : Loops)
 				{
-					const FVector2D& P = Poly[i];
-					if (CleanPoly.Num() == 0 || FVector2D::DistSquared(P, CleanPoly.Last()) > 1.0f)
-					{
-						CleanPoly.Add(P);
-					}
-				}
-				if (CleanPoly.Num() >= 3 && FVector2D::DistSquared(CleanPoly[0], CleanPoly.Last()) < 1.0f)
-				{
-					CleanPoly.Pop();
-				}
-
-				if (CleanPoly.Num() >= 3)
-				{
-					// Shoelace Formula for signed area
-					float TwiceArea = 0.f;
-					int32 N = CleanPoly.Num();
-					for (int32 i = 0; i < N; ++i)
-					{
-						const FVector2D& P1 = CleanPoly[i];
-						const FVector2D& P2 = CleanPoly[(i + 1) % N];
-						TwiceArea += (P1.X * P2.Y - P2.X * P1.Y);
-					}
-
-					// Bounding box size validation
-					FVector2D MinP = CleanPoly[0];
-					FVector2D MaxP = CleanPoly[0];
-					for (const FVector2D& Pt : CleanPoly)
-					{
-						MinP.X = FMath::Min(MinP.X, Pt.X);
-						MinP.Y = FMath::Min(MinP.Y, Pt.Y);
-						MaxP.X = FMath::Max(MaxP.X, Pt.X);
-						MaxP.Y = FMath::Max(MaxP.Y, Pt.Y);
-					}
-
-					// TwiceArea > 0 means CCW interior room face (TwiceArea < 0 is outer perimeter)
-					if (TwiceArea > 500.0f && (MaxP.X - MinP.X >= 25.f) && (MaxP.Y - MinP.Y >= 25.f))
-					{
-						DetectedRoomPolygons.Add(CleanPoly);
-					}
+					if (Loop.Num() >= 3) ConsiderLoop(Loop);
 				}
 			}
 		}
@@ -1257,8 +1400,155 @@ void ARoomPlannerManager::RebuildRooms()
 		return ((b1 == b2) && (b2 == b3));
 	};
 
-	// Corner joints decide where walls cut their door holes (baseboards are interrupted over the same span).
+	// Corner joints decide where walls cut their door holes (baseboards and floor thresholds follow the same span).
 	ComputeAllCornerJoints();
+
+	// Ear clipping of a simple polygon (either orientation handled by the caller); indices reversed for Unreal's front faces.
+	auto EarClip = [&IsPointInTriangle](const TArray<FVector2D>& Poly)
+	{
+		TArray<int32> Indices;
+		for (int32 i = 0; i < Poly.Num(); ++i) Indices.Add(i);
+		TArray<int32> Out;
+		int32 IterationCount = 0;
+		while (Indices.Num() > 3 && IterationCount < 1000)
+		{
+			IterationCount++;
+			bool bEarFound = false;
+			for (int32 i = 0; i < Indices.Num(); ++i)
+			{
+				const int32 PrevIdx = (i == 0) ? Indices.Num() - 1 : i - 1;
+				const int32 NextIdx = (i == Indices.Num() - 1) ? 0 : i + 1;
+				const int32 V0 = Indices[PrevIdx];
+				const int32 V1 = Indices[i];
+				const int32 V2 = Indices[NextIdx];
+				const FVector2D& P0 = Poly[V0];
+				const FVector2D& P1 = Poly[V1];
+				const FVector2D& P2 = Poly[V2];
+				const float Cross = (P1.X - P0.X) * (P2.Y - P1.Y) - (P1.Y - P0.Y) * (P2.X - P1.X);
+				if (Cross >= -0.01f)
+				{
+					bool bValid = true;
+					for (int32 j = 0; j < Indices.Num(); ++j)
+					{
+						if (j == PrevIdx || j == i || j == NextIdx) continue;
+						if (IsPointInTriangle(Poly[Indices[j]], P0, P1, P2))
+						{
+							bValid = false;
+							break;
+						}
+					}
+					if (bValid)
+					{
+						Out.Add(V0);
+						Out.Add(V1);
+						Out.Add(V2);
+						Indices.RemoveAt(i);
+						bEarFound = true;
+						break;
+					}
+				}
+			}
+			if (!bEarFound)
+			{
+				Out.Add(Indices[0]);
+				Out.Add(Indices[1]);
+				Out.Add(Indices[2]);
+				Indices.RemoveAt(1);
+			}
+		}
+		if (Indices.Num() == 3)
+		{
+			Out.Add(Indices[0]);
+			Out.Add(Indices[1]);
+			Out.Add(Indices[2]);
+		}
+		Algo::Reverse(Out); // clockwise front faces in Unreal
+		return Out;
+	};
+
+	// Per room: its centroid, a point surely inside it, and which stored floor / ceiling / baseboard finish belongs to it. A record
+	// belongs to the room containing its anchor, and to that room only, so a finish set on one room never shows on its neighbour.
+	TArray<FVector2D> RoomCentroids;
+	TArray<FVector2D> RoomInteriorPoints;
+	for (const TArray<FVector2D>& Poly : DetectedRoomPolygons)
+	{
+		double TwiceArea = 0.0, Cx = 0.0, Cy = 0.0;
+		for (int32 i = 0; i < Poly.Num(); ++i)
+		{
+			const FVector2D& P1 = Poly[i];
+			const FVector2D& P2 = Poly[(i + 1) % Poly.Num()];
+			const double Cross = (double)P1.X * P2.Y - (double)P2.X * P1.Y;
+			TwiceArea += Cross;
+			Cx += (P1.X + P2.X) * Cross;
+			Cy += (P1.Y + P2.Y) * Cross;
+		}
+		FVector2D Centroid = FVector2D::ZeroVector;
+		if (FMath::Abs(TwiceArea) > KINDA_SMALL_NUMBER)
+		{
+			Centroid = FVector2D((float)(Cx / (3.0 * TwiceArea)), (float)(Cy / (3.0 * TwiceArea)));
+		}
+		else
+		{
+			for (const FVector2D& P : Poly) Centroid += P;
+			Centroid /= (float)FMath::Max(1, Poly.Num());
+		}
+		RoomCentroids.Add(Centroid);
+		RoomInteriorPoints.Add(PlannerFinishLayout::PolygonInteriorPoint(Poly));
+	}
+	// A room around a smaller room (standing inside it) may have its centroid inside the smaller one: its anchor must be a point that
+	// is found as this room (the smallest room around it), or its finishes would land on the inner room.
+	auto SmallestRoomAround = [&DetectedRoomPolygons](const FVector2D& P)
+	{
+		int32 Best = INDEX_NONE;
+		double BestArea = TNumericLimits<double>::Max();
+		for (int32 i = 0; i < DetectedRoomPolygons.Num(); ++i)
+		{
+			if (!PlannerFinishLayout::IsPointInPolygon(P, DetectedRoomPolygons[i])) continue;
+			const double Area = FMath::Abs(PlannerFinishLayout::SignedArea(DetectedRoomPolygons[i]));
+			if (Area < BestArea)
+			{
+				BestArea = Area;
+				Best = i;
+			}
+		}
+		return Best;
+	};
+	for (int32 i = 0; i < DetectedRoomPolygons.Num(); ++i)
+	{
+		if (SmallestRoomAround(RoomInteriorPoints[i]) == i) continue;
+		const TArray<FVector2D>& Poly = DetectedRoomPolygons[i];
+		bool bFound = false;
+		for (const float Inset : { 30.f, 60.f, 100.f })
+		{
+			for (int32 Edge = 0; Edge < Poly.Num() && !bFound; ++Edge)
+			{
+				const FVector2D Candidate = (Poly[Edge] + Poly[(Edge + 1) % Poly.Num()]) * 0.5f + PlannerFinishLayout::InwardEdgeNormal(Poly, Edge) * Inset;
+				if (SmallestRoomAround(Candidate) == i)
+				{
+					RoomInteriorPoints[i] = Candidate;
+					bFound = true;
+				}
+			}
+			if (bFound) break;
+		}
+	}
+
+	auto AnchorsOf = [](const TArray<FFloorFinishRecord>& Records)
+	{
+		TArray<FVector2D> Anchors;
+		for (const FFloorFinishRecord& Rec : Records) Anchors.Add(Rec.Anchor);
+		return Anchors;
+	};
+	const TArray<int32> FloorRecordOfRoom = PlannerFinishLayout::AssignRecordsToRooms(AnchorsOf(FloorFinishes), DetectedRoomPolygons, RoomCentroids, 100.f);
+	const TArray<int32> CeilingRecordOfRoom = PlannerFinishLayout::AssignRecordsToRooms(AnchorsOf(CeilingFinishes), DetectedRoomPolygons, RoomCentroids, 100.f);
+	const TArray<int32> BaseboardRecordOfRoom = PlannerFinishLayout::AssignRecordsToRooms(AnchorsOf(BaseboardFinishes), DetectedRoomPolygons, RoomCentroids, 100.f);
+	// Each record follows its room (moved walls reshape rooms step by step; the anchor stays inside the room it belongs to).
+	for (int32 i = 0; i < DetectedRoomPolygons.Num(); ++i)
+	{
+		if (FloorFinishes.IsValidIndex(FloorRecordOfRoom[i])) FloorFinishes[FloorRecordOfRoom[i]].Anchor = RoomInteriorPoints[i];
+		if (CeilingFinishes.IsValidIndex(CeilingRecordOfRoom[i])) CeilingFinishes[CeilingRecordOfRoom[i]].Anchor = RoomInteriorPoints[i];
+		if (BaseboardFinishes.IsValidIndex(BaseboardRecordOfRoom[i])) BaseboardFinishes[BaseboardRecordOfRoom[i]].Anchor = RoomInteriorPoints[i];
+	}
 
 	// 6. Generate Procedural Meshes for every detected room
 	for (int32 RoomIdx = 0; RoomIdx < DetectedRoomPolygons.Num(); ++RoomIdx)
@@ -1281,44 +1571,21 @@ void ARoomPlannerManager::RebuildRooms()
 		Room.FloorPolygon = FloorPolygon;
 		Room.AreaM2 = TwiceArea * 0.5f / 10000.f;
 
-		// Polygon centroid (area weighted) — the stable key for floor finishes across rebuilds.
-		{
-			double Cx = 0.0, Cy = 0.0;
-			for (int32 i = 0; i < VertCount; ++i)
-			{
-				const FVector2D& P1 = FloorPolygon[i];
-				const FVector2D& P2 = FloorPolygon[(i + 1) % VertCount];
-				const double Cross = (double)P1.X * P2.Y - (double)P2.X * P1.Y;
-				Cx += (P1.X + P2.X) * Cross;
-				Cy += (P1.Y + P2.Y) * Cross;
-			}
-			if (FMath::Abs(TwiceArea) > KINDA_SMALL_NUMBER)
-			{
-				Room.Centroid = FVector2D((float)(Cx / (3.0 * TwiceArea)), (float)(Cy / (3.0 * TwiceArea)));
-			}
-			else
-			{
-				FVector2D Sum = FVector2D::ZeroVector;
-				for (const FVector2D& P : FloorPolygon) Sum += P;
-				Room.Centroid = Sum / (float)VertCount;
-			}
-		}
-		if (const FFloorFinishRecord* Rec = FindFloorFinishRecord(Room.Centroid))
-		{
-			Room.FloorFinish = Rec->Finish;
-		}
-		if (const FFloorFinishRecord* Rec = FindRoomFinishRecord(CeilingFinishes, Room.Centroid))
-		{
-			Room.CeilingFinish = Rec->Finish;
-		}
-		if (const FFloorFinishRecord* Rec = FindRoomFinishRecord(BaseboardFinishes, Room.Centroid))
-		{
-			Room.BaseboardFinish = Rec->Finish;
-		}
+		// Centroid (the key finishes were stored by before), interior point, and this room's own finish records.
+		Room.Centroid = RoomCentroids[RoomIdx];
+		Room.InteriorPoint = RoomInteriorPoints[RoomIdx];
+		if (FloorFinishes.IsValidIndex(FloorRecordOfRoom[RoomIdx])) Room.FloorFinish = FloorFinishes[FloorRecordOfRoom[RoomIdx]].Finish;
+		if (CeilingFinishes.IsValidIndex(CeilingRecordOfRoom[RoomIdx])) Room.CeilingFinish = CeilingFinishes[CeilingRecordOfRoom[RoomIdx]].Finish;
+		if (BaseboardFinishes.IsValidIndex(BaseboardRecordOfRoom[RoomIdx])) Room.BaseboardFinish = BaseboardFinishes[BaseboardRecordOfRoom[RoomIdx]].Finish;
 
-		// Half thickness of the wall on each outline edge (the floor / ceiling tile grid starts at the interior wall-face corner).
+		// Half thickness of the wall on each outline edge (the floor / ceiling tile grid starts at the interior wall-face corner), and
+		// which wall that is (thresholds of its doors belong to the floor).
 		TArray<float> EdgeHalfThickness;
 		EdgeHalfThickness.Init(10.f, VertCount);
+		TArray<int32> EdgeSegment;
+		EdgeSegment.Init(INDEX_NONE, VertCount);
+		TArray<bool> EdgeForward;
+		EdgeForward.Init(true, VertCount);
 		for (int32 i = 0; i < VertCount; ++i)
 		{
 			const FVector2D P1 = FloorPolygon[i];
@@ -1332,83 +1599,29 @@ void ARoomPlannerManager::RebuildRooms()
 				const bool bBackward = SegStart->Position.Equals(P2, 0.5f) && SegEnd->Position.Equals(P1, 0.5f);
 				if (!bForward && !bBackward) continue;
 				EdgeHalfThickness[i] = SegPair.Value.Thickness * 0.5f;
+				EdgeSegment[i] = SegPair.Key;
+				EdgeForward[i] = bForward;
 				break;
 			}
 		}
 
 		// Floor / ceiling tile grid of this room: from a corner of its interior wall faces along its longest wall; metric UVs (REQ-13).
 		PlannerFinishLayout::ComputeRoomSurfaceFrame(FloorPolygon, EdgeHalfThickness, Room.SurfaceUVOrigin, Room.SurfaceUVAxisU, Room.SurfaceUVAxisV);
+
+		// The room's own floor: its clear area, out to the inner faces of its walls (not under them, so neighbouring rooms' floors never
+		// overlap), and its net area.
+		Room.NetFloorPolygon = PlannerFinishLayout::InteriorFacePolygon(FloorPolygon, EdgeHalfThickness);
+		Room.AreaM2 = (float)(FMath::Abs(PlannerFinishLayout::SignedArea(Room.NetFloorPolygon)) / 10000.0);
 		auto SurfaceUV = [&Room](const FVector2D& P)
 		{
 			return PlannerFinishLayout::RoomSurfaceUV(P, Room.SurfaceUVOrigin, Room.SurfaceUVAxisU, Room.SurfaceUVAxisV);
 		};
 		Rooms.Add(Room.RoomID, Room);
 
-		// Ear Clipping Triangulation
-		TArray<int32> Indices;
-		for (int32 i = 0; i < VertCount; ++i) Indices.Add(i);
-
-		TArray<int32> TriangulatedIndices;
-		int32 IterationCount = 0;
-		while (Indices.Num() > 3 && IterationCount < 1000)
-		{
-			IterationCount++;
-			bool bEarFound = false;
-			for (int32 i = 0; i < Indices.Num(); ++i)
-			{
-				int32 PrevIdx = (i == 0) ? Indices.Num() - 1 : i - 1;
-				int32 NextIdx = (i == Indices.Num() - 1) ? 0 : i + 1;
-
-				int32 V0 = Indices[PrevIdx];
-				int32 V1 = Indices[i];
-				int32 V2 = Indices[NextIdx];
-
-				const FVector2D& P0 = FloorPolygon[V0];
-				const FVector2D& P1 = FloorPolygon[V1];
-				const FVector2D& P2 = FloorPolygon[V2];
-
-				float Cross = (P1.X - P0.X) * (P2.Y - P1.Y) - (P1.Y - P0.Y) * (P2.X - P1.X);
-				if (Cross >= -0.01f)
-				{
-					bool bValid = true;
-					for (int32 j = 0; j < Indices.Num(); ++j)
-					{
-						if (j == PrevIdx || j == i || j == NextIdx) continue;
-						if (IsPointInTriangle(FloorPolygon[Indices[j]], P0, P1, P2))
-						{
-							bValid = false;
-							break;
-						}
-					}
-
-					if (bValid)
-					{
-						TriangulatedIndices.Add(V0);
-						TriangulatedIndices.Add(V1);
-						TriangulatedIndices.Add(V2);
-						Indices.RemoveAt(i);
-						bEarFound = true;
-						break;
-					}
-				}
-			}
-			if (!bEarFound) 
-			{
-				TriangulatedIndices.Add(Indices[0]);
-				TriangulatedIndices.Add(Indices[1]);
-				TriangulatedIndices.Add(Indices[2]);
-				Indices.RemoveAt(1);
-			}
-		}
-		if (Indices.Num() == 3)
-		{
-			TriangulatedIndices.Add(Indices[0]);
-			TriangulatedIndices.Add(Indices[1]);
-			TriangulatedIndices.Add(Indices[2]);
-		}
-
-		// Reverse for Clockwise front-face rendering in Unreal
-		Algo::Reverse(TriangulatedIndices);
+		// Triangles of the centre-line outline (the ceiling) and of the clear floor outline.
+		const TArray<int32> TriangulatedIndices = EarClip(FloorPolygon);
+		const TArray<FVector2D>& NetPolygon = Room.NetFloorPolygon;
+		const TArray<int32> NetIndices = EarClip(NetPolygon);
 
 		// 6.1. Generate Floor Mesh Section
 		if (FloorProceduralMesh)
@@ -1419,37 +1632,39 @@ void ARoomPlannerManager::RebuildRooms()
 			TArray<FVector2D> UVs;
 			TArray<FColor> FloorColors;
 
+			const int32 NetCount = NetPolygon.Num();
+
 			// Top face (Z=1.f)
-			for (int32 i = 0; i < VertCount; ++i)
+			for (int32 i = 0; i < NetCount; ++i)
 			{
-				Vertices.Add(FVector(FloorPolygon[i].X, FloorPolygon[i].Y, 1.f));
+				Vertices.Add(FVector(NetPolygon[i].X, NetPolygon[i].Y, 1.f));
 				Normals.Add(FVector::UpVector);
-				UVs.Add(SurfaceUV(FloorPolygon[i]));
+				UVs.Add(SurfaceUV(NetPolygon[i]));
 				FloorColors.Add(FColor(255, 255, 255, 255));
 			}
-			Triangles = TriangulatedIndices;
+			Triangles = NetIndices;
 
 			// Bottom face (Z=0.f)
 			int32 StartIdx = Vertices.Num();
-			for (int32 i = 0; i < VertCount; ++i)
+			for (int32 i = 0; i < NetCount; ++i)
 			{
-				Vertices.Add(FVector(FloorPolygon[i].X, FloorPolygon[i].Y, 0.f));
+				Vertices.Add(FVector(NetPolygon[i].X, NetPolygon[i].Y, 0.f));
 				Normals.Add(-FVector::UpVector);
-				UVs.Add(SurfaceUV(FloorPolygon[i]));
+				UVs.Add(SurfaceUV(NetPolygon[i]));
 				FloorColors.Add(FColor(255, 255, 255, 255));
 			}
-			for (int32 i = 0; i < TriangulatedIndices.Num(); i += 3)
+			for (int32 i = 0; i < NetIndices.Num(); i += 3)
 			{
-				Triangles.Add(StartIdx + TriangulatedIndices[i]);
-				Triangles.Add(StartIdx + TriangulatedIndices[i + 2]);
-				Triangles.Add(StartIdx + TriangulatedIndices[i + 1]);
+				Triangles.Add(StartIdx + NetIndices[i]);
+				Triangles.Add(StartIdx + NetIndices[i + 2]);
+				Triangles.Add(StartIdx + NetIndices[i + 1]);
 			}
 
 			// Side faces for 1cm thickness
-			for (int32 i = 0; i < VertCount; ++i)
+			for (int32 i = 0; i < NetCount; ++i)
 			{
-				FVector2D P1 = FloorPolygon[i];
-				FVector2D P2 = FloorPolygon[(i + 1) % VertCount];
+				FVector2D P1 = NetPolygon[i];
+				FVector2D P2 = NetPolygon[(i + 1) % NetCount];
 				FVector2D EdgeDir = (P2 - P1).GetSafeNormal();
 				FVector2D EdgeNorm(EdgeDir.Y, -EdgeDir.X);
 				FVector OutNormal(EdgeNorm.X, EdgeNorm.Y, 0.f);
@@ -1459,11 +1674,52 @@ void ARoomPlannerManager::RebuildRooms()
 				Vertices.Add(FVector(P1.X, P1.Y, 0.f));
 				Vertices.Add(FVector(P1.X, P1.Y, 1.f));
 				Vertices.Add(FVector(P2.X, P2.Y, 1.f));
-				
+
 				for(int k=0; k<4; k++) { Normals.Add(OutNormal); UVs.Add(FVector2D::ZeroVector); FloorColors.Add(FColor(255, 255, 255, 255)); }
-				
+
 				Triangles.Add(SIdx + 0); Triangles.Add(SIdx + 1); Triangles.Add(SIdx + 2);
 				Triangles.Add(SIdx + 0); Triangles.Add(SIdx + 2); Triangles.Add(SIdx + 3);
+			}
+
+			// Thresholds: through a door or archway the floor runs on from the inner face to the middle of its wall, where the next
+			// room's floor (or the outside) begins.
+			for (int32 i = 0; i < VertCount; ++i)
+			{
+				if (EdgeSegment[i] == INDEX_NONE) continue;
+				TArray<FVector2D> Spans;
+				GetWalkThroughSpans(EdgeSegment[i], Spans);
+				if (Spans.Num() == 0) continue;
+				const FVector2D E1 = FloorPolygon[i];
+				const FVector2D E2 = FloorPolygon[(i + 1) % VertCount];
+				const float EdgeLen = FVector2D::Distance(E1, E2);
+				if (EdgeLen < 1.f) continue;
+				const FVector2D EdgeDir = (E2 - E1) / EdgeLen;
+				const FVector2D Inward = PlannerFinishLayout::InwardEdgeNormal(FloorPolygon, i) * EdgeHalfThickness[i];
+				for (const FVector2D& Span : Spans)
+				{
+					const float A0 = FMath::Clamp(EdgeForward[i] ? (float)Span.X : EdgeLen - (float)Span.Y, 0.f, EdgeLen);
+					const float A1 = FMath::Clamp(EdgeForward[i] ? (float)Span.Y : EdgeLen - (float)Span.X, A0, EdgeLen);
+					if (A1 - A0 < 1.f) continue;
+					const FVector2D Q[4] = { E1 + EdgeDir * A0, E1 + EdgeDir * A1, E1 + EdgeDir * A1 + Inward, E1 + EdgeDir * A0 + Inward };
+					const int32 TopIdx = Vertices.Num();
+					for (int32 k = 0; k < 4; ++k)
+					{
+						Vertices.Add(FVector(Q[k].X, Q[k].Y, 1.f));
+						Normals.Add(FVector::UpVector);
+						UVs.Add(SurfaceUV(Q[k]));
+						FloorColors.Add(FColor(255, 255, 255, 255));
+					}
+					Triangles.Append({ TopIdx + 2, TopIdx + 1, TopIdx + 0, TopIdx + 3, TopIdx + 2, TopIdx + 0 });
+					const int32 BottomIdx = Vertices.Num();
+					for (int32 k = 0; k < 4; ++k)
+					{
+						Vertices.Add(FVector(Q[k].X, Q[k].Y, 0.f));
+						Normals.Add(-FVector::UpVector);
+						UVs.Add(SurfaceUV(Q[k]));
+						FloorColors.Add(FColor(255, 255, 255, 255));
+					}
+					Triangles.Append({ BottomIdx + 0, BottomIdx + 1, BottomIdx + 2, BottomIdx + 0, BottomIdx + 2, BottomIdx + 3 });
+				}
 			}
 
 			FloorProceduralMesh->CreateMeshSection(RoomIdx, Vertices, Triangles, Normals, UVs, FloorColors, TArray<FProcMeshTangent>(), true);
@@ -1572,7 +1828,8 @@ void ARoomPlannerManager::RebuildRooms()
 
 	// 6.3. Baseboards: along every wall face that looks into a room. Walls that close no room (partitions ending inside a room,
 	// free-standing walls) are pruned from the room outlines above, so baseboards follow the walls themselves (REQ-13).
-	RebuildBaseboards(BbMatInst ? static_cast<UMaterialInterface*>(BbMatInst) : BaseMat);
+	BaseboardDefaultMaterial = BbMatInst ? static_cast<UMaterialInterface*>(BbMatInst) : BaseMat;
+	RebuildBaseboards(BaseboardDefaultMaterial);
 
 	if (FloorProceduralMesh) FloorProceduralMesh->SetVisibility(true);
 	if (CeilingProceduralMesh) CeilingProceduralMesh->SetVisibility(bCeilingVisible && !b2DViewMode);
@@ -1631,7 +1888,7 @@ FSurfaceFinish ARoomPlannerManager::FinishFromJson(const TSharedPtr<FJsonObject>
 FString ARoomPlannerManager::ExportLayoutToJSON() const
 {
 	TSharedPtr<FJsonObject> RootObject = MakeShareable(new FJsonObject());
-	RootObject->SetNumberField(TEXT("version"), 2);
+	RootObject->SetNumberField(TEXT("version"), 3); // 3: rooms divided by walls are separate rooms (finishes per room)
 
 	// Serializing Nodes
 	TArray<TSharedPtr<FJsonValue>> NodesArray;
@@ -1986,6 +2243,12 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 	// walls are then built exactly once with the right side.
 	bWallsRebuiltByInteriorPass = false;
 	RebuildRooms();
+	double LayoutVersion = 2.0;
+	RootObject->TryGetNumberField(TEXT("version"), LayoutVersion);
+	if (LayoutVersion < 3.0)
+	{
+		SpreadLegacyRoomFinishes();
+	}
 	if (!bWallsRebuiltByInteriorPass)
 	{
 		RebuildAllWalls();
@@ -2406,12 +2669,8 @@ void ARoomPlannerManager::CommitInteractiveWallDraw()
 	{
 		if (HasAuthority())
 		{
-			int32 N1 = GetOrCreateNodeAtPosition(P1);
-			int32 N2 = GetOrCreateNodeAtPosition(P2);
-			if (N1 != INDEX_NONE && N2 != INDEX_NONE && N1 != N2)
-			{
-				AddWall(N1, N2, 20.f, 280.f);
-			}
+			// Joined along its length like Server_CommitWall's wall (which follows and then finds every piece already there).
+			AddWallBetweenPoints(P1, P2, 20.f, 280.f);
 			ReplicatedRoomJSON = ExportLayoutToJSON();
 			OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
 		}
@@ -3160,6 +3419,7 @@ bool ARoomPlannerManager::UpdateOpeningPosition(int32 SegmentID, int32 OpeningIn
 			}
 
 			RebuildAllWalls();
+			RebuildRooms(); // floor thresholds and baseboard gaps follow the opening (also in a client's local drag preview)
 			ReplicatedRoomJSON = ExportLayoutToJSON();
 			UpdateSelectionVisuals();
 			OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
@@ -3220,6 +3480,7 @@ bool ARoomPlannerManager::UpdateOpeningDimensions(int32 SegmentID, int32 Opening
 		Seg.Openings[OpeningIndex] = Candidate;
 
 		RebuildAllWalls();
+		RebuildRooms(); // floor thresholds and baseboard gaps follow the opening
 		CommitStateAfterMutation();
 		UpdateSelectionVisuals();
 		return true;
@@ -3245,6 +3506,7 @@ bool ARoomPlannerManager::DeleteOpening(int32 SegmentID, int32 OpeningIndex)
 
 	WallSegments[SegmentID].Openings.RemoveAt(OpeningIndex);
 	RebuildAllWalls();
+	RebuildRooms(); // the floor threshold and baseboard gap go with the opening
 	if (SelectedSegmentID == SegmentID && SelectedOpeningIndex == OpeningIndex)
 	{
 		SelectedOpeningIndex = -1;
@@ -4314,6 +4576,7 @@ void ARoomPlannerManager::ComputeWallInteriorSides(const TArray<TArray<FVector2D
 	}
 
 	auto NearlySame = [](const FVector2D& A, const FVector2D& B) { return FVector2D::DistSquared(A, B) < 4.f; };
+	TMap<int32, int32> Claims; // rooms a wall bounds
 
 	for (int32 PolyIdx = 0; PolyIdx < RoomPolygons.Num(); ++PolyIdx)
 	{
@@ -4333,15 +4596,24 @@ void ARoomPlannerManager::ComputeWallInteriorSides(const TArray<TArray<FVector2D
 				if (NearlySame(S->Position, Pi) && NearlySame(E->Position, Pj))
 				{
 					NewFlags[Pair.Key] = true;   // polygon is CCW: interior on the left of Start->End
+					Claims.FindOrAdd(Pair.Key)++;
 					if (Room) Room->WallSegmentIDs.AddUnique(Pair.Key);
 				}
 				else if (NearlySame(S->Position, Pj) && NearlySame(E->Position, Pi))
 				{
 					NewFlags[Pair.Key] = false;  // traversed End->Start: interior on the right
+					Claims.FindOrAdd(Pair.Key)++;
 					if (Room) Room->WallSegmentIDs.AddUnique(Pair.Key);
 				}
 			}
 		}
+	}
+
+	// A wall between two rooms has a room on both sides: its side stays the left one whichever room is traced last (door swing and
+	// hinge sides saved with the layout were authored against that).
+	for (const TPair<int32, int32>& Claim : Claims)
+	{
+		if (Claim.Value >= 2) NewFlags[Claim.Key] = true;
 	}
 
 	for (auto& Pair : WallSegments)
@@ -4875,7 +5147,7 @@ TArray<FPlannerDimensionLabel> ARoomPlannerManager::GetSelectionDimensionLabels(
 	{
 		if (const FRoomData* Room = Rooms.Find(SelectedRoomID))
 		{
-			AddLabel(TEXT("area"), FString::Printf(TEXT("%.2f м²"), Room->AreaM2), Room->AreaM2, FVector(Room->Centroid.X, Room->Centroid.Y, 5.f));
+			AddLabel(TEXT("area"), FString::Printf(TEXT("%.2f м²"), Room->AreaM2), Room->AreaM2, FVector(Room->InteriorPoint.X, Room->InteriorPoint.Y, 5.f));
 		}
 		break;
 	}
@@ -5337,25 +5609,22 @@ void ARoomPlannerManager::ClearAllSelection()
 
 int32 ARoomPlannerManager::FindRoomAtWorldPos(const FVector& WorldPos) const
 {
+	// The smallest room around the point: a room standing inside a larger one (walls not touching it) is found as itself.
 	const FVector2D P(WorldPos.X, WorldPos.Y);
+	int32 Best = -1;
+	double BestArea = TNumericLimits<double>::Max();
 	for (const auto& Pair : Rooms)
 	{
 		const TArray<FVector2D>& Poly = Pair.Value.FloorPolygon;
-		const int32 N = Poly.Num();
-		if (N < 3) continue;
-		bool bInside = false;
-		for (int32 i = 0, j = N - 1; i < N; j = i++)
+		if (Poly.Num() < 3 || !PlannerFinishLayout::IsPointInPolygon(P, Poly)) continue;
+		const double Area = FMath::Abs(PlannerFinishLayout::SignedArea(Poly));
+		if (Area < BestArea)
 		{
-			const FVector2D& A = Poly[i];
-			const FVector2D& B = Poly[j];
-			if (((A.Y > P.Y) != (B.Y > P.Y)) && (P.X < (B.X - A.X) * (P.Y - A.Y) / (B.Y - A.Y) + A.X))
-			{
-				bInside = !bInside;
-			}
+			BestArea = Area;
+			Best = Pair.Key;
 		}
-		if (bInside) return Pair.Key;
 	}
-	return -1;
+	return Best;
 }
 
 int32 ARoomPlannerManager::SelectFloorAtWorldPos(const FVector& WorldPos)
@@ -5719,6 +5988,31 @@ bool ARoomPlannerManager::MakeWallFaceInput(int32 SegID, FPlannerWallFaceInput& 
 	return true;
 }
 
+void ARoomPlannerManager::GetWalkThroughSpans(int32 SegmentID, TArray<FVector2D>& OutSpans) const
+{
+	OutSpans.Reset();
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	FPlannerWallFaceInput Wall;
+	if (!Seg || !MakeWallFaceInput(SegmentID, Wall)) return;
+	// Over the span RebuildWallMesh cuts holes in (where both faces run straight).
+	const float Len = FVector2D::Distance(Wall.Start, Wall.End);
+	if (Len < 1.f) return;
+	const FVector2D Dir = (Wall.End - Wall.Start) / Len;
+	auto Along = [&Wall, &Dir](const FVector2D& P) { return (float)FVector2D::DotProduct(P - Wall.Start, Dir); };
+	const float LeftLo = FMath::Min(Along(Wall.StartCorner[0]), Along(Wall.EndCorner[0]));
+	const float LeftHi = FMath::Max(Along(Wall.StartCorner[0]), Along(Wall.EndCorner[0]));
+	const float RightLo = FMath::Min(Along(Wall.StartCorner[1]), Along(Wall.EndCorner[1]));
+	const float RightHi = FMath::Max(Along(Wall.StartCorner[1]), Along(Wall.EndCorner[1]));
+	const float HoleLo = FMath::Clamp(FMath::Max(LeftLo, RightLo), 0.f, Len);
+	const float HoleHi = FMath::Clamp(FMath::Min(LeftHi, RightHi), HoleLo, Len);
+	for (const FWallOpening& Op : Seg->Openings)
+	{
+		if (Op.SillHeight >= 11.f) continue; // a window: not walked through
+		OutSpans.Add(FVector2D(FMath::Clamp(Op.DistanceFromStart - Op.Width * 0.5f, HoleLo, HoleHi),
+			FMath::Clamp(Op.DistanceFromStart + Op.Width * 0.5f, HoleLo, HoleHi)));
+	}
+}
+
 void ARoomPlannerManager::RebuildBaseboards(UMaterialInterface* DefaultMaterial)
 {
 	if (!BaseboardProceduralMesh) return;
@@ -5747,21 +6041,8 @@ void ARoomPlannerManager::RebuildBaseboards(UMaterialInterface* DefaultMaterial)
 			Wall.FaceRoom[Face] = FindRoomAtWorldPos(FVector(Probe.X, Probe.Y, 0.f));
 		}
 
-		// Walk-through openings interrupt it over the span RebuildWallMesh cuts holes in (where both faces run straight).
-		const float Len = FVector2D::Distance(Wall.Wall.Start, Wall.Wall.End);
-		auto Along = [&Wall, &Dir](const FVector2D& P) { return (float)FVector2D::DotProduct(P - Wall.Wall.Start, Dir); };
-		const float LeftLo = FMath::Min(Along(Wall.Wall.StartCorner[0]), Along(Wall.Wall.EndCorner[0]));
-		const float LeftHi = FMath::Max(Along(Wall.Wall.StartCorner[0]), Along(Wall.Wall.EndCorner[0]));
-		const float RightLo = FMath::Min(Along(Wall.Wall.StartCorner[1]), Along(Wall.Wall.EndCorner[1]));
-		const float RightHi = FMath::Max(Along(Wall.Wall.StartCorner[1]), Along(Wall.Wall.EndCorner[1]));
-		const float HoleLo = FMath::Clamp(FMath::Max(LeftLo, RightLo), 0.f, Len);
-		const float HoleHi = FMath::Clamp(FMath::Min(LeftHi, RightHi), HoleLo, Len);
-		for (const FWallOpening& Op : Seg.Openings)
-		{
-			if (Op.SillHeight >= 11.f) continue; // windows keep the baseboard under them
-			Wall.Cuts.Add(FVector2D(FMath::Clamp(Op.DistanceFromStart - Op.Width * 0.5f, HoleLo, HoleHi),
-				FMath::Clamp(Op.DistanceFromStart + Op.Width * 0.5f, HoleLo, HoleHi)));
-		}
+		// Walk-through openings interrupt it (windows keep the baseboard under them).
+		GetWalkThroughSpans(SegID, Wall.Cuts);
 		BaseboardWalls.Add(Wall);
 	}
 
@@ -5812,42 +6093,81 @@ void ARoomPlannerManager::ReadWallFaceFinishes(const TSharedPtr<FJsonObject>& Wa
 	}
 }
 
-const FFloorFinishRecord* ARoomPlannerManager::FindRoomFinishRecord(const TArray<FFloorFinishRecord>& Records, const FVector2D& Centroid)
+int32 ARoomPlannerManager::FindRoomRecordIndex(const TArray<FFloorFinishRecord>& Records, int32 RoomID) const
 {
-	const FFloorFinishRecord* Best = nullptr;
-	float BestDist = 100.f * 100.f; // 1 m association radius (as floors)
-	for (const FFloorFinishRecord& Rec : Records)
+	// The same assignment RebuildRooms makes (rooms in RoomID order, as they were built).
+	TArray<int32> RoomIDs;
+	Rooms.GetKeys(RoomIDs);
+	RoomIDs.Sort();
+	TArray<TArray<FVector2D>> Polygons;
+	TArray<FVector2D> Centroids;
+	int32 Which = INDEX_NONE;
+	for (int32 ID : RoomIDs)
 	{
-		const float D = FVector2D::DistSquared(Rec.Anchor, Centroid);
-		if (D < BestDist)
-		{
-			BestDist = D;
-			Best = &Rec;
-		}
+		if (ID == RoomID) Which = Polygons.Num();
+		Polygons.Add(Rooms[ID].FloorPolygon);
+		Centroids.Add(Rooms[ID].Centroid);
 	}
-	return Best;
+	if (Which == INDEX_NONE) return INDEX_NONE;
+	TArray<FVector2D> Anchors;
+	for (const FFloorFinishRecord& Rec : Records) Anchors.Add(Rec.Anchor);
+	return PlannerFinishLayout::AssignRecordsToRooms(Anchors, Polygons, Centroids, 100.f)[Which];
 }
 
-void ARoomPlannerManager::UpsertRoomFinishRecord(TArray<FFloorFinishRecord>& Records, const FVector2D& Centroid, const FSurfaceFinish& Finish)
+void ARoomPlannerManager::SetRoomFinishRecord(TArray<FFloorFinishRecord>& Records, int32 RoomID, const FSurfaceFinish& Finish)
 {
-	if (!Finish.IsSet())
+	const FRoomData* Room = Rooms.Find(RoomID);
+	if (!Room) return;
+	// Every record in this room goes (the one it uses and any left over, e.g. from a neighbour merged into it by removing a wall),
+	// so a cleared finish stays cleared and no old one comes back later.
+	const int32 Claimed = FindRoomRecordIndex(Records, RoomID);
+	for (int32 i = Records.Num() - 1; i >= 0; --i)
 	{
-		Records.RemoveAll([&Centroid](const FFloorFinishRecord& R) { return FVector2D::DistSquared(R.Anchor, Centroid) < 100.f * 100.f; });
-		return;
-	}
-	for (FFloorFinishRecord& Rec : Records)
-	{
-		if (FVector2D::DistSquared(Rec.Anchor, Centroid) < 100.f * 100.f)
+		if (i == Claimed || FindRoomAtWorldPos(FVector(Records[i].Anchor.X, Records[i].Anchor.Y, 0.f)) == RoomID)
 		{
-			Rec.Anchor = Centroid;
-			Rec.Finish = Finish;
-			return;
+			Records.RemoveAt(i);
 		}
 	}
-	FFloorFinishRecord Rec;
-	Rec.Anchor = Centroid;
-	Rec.Finish = Finish;
-	Records.Add(Rec);
+	if (Finish.IsSet())
+	{
+		FFloorFinishRecord Rec;
+		Rec.Anchor = Room->InteriorPoint;
+		Rec.Finish = Finish;
+		Records.Add(Rec);
+	}
+}
+
+void ARoomPlannerManager::SpreadLegacyRoomFinishes()
+{
+	TArray<int32> RoomIDs;
+	Rooms.GetKeys(RoomIDs);
+	RoomIDs.Sort();
+	bool bAdded = false;
+	auto Spread = [&](TArray<FFloorFinishRecord>& Records)
+	{
+		for (const TArray<FVector2D>& Outline : RoomGroupOutlines)
+		{
+			const FFloorFinishRecord* Source = Records.FindByPredicate([&Outline](const FFloorFinishRecord& Rec) { return PlannerFinishLayout::IsPointInPolygon(Rec.Anchor, Outline); });
+			if (!Source) continue;
+			const FFloorFinishRecord Copy = *Source;
+			for (int32 ID : RoomIDs)
+			{
+				const FRoomData& Room = Rooms[ID];
+				if (!PlannerFinishLayout::IsPointInPolygon(Room.InteriorPoint, Outline) || FindRoomRecordIndex(Records, ID) != INDEX_NONE) continue;
+				FFloorFinishRecord Rec = Copy;
+				Rec.Anchor = Room.InteriorPoint;
+				Records.Add(Rec);
+				bAdded = true;
+			}
+		}
+	};
+	Spread(FloorFinishes);
+	Spread(CeilingFinishes);
+	Spread(BaseboardFinishes);
+	if (bAdded)
+	{
+		RebuildRooms();
+	}
 }
 
 TArray<TSharedPtr<FJsonValue>> ARoomPlannerManager::RoomFinishRecordsToJson(const TArray<FFloorFinishRecord>& Records)
@@ -5890,21 +6210,6 @@ void ARoomPlannerManager::RoomFinishRecordsFromJson(const TSharedPtr<FJsonObject
 	}
 }
 
-const FFloorFinishRecord* ARoomPlannerManager::FindFloorFinishRecord(const FVector2D& Centroid) const
-{
-	const FFloorFinishRecord* Best = nullptr;
-	float BestDist = 100.f * 100.f; // 1 m association radius
-	for (const FFloorFinishRecord& Rec : FloorFinishes)
-	{
-		const float D = FVector2D::DistSquared(Rec.Anchor, Centroid);
-		if (D < BestDist)
-		{
-			BestDist = D;
-			Best = &Rec;
-		}
-	}
-	return Best;
-}
 
 UMaterialInterface* ARoomPlannerManager::ResolveFloorMaterialForRoom(const FRoomData& Room)
 {
@@ -5995,7 +6300,7 @@ bool ARoomPlannerManager::SetRoomSurfaceFinish(int32 RoomID, EPlannerSelectionKi
 	const bool bCeiling = (Surface == EPlannerSelectionKind::Ceiling);
 	if (!bCeiling && Surface != EPlannerSelectionKind::Baseboard) return false;
 
-	UpsertRoomFinishRecord(bCeiling ? CeilingFinishes : BaseboardFinishes, Room->Centroid, Finish);
+	SetRoomFinishRecord(bCeiling ? CeilingFinishes : BaseboardFinishes, RoomID, Finish);
 	(bCeiling ? Room->CeilingFinish : Room->BaseboardFinish) = Finish;
 
 	// Swap the section material in place (the geometry does not change).
@@ -6050,29 +6355,8 @@ bool ARoomPlannerManager::SetFloorFinish(int32 RoomID, const FSurfaceFinish& Fin
 	FRoomData* Room = Rooms.Find(RoomID);
 	if (!Room) return false;
 
-	// Upsert the centroid-keyed record
-	bool bFound = false;
-	for (FFloorFinishRecord& Rec : FloorFinishes)
-	{
-		if (FVector2D::DistSquared(Rec.Anchor, Room->Centroid) < 100.f * 100.f)
-		{
-			Rec.Anchor = Room->Centroid;
-			Rec.Finish = Finish;
-			bFound = true;
-			break;
-		}
-	}
-	if (!bFound && Finish.IsSet())
-	{
-		FFloorFinishRecord Rec;
-		Rec.Anchor = Room->Centroid;
-		Rec.Finish = Finish;
-		FloorFinishes.Add(Rec);
-	}
-	if (!Finish.IsSet())
-	{
-		FloorFinishes.RemoveAll([Room](const FFloorFinishRecord& R) { return FVector2D::DistSquared(R.Anchor, Room->Centroid) < 100.f * 100.f; });
-	}
+	// This room's own record only: a neighbouring room's finish is never taken over or changed.
+	SetRoomFinishRecord(FloorFinishes, RoomID, Finish);
 
 	Room->FloorFinish = Finish;
 	ResolveFloorMaterialForRoom(*Room);

@@ -297,6 +297,175 @@ TArray<FVector2D> PlannerFinishLayout::OffsetInward(const TArray<FVector2D>& Pol
 	return Out;
 }
 
+TArray<FVector2D> PlannerFinishLayout::InteriorFacePolygon(const TArray<FVector2D>& Polygon, const TArray<float>& EdgeOffsets)
+{
+	const int32 N = Polygon.Num();
+	if (N < 3)
+	{
+		return Polygon;
+	}
+	auto OffsetOf = [&EdgeOffsets](int32 i) { return EdgeOffsets.IsValidIndex(i) ? EdgeOffsets[i] : 0.f; };
+
+	TArray<FVector2D> Out;
+	Out.Reserve(N + 4);
+	for (int32 i = 0; i < N; ++i)
+	{
+		const int32 Prev = (i + N - 1) % N;
+		const FVector2D DPrev = EdgeDirection(Polygon, Prev);
+		const FVector2D DCur = EdgeDirection(Polygon, i);
+		const FVector2D PPrev = Polygon[i] + InwardEdgeNormal(Polygon, Prev) * OffsetOf(Prev);
+		const FVector2D PCur = Polygon[i] + InwardEdgeNormal(Polygon, i) * OffsetOf(i);
+
+		const double Denom = Cross2(DPrev, DCur);
+		if (FMath::Abs(Denom) > 1.e-3)
+		{
+			// PPrev + DPrev * T = PCur + DCur * S
+			const double T = Cross2(PCur - PPrev, DCur) / Denom;
+			const FVector2D Candidate = PPrev + DPrev * (float)T;
+			const float MaxShift = 4.f * FMath::Max(OffsetOf(Prev), OffsetOf(i)) + 1.f; // very sharp corners keep a bounded point
+			Out.Add(FVector2D::Distance(Candidate, Polygon[i]) <= MaxShift ? Candidate : (PPrev + PCur) * 0.5f);
+		}
+		else if (FMath::IsNearlyEqual(OffsetOf(Prev), OffsetOf(i), 0.01f))
+		{
+			Out.Add(PCur); // in line, same thickness: one face
+		}
+		else
+		{
+			Out.Add(PPrev); // in line, the wall gets thicker or thinner here: step across
+			Out.Add(PCur);
+		}
+	}
+	return Out;
+}
+
+bool PlannerFinishLayout::IsPointInPolygon(const FVector2D& Point, const TArray<FVector2D>& Polygon)
+{
+	bool bInside = false;
+	const int32 N = Polygon.Num();
+	for (int32 i = 0, j = N - 1; i < N; j = i++)
+	{
+		const FVector2D& A = Polygon[i];
+		const FVector2D& B = Polygon[j];
+		if ((A.Y > Point.Y) != (B.Y > Point.Y) && Point.X < (B.X - A.X) * (Point.Y - A.Y) / (B.Y - A.Y) + A.X)
+		{
+			bInside = !bInside;
+		}
+	}
+	return bInside;
+}
+
+FVector2D PlannerFinishLayout::PolygonInteriorPoint(const TArray<FVector2D>& Polygon)
+{
+	const int32 N = Polygon.Num();
+	if (N == 0) return FVector2D::ZeroVector;
+	FVector2D Average = FVector2D::ZeroVector;
+	for (const FVector2D& P : Polygon) Average += P;
+	Average /= (float)N;
+	if (N < 3) return Average;
+
+	double TwiceArea = 0.0, Cx = 0.0, Cy = 0.0;
+	for (int32 i = 0; i < N; ++i)
+	{
+		const FVector2D& P1 = Polygon[i];
+		const FVector2D& P2 = Polygon[(i + 1) % N];
+		const double Cross = (double)P1.X * P2.Y - (double)P2.X * P1.Y;
+		TwiceArea += Cross;
+		Cx += (P1.X + P2.X) * Cross;
+		Cy += (P1.Y + P2.Y) * Cross;
+	}
+	const FVector2D Centroid = FMath::Abs(TwiceArea) > 1.e-6 ? FVector2D(Cx / (3.0 * TwiceArea), Cy / (3.0 * TwiceArea)) : Average;
+	if (IsPointInPolygon(Centroid, Polygon)) return Centroid;
+
+	// An L or U shape can have its centroid outside: take the widest span of the polygon along the centroid's height.
+	TArray<double> Xs;
+	for (int32 i = 0; i < N; ++i)
+	{
+		const FVector2D& A = Polygon[i];
+		const FVector2D& B = Polygon[(i + 1) % N];
+		if ((A.Y > Centroid.Y) != (B.Y > Centroid.Y))
+		{
+			Xs.Add(A.X + (Centroid.Y - A.Y) * (B.X - A.X) / (B.Y - A.Y));
+		}
+	}
+	Xs.Sort();
+	double BestWidth = -1.0;
+	FVector2D Best = Average;
+	for (int32 i = 0; i + 1 < Xs.Num(); i += 2)
+	{
+		if (Xs[i + 1] - Xs[i] > BestWidth)
+		{
+			BestWidth = Xs[i + 1] - Xs[i];
+			Best = FVector2D((Xs[i] + Xs[i + 1]) * 0.5, Centroid.Y);
+		}
+	}
+	return Best;
+}
+
+TArray<int32> PlannerFinishLayout::AssignRecordsToRooms(const TArray<FVector2D>& RecordAnchors, const TArray<TArray<FVector2D>>& RoomPolygons,
+	const TArray<FVector2D>& RoomCentroids, float FallbackRadius)
+{
+	const int32 NumRooms = RoomPolygons.Num();
+	TArray<int32> RecordOfRoom;
+	RecordOfRoom.Init(INDEX_NONE, NumRooms);
+	auto CentroidOf = [&RoomCentroids, &RoomPolygons](int32 Room) { return RoomCentroids.IsValidIndex(Room) ? RoomCentroids[Room] : PolygonInteriorPoint(RoomPolygons[Room]); };
+	auto Claim = [&](int32 Room, int32 Record)
+	{
+		const int32 Current = RecordOfRoom[Room];
+		if (Current == INDEX_NONE
+			|| FVector2D::DistSquared(RecordAnchors[Record], CentroidOf(Room)) < FVector2D::DistSquared(RecordAnchors[Current], CentroidOf(Room)))
+		{
+			RecordOfRoom[Room] = Record;
+		}
+	};
+
+	// 1. The smallest room containing the anchor (a room inside another room is also inside the outer outline).
+	TArray<bool> Placed;
+	Placed.Init(false, RecordAnchors.Num());
+	for (int32 Record = 0; Record < RecordAnchors.Num(); ++Record)
+	{
+		int32 Best = INDEX_NONE;
+		double BestArea = TNumericLimits<double>::Max();
+		for (int32 Room = 0; Room < NumRooms; ++Room)
+		{
+			if (!IsPointInPolygon(RecordAnchors[Record], RoomPolygons[Room])) continue;
+			const double Area = FMath::Abs(SignedArea(RoomPolygons[Room]));
+			if (Area < BestArea)
+			{
+				BestArea = Area;
+				Best = Room;
+			}
+		}
+		if (Best != INDEX_NONE)
+		{
+			Claim(Best, Record);
+			Placed[Record] = true;
+		}
+	}
+
+	// 2. Anchors outside every room (the room changed shape since): the nearest free room centroid within the radius.
+	for (int32 Record = 0; Record < RecordAnchors.Num(); ++Record)
+	{
+		if (Placed[Record]) continue;
+		int32 Best = INDEX_NONE;
+		double BestDist = (double)FallbackRadius * FallbackRadius;
+		for (int32 Room = 0; Room < NumRooms; ++Room)
+		{
+			if (RecordOfRoom[Room] != INDEX_NONE) continue;
+			const double Dist = FVector2D::DistSquared(RecordAnchors[Record], CentroidOf(Room));
+			if (Dist < BestDist)
+			{
+				BestDist = Dist;
+				Best = Room;
+			}
+		}
+		if (Best != INDEX_NONE)
+		{
+			RecordOfRoom[Best] = Record;
+		}
+	}
+	return RecordOfRoom;
+}
+
 void PlannerFinishLayout::ComputeRoomSurfaceFrame(const TArray<FVector2D>& Polygon, const TArray<float>& EdgeHalfThickness,
                                                   FVector2D& OutOrigin, FVector2D& OutAxisU, FVector2D& OutAxisV)
 {

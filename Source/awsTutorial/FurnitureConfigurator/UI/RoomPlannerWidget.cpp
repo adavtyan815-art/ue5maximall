@@ -48,7 +48,13 @@ void URoomPlannerWidget::BuildRuntimeLayout()
 {
 	CreateTileCatalogButton();
 	WrapFinishControls();
+	CreateCatalogToggleButton();
 	CreateDimensionOverlay();
+	if (!FloorAreaCaption && WidgetTree)
+	{
+		FloorAreaCaption = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("TOTALFLOORAREA")));
+		if (FloorAreaCaption) FloorAreaCaptionText = FloorAreaCaption->GetText();
+	}
 }
 
 void URoomPlannerWidget::NativeConstruct()
@@ -212,8 +218,10 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnCatalogInterior) BtnCatalogInterior->SetToolTipText(FText::FromString(TEXT("Объекты интерьера: перетащите на пол или на стену")));
 	if (BtnCatalogCabinets) BtnCatalogCabinets->SetToolTipText(FText::FromString(TEXT("Комплекты тумб: перетащите к стене")));
 	ActiveCatalogTab = (DefaultCatalogTab == EPlannerPlacementKind::CabinetSet) ? EPlannerPlacementKind::CabinetSet : EPlannerPlacementKind::Object;
-	// Neither «Интерьер» nor «Тумбы» is active when the planner opens: the card area stays folded until a tab is clicked.
+	// The catalog is folded when the planner opens (the «Каталог» button opens it), and neither «Интерьер» nor «Тумбы» is active:
+	// the card area stays folded until a tab is clicked.
 	bCatalogTabChosen = bOpenCatalogTabOnStart;
+	bCatalogOpen = bOpenCatalogTabOnStart;
 	CollectSeparatorLines();
 	RefreshCatalogPanels();
 	UpdateCatalogTabStyles();
@@ -652,6 +660,7 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 	if (BtnDrawWallTool) BtnDrawWallTool->SetVisibility(ToolsVis);
 	if (BtnClearLayout) BtnClearLayout->SetVisibility(ToolsVis);
 	if (BtnPresetRoom) BtnPresetRoom->SetVisibility(ToolsVis);
+	if (BtnCatalogToggle) BtnCatalogToggle->SetVisibility(ToolsVis); // placement is 2D-only, like the catalog it opens
 	if (Image_1) Image_1->SetVisibility(ToolsVis);
 
 	// 3D view options: door / window leaves.
@@ -681,6 +690,7 @@ void URoomPlannerWidget::SetActiveCatalogTab(EPlannerPlacementKind Tab)
 	const EPlannerPlacementKind NewTab = (Tab == EPlannerPlacementKind::CabinetSet) ? EPlannerPlacementKind::CabinetSet : EPlannerPlacementKind::Object;
 	const bool bChanged = !bCatalogTabChosen || NewTab != ActiveCatalogTab;
 	bCatalogTabChosen = true;
+	bCatalogOpen = true; // a tab is clicked in an open catalog; picking one from code opens it as well
 	ActiveCatalogTab = NewTab;
 	if (bChanged)
 	{
@@ -700,10 +710,26 @@ void URoomPlannerWidget::UpdateCatalogTabStyles()
 	if (BtnCatalogCabinets) BtnCatalogCabinets->SetBackgroundColor(bCabinets ? ActiveTabColor : InactiveTabColor);
 }
 
+void URoomPlannerWidget::SetCatalogOpen(bool bOpen)
+{
+	bCatalogOpen = bOpen;
+	ApplyCatalogSectionVisibility();
+}
+
+void URoomPlannerWidget::OnCatalogToggleClicked()
+{
+	SetCatalogOpen(!bCatalogOpen);
+}
+
 void URoomPlannerWidget::ApplyCatalogSectionVisibility()
 {
+	// The tabs and the cards show only while the catalog is open (the «Каталог» button) and only in 2D.
 	const bool bIs2D = (CurrentViewMode == ERoomPlannerViewMode::View2D);
-	const ESlateVisibility Vis = bIs2D ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	const ESlateVisibility Vis = (bIs2D && bCatalogOpen) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	if (BtnCatalogToggle)
+	{
+		BtnCatalogToggle->SetBackgroundColor(bCatalogOpen ? ActiveTabColor : CatalogToggleIdleColor);
+	}
 	if (CatalogTabBar) CatalogTabBar->SetVisibility(Vis);
 	if (BtnCatalogInterior && !CatalogTabBar) BtnCatalogInterior->SetVisibility(Vis);
 	if (BtnCatalogCabinets && !CatalogTabBar) BtnCatalogCabinets->SetVisibility(Vis);
@@ -1013,6 +1039,7 @@ void URoomPlannerWidget::OnWallSelected(int32 SegmentID, float LengthMeters)
 
 	UpdateDynamicPropertiesPanel();
 	UpdateGuidanceHintText();
+	UpdateSummaryStatsUI(); // a floor pick arrives here too (SegmentID -1): the floor area follows the selected room
 
 	// Update creation tool fields with some defaults if they are empty
 	if (EditableTxtOpeningWidth && EditableTxtOpeningWidth->GetText().IsEmpty()) EditableTxtOpeningWidth->SetText(FText::FromString(TEXT("90")));
@@ -1524,7 +1551,20 @@ void URoomPlannerWidget::UpdateSummaryStatsUI()
 {
 	if (TxtFloorArea)
 	{
-		TxtFloorArea->SetText(FText::FromString(FString::Printf(TEXT("%.2f м²"), GetFloorAreaM2())));
+		// A selected room floor: that room's net area; otherwise all rooms together.
+		float AreaM2 = GetFloorAreaM2();
+		bool bSelectedRoom = false;
+		FRoomData Room;
+		if (PlannerManager && PlannerManager->GetSelectionKind() == EPlannerSelectionKind::Floor && PlannerManager->GetRoomData(PlannerManager->SelectedRoomID, Room))
+		{
+			AreaM2 = Room.AreaM2;
+			bSelectedRoom = true;
+		}
+		TxtFloorArea->SetText(FText::FromString(FString::Printf(TEXT("%.2f м²"), AreaM2)));
+		if (FloorAreaCaption)
+		{
+			FloorAreaCaption->SetText(bSelectedRoom ? FText::FromString(TEXT("Площадь пола (комната)")) : FloorAreaCaptionText);
+		}
 	}
 	if (TxtPerimeter)
 	{
@@ -1618,6 +1658,7 @@ void URoomPlannerWidget::BindManagerDelegates()
 	PlannerManager->OnRoomPlannerUpdated.AddUniqueDynamic(this, &URoomPlannerWidget::HandleRoomPlannerUpdated);
 	PlannerManager->OnOperationRejected.AddUniqueDynamic(this, &URoomPlannerWidget::HandleOperationRejected);
 	PlannerManager->OnSelectionChanged.AddUniqueDynamic(this, &URoomPlannerWidget::HandleSelectionChanged);
+	PlannerManager->OnFloorSelected.AddUniqueDynamic(this, &URoomPlannerWidget::HandleFloorSelected);
 	PlannerManager->bPlannerUIOpen = true;
 	// The manager binds here (NativeConstruct), not in the tick fallback, so the session flag that drives the
 	// planner's bounded 3D exposure must be raised here as well.
@@ -1629,6 +1670,11 @@ void URoomPlannerWidget::BindManagerDelegates()
 	bManagerDelegatesBound = true;
 }
 
+void URoomPlannerWidget::HandleFloorSelected(int32 RoomID, float AreaM2)
+{
+	UpdateSummaryStatsUI();
+}
+
 void URoomPlannerWidget::UnbindManagerDelegates()
 {
 	if (!PlannerManager) return;
@@ -1637,6 +1683,7 @@ void URoomPlannerWidget::UnbindManagerDelegates()
 	PlannerManager->OnRoomPlannerUpdated.RemoveAll(this);
 	PlannerManager->OnOperationRejected.RemoveAll(this);
 	PlannerManager->OnSelectionChanged.RemoveAll(this);
+	PlannerManager->OnFloorSelected.RemoveAll(this);
 	bManagerDelegatesBound = false;
 }
 
@@ -1655,6 +1702,7 @@ void URoomPlannerWidget::HandleSelectionChanged()
 {
 	UpdateDynamicPropertiesPanel();
 	UpdateGuidanceHintText();
+	UpdateSummaryStatsUI(); // the floor area follows the selected room
 
 	const EPlannerSelectionKind Kind = GetSelectionKind();
 	if (Kind != LastNotifiedSelectionKind)
@@ -2209,6 +2257,72 @@ void URoomPlannerWidget::CreateTileCatalogButton()
 	BtnFinishTile->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnFinishTileClicked);
 }
 
+void URoomPlannerWidget::CreateCatalogToggleButton()
+{
+	if (BtnCatalogToggle || !WidgetTree) return;
+	UButton* StyleSource = BtnPresetRoom ? BtnPresetRoom.Get() : BtnDrawWallTool.Get();
+	if (!StyleSource) return;
+	UHorizontalBox* Row = Cast<UHorizontalBox>(StyleSource->GetParent());
+	if (!Row) return;
+
+	BtnCatalogToggle = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("BtnCatalogToggle"));
+	if (!BtnCatalogToggle) return;
+	// Same look as "4×4 м" beside it; while the catalog is open it takes the active tab colour.
+	BtnCatalogToggle->SetStyle(StyleSource->GetStyle());
+	BtnCatalogToggle->SetColorAndOpacity(StyleSource->GetColorAndOpacity());
+	CatalogToggleIdleColor = StyleSource->GetBackgroundColor();
+	BtnCatalogToggle->SetBackgroundColor(CatalogToggleIdleColor);
+
+	UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("BtnCatalogToggleLabel"));
+	Label->SetText(FText::FromString(TEXT("Каталог")));
+	const UTextBlock* SourceLabel = Cast<UTextBlock>(StyleSource->GetContent());
+	if (SourceLabel)
+	{
+		Label->SetFont(SourceLabel->GetFont());
+		Label->SetColorAndOpacity(SourceLabel->GetColorAndOpacity());
+	}
+	else
+	{
+		Label->SetFont(FCoreStyle::GetDefaultFontStyle("Bold", 13.5f));
+		Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	}
+	if (UButtonSlot* LabelSlot = Cast<UButtonSlot>(BtnCatalogToggle->AddChild(Label)))
+	{
+		if (const UButtonSlot* SourceLabelSlot = SourceLabel ? Cast<UButtonSlot>(SourceLabel->Slot) : nullptr)
+		{
+			LabelSlot->SetPadding(SourceLabelSlot->GetPadding());
+			LabelSlot->SetHorizontalAlignment(SourceLabelSlot->GetHorizontalAlignment());
+			LabelSlot->SetVerticalAlignment(SourceLabelSlot->GetVerticalAlignment());
+		}
+	}
+	BtnCatalogToggle->SetToolTipText(FText::FromString(TEXT("Показать / скрыть каталог: интерьер и тумбы")));
+	BtnCatalogToggle->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCatalogToggleClicked);
+
+	// The tool row as a wrap box (with the new button last): four buttons do not fit the side panel's width on one line.
+	UWrapBox* Tools = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(), TEXT("ToolButtons"));
+	if (!Tools) return;
+	Tools->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	Tools->SetInnerSlotPadding(FVector2D(4.f, 4.f));
+	TArray<UWidget*> Children = Row->GetAllChildren();
+	Row->ClearChildren();
+	Children.Add(BtnCatalogToggle);
+	for (UWidget* Child : Children)
+	{
+		if (!Child) continue;
+		if (UWrapBoxSlot* ToolSlot = Tools->AddChildToWrapBox(Child))
+		{
+			ToolSlot->SetVerticalAlignment(VAlign_Center);
+			// The last button takes the rest of its line, as "4×4 м" took the rest of the row before.
+			ToolSlot->SetFillEmptySpace(Child == BtnCatalogToggle);
+		}
+	}
+	if (UHorizontalBoxSlot* ToolsSlot = Row->AddChildToHorizontalBox(Tools))
+	{
+		ToolsSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		ToolsSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+}
+
 void URoomPlannerWidget::WrapFinishControls()
 {
 	if (!WidgetTree || !BtnFinishPaint) return;
@@ -2572,7 +2686,8 @@ void URoomPlannerWidget::RefreshCatalogPanels()
 
 bool URoomPlannerWidget::IsScreenPositionOverCatalogPanels(const FVector2D& ScreenSpacePosition) const
 {
-	return Catalog_Container && Catalog_Container->GetCachedGeometry().IsUnderLocation(ScreenSpacePosition);
+	// A folded catalog keeps its last geometry: it is not under anything.
+	return Catalog_Container && Catalog_Container->IsVisible() && Catalog_Container->GetCachedGeometry().IsUnderLocation(ScreenSpacePosition);
 }
 
 void URoomPlannerWidget::HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition)

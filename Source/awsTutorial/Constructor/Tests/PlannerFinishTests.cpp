@@ -1059,6 +1059,82 @@ bool FPlannerFinishPartitionBaseboardTest::RunTest(const FString& Parameters)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The baseboard gap follows its door
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerFinishBaseboardFollowsOpeningTest, "MaxiMall.Planner.Finish.BaseboardFollowsOpening",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerFinishBaseboardFollowsOpeningTest::RunTest(const FString& Parameters)
+{
+	FScopedTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	ARoomPlannerManager* Manager = TestWorld.World->SpawnActor<ARoomPlannerManager>();
+	if (!TestNotNull(TEXT("Manager"), Manager)) return false;
+	const int32 N1 = Manager->AddNode(FVector2D(0., 0.));
+	const int32 N2 = Manager->AddNode(FVector2D(500., 0.));
+	const int32 N3 = Manager->AddNode(FVector2D(500., 400.));
+	const int32 N4 = Manager->AddNode(FVector2D(0., 400.));
+	const int32 South = Manager->AddWall(N1, N2);
+	Manager->AddWall(N2, N3);
+	Manager->AddWall(N3, N4);
+	Manager->AddWall(N4, N1);
+	TestTrue(TEXT("Door added"), Manager->AddOpeningToWall(South, EOpeningType::Door, 200.f, 90.f, 210.f, 0.f));
+	Manager->RebuildRooms();
+
+	// The south wall's baseboard in the room: fronts at y = 11.5 facing +Y, and the caps closing it at a doorway.
+	auto SouthQuads = [Manager]()
+	{
+		TArray<FQuadBox> Quads;
+		UProceduralMeshComponent* Mesh = Manager->BaseboardProceduralMesh;
+		for (int32 SectionIdx = 0; Mesh && SectionIdx < Mesh->GetNumSections(); ++SectionIdx)
+		{
+			const FProcMeshSection* Section = Mesh->GetProcMeshSection(SectionIdx);
+			if (!Section) continue;
+			TArray<FVector> Vertices, Normals;
+			for (const FProcMeshVertex& V : Section->ProcVertexBuffer)
+			{
+				Vertices.Add(V.Position);
+				Normals.Add(V.Normal);
+			}
+			Quads.Append(QuadsOf(Vertices, Normals));
+		}
+		return Quads;
+	};
+	auto Covered = [](const TArray<FQuadBox>& Quads, double X)
+	{
+		return Quads.ContainsByPredicate([X](const FQuadBox& Q) { return Q.Flat(1, 11.5) && Q.Facing(FVector(0., 1., 0.)) && Q.Spans(0, X); });
+	};
+	auto Capped = [](const TArray<FQuadBox>& Quads, double X, const FVector& Facing)
+	{
+		return Quads.ContainsByPredicate([X, &Facing](const FQuadBox& Q) { return Q.Flat(0, X) && Q.Facing(Facing) && FMath::IsNearlyEqual(Q.Min.Y, 10., 0.01) && FMath::IsNearlyEqual(Q.Max.Y, 11.5, 0.01); });
+	};
+	{
+		const TArray<FQuadBox> Quads = SouthQuads();
+		TestTrue(TEXT("At first: gap at the door (x 155..245)"), !Covered(Quads, 200.) && Covered(Quads, 350.));
+	}
+
+	// Moved along the wall: the gap moves with it and the old one closes.
+	TestTrue(TEXT("Door moved"), Manager->UpdateOpeningPosition(South, 0, 350.f));
+	{
+		const TArray<FQuadBox> Quads = SouthQuads();
+		TestTrue(TEXT("Moved: the old doorway has its baseboard back"), Covered(Quads, 200.));
+		TestTrue(TEXT("Moved: nothing runs across the new doorway (x 305..395)"), !Covered(Quads, 350.) && !Covered(Quads, 306.) && !Covered(Quads, 394.));
+		TestTrue(TEXT("Moved: both ends at the new doorway are closed"), Capped(Quads, 305., FVector(1., 0., 0.)) && Capped(Quads, 395., FVector(-1., 0., 0.)));
+		TestFalse(TEXT("Moved: no end left at the old doorway"), Capped(Quads, 155., FVector(1., 0., 0.)) || Capped(Quads, 245., FVector(-1., 0., 0.)));
+	}
+
+	// Made wider (1.20 m): the gap widens with it.
+	TestTrue(TEXT("Door widened"), Manager->UpdateOpeningDimensions(South, 0, 1.2f, 2.1f, 0.f));
+	{
+		const TArray<FQuadBox> Quads = SouthQuads();
+		TestTrue(TEXT("Widened: gap x 290..410"), !Covered(Quads, 295.) && !Covered(Quads, 405.) && Covered(Quads, 285.) && Covered(Quads, 415.));
+	}
+	Manager->Destroy();
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tile catalog widget: one card per tile with its preview picture; choosing a tile
 // ─────────────────────────────────────────────────────────────────────────────
 
