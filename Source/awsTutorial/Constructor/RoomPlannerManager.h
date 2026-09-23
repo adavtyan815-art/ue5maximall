@@ -143,8 +143,8 @@ public:
 
 	// ── Room lights ────────────────────────────────────────────────────────────
 	// Every detected room owns one APlannerRoomLightActor: exactly ONE rect light whose emission is masked to
-	// the room's panel polygon (room polygon inset from the walls) plus the visible emissive panel of the same
-	// polygon, at that room's ceiling height. Rebuilt with the rooms on every topology change and
+	// the room's panel polygon (room polygon inset from the walls), at that room's ceiling height, plus an optional
+	// visible emissive panel of the same polygon (FPlannerRoomLightSettings::bShowSurface, off by default). Rebuilt with the rooms on every topology change and
 	// destroyed with them, so a split room becomes two independent lights and a merge becomes one.
 
 	/** Tunable settings (also overridable from the player controller, see AAwsTutorial_PlayerController::PlannerRoomLightSettings). */
@@ -343,6 +343,14 @@ public:
 	/** True while a URoomPlannerWidget is open on this machine (enables 3D surface picking). */
 	UPROPERTY(BlueprintReadWrite, Category = "RoomPlanner")
 	bool bPlannerUIOpen = false;
+
+	/**
+	 * Set by the planner widget: tells whether the cursor is over the planner's own UI (side panel, status strip, a catalog beside
+	 * the panel). Every input path that reads raw mouse state asks it, so a press on the UI never acts on the plan behind it.
+	 */
+	void SetPlannerUIHitTest(TFunction<bool()> InHitTest) { PlannerUIHitTest = MoveTemp(InHitTest); }
+	void ClearPlannerUIHitTest() { PlannerUIHitTest = nullptr; }
+	bool IsCursorOverPlannerUI() const { return PlannerUIHitTest && PlannerUIHitTest(); }
 
 	// ── Pending click-to-place (REQ-17 / REQ-18) ────────────────────────────
 
@@ -896,6 +904,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Placement")
 	void RefreshWallAttachedPlacements();
 
+	/**
+	 * Server: measures again how far a wall-attached cabinet set stands off its wall face (its configuration may have moved its
+	 * rearmost point), re-places it and republishes the layout when that changed. False when the set is not on a wall, has no
+	 * booth, or shows no mesh to measure (the stored offset is then kept).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Placement")
+	bool RemeasureCabinetSetWallDepth(const FString& InstanceID);
+
 	/** True when the selected object / cabinet set is attached to a wall (rotation is then fixed by the wall). */
 	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Placement")
 	bool IsSelectionWallAttached() const;
@@ -1098,6 +1114,9 @@ private:
 	/** Previous-frame LMB state (Slate pressed-button set) for the manager-driven corner drag. */
 	bool bPrevLMBDownForNodeDrag = false;
 
+	/** See SetPlannerUIHitTest. */
+	TFunction<bool()> PlannerUIHitTest;
+
 	/**
 	 * Manager-driven control-point drag (REQ-02), independent of which click path is live:
 	 * detects LMB press on a handle, updates the drag from the cursor every frame and commits
@@ -1193,7 +1212,8 @@ private:
 	bool ComputeWallAttachedTransform(const FWallAttachment& Attachment, FVector& OutLocation, FRotator& OutRotation) const;
 	/** Wall-attached transform of a cabinet set plus the row-level RotationZ (added yaw) from DT_CabinetSetLayouts. */
 	bool ComputeCabinetSetTransform(const FPlacedCabinetSetData& Data, FVector& OutLocation, FRotator& OutRotation) const;
-	void MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const;
+	/** Sets DepthOffsetCm so the actor's rearmost visible point touches the face; false (offset untouched) without a visible mesh. */
+	bool MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const;
 	bool SlideAttachmentTo(FWallAttachment& Attachment, const FVector& RequestedLocation) const;
 	void DetachItemsFromWall(const FString& WallGuid);
 	void RehomeAttachmentsAfterSplit(const FString& OldGuid, const FString& NewGuid, float SplitDistanceCm);
@@ -1249,6 +1269,10 @@ private:
 	void ReconcileCabinetSetActors();
 	AShowroomBooth* SpawnCabinetSetActor(const FPlacedCabinetSetData& Data);
 	void DestroyAllPlannerCabinetSets();
+
+	/** Server: a planner booth was reconfigured in the configurator; its rear may have moved, so it is re-measured against its wall. */
+	UFUNCTION()
+	void HandleCabinetSetProductChanged(AShowroomBooth* Booth, FName NewProductID);
 
 	// JSON helpers
 	static TSharedPtr<FJsonObject> FinishToJson(const FSurfaceFinish& Finish);

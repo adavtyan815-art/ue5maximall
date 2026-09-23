@@ -2760,8 +2760,9 @@ void ARoomPlannerManager::TickLocalNodeDrag()
 
 	if (DraggingNodeID == -1)
 	{
-		// Start: LMB pressed this frame over a corner handle (whatever click path is live).
-		if (bJustPressed && bHasRay && !bIsDrawingWall)
+		// Start: LMB pressed this frame over a corner handle (whatever click path is live), but not a press on the planner's UI
+		// (a button above a handle, the side panel, a catalog beside it): Slate's pressed set holds those presses too.
+		if (bJustPressed && bHasRay && !bIsDrawingWall && !IsCursorOverPlannerUI())
 		{
 			const int32 NodeID = FindNodeAtCursorRay(RayOrigin, RayDir, 25.f);
 			if (NodeID != -1)
@@ -3637,61 +3638,190 @@ FPlannerDropInfo ARoomPlannerManager::ResolveDropAtWorldPos2D(const FVector& Wor
 	return Info; // invalid
 }
 
+namespace PlannerWallRay
+{
+	/** Where a ray first meets a wall's solid (footprint × height), in the wall's frame. */
+	struct FHit
+	{
+		double T = 0.0;
+		double Along = 0.0;
+		/** Perpendicular offset from the centre line where the ray enters (+ = the left side). */
+		double PerpAtEntry = 0.0;
+		/** Height where the ray enters. */
+		double ZAtEntry = 0.0;
+		/** 0: an end of the wall, 1: one of its faces, 2: its top (or the ray starts inside). */
+		int32 EntryAxis = 2;
+	};
+
+	/**
+	 * Slab test of the ray against the box Along ∈ [0, Len], Perp ∈ [-HalfWidth, HalfWidth], Z ∈ [0, Height] of a wall. HalfWidth may
+	 * be widened by a snap tolerance; the ray only counts from its origin on.
+	 */
+	static bool Intersect(const FVector& Origin, const FVector& Direction, const FVector2D& Start, const FVector2D& Dir, const FVector2D& LeftNormal,
+		double Len, double HalfWidth, double Height, FHit& OutHit)
+	{
+		const FVector2D O2(Origin.X, Origin.Y);
+		const FVector2D D2(Direction.X, Direction.Y);
+		const double Origins[3] = { FVector2D::DotProduct(O2 - Start, Dir), FVector2D::DotProduct(O2 - Start, LeftNormal), Origin.Z };
+		const double Steps[3] = { FVector2D::DotProduct(D2, Dir), FVector2D::DotProduct(D2, LeftNormal), Direction.Z };
+		const double Lows[3] = { 0.0, -HalfWidth, 0.0 };
+		const double Highs[3] = { Len, HalfWidth, Height };
+		double TEnter = 0.0;
+		double TExit = TNumericLimits<double>::Max();
+		int32 EnterAxis = 2;
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+		{
+			if (FMath::Abs(Steps[Axis]) < 1.e-9)
+			{
+				if (Origins[Axis] < Lows[Axis] || Origins[Axis] > Highs[Axis]) return false;
+				continue;
+			}
+			double T1 = (Lows[Axis] - Origins[Axis]) / Steps[Axis];
+			double T2 = (Highs[Axis] - Origins[Axis]) / Steps[Axis];
+			if (T1 > T2) Swap(T1, T2);
+			if (T1 > TEnter)
+			{
+				TEnter = T1;
+				EnterAxis = Axis;
+			}
+			TExit = FMath::Min(TExit, T2);
+			if (TEnter > TExit) return false;
+		}
+		OutHit.T = TEnter;
+		OutHit.Along = FMath::Clamp(Origins[0] + Steps[0] * TEnter, 0.0, Len);
+		OutHit.PerpAtEntry = Origins[1] + Steps[1] * TEnter;
+		OutHit.ZAtEntry = Origins[2] + Steps[2] * TEnter;
+		OutHit.EntryAxis = EnterAxis;
+		return true;
+	}
+}
+
 FPlannerDropInfo ARoomPlannerManager::ResolveDropFromCursorRay2D(const FVector& RayOrigin, const FVector& RayDirection) const
 {
 	FPlannerDropInfo Info;
 	if (FMath::IsNearlyZero(RayDirection.Z)) return Info;
 
-	// 1. Wall tops: intersect the ray with each wall's own top plane and test that wall's footprint.
+	// 1. Walls as the camera sees them. The 2D view of «Выбрать» / «Каталог» is a perspective one: a wall away from the middle of the
+	//    screen shows its whole inner face, and the ray to a point on that face meets the wall-top plane far inside the room and the
+	//    floor outside the wall (testing only those two planes put the item on the outer face, or on no wall at all).
+	//    a) The first wall solid the cursor ray really meets (through a door / window opening it goes on): the face it enters.
+	//    b) Otherwise a near miss within WallDropSnapToleranceCm: where the cursor lands on the floor beside a wall, or just past its
+	//       top edge; that side, at that point along the wall.
+	//    c) Cabinets and wall objects go into rooms: a face with no room in front of it (the camera follows the pawn and can see a
+	//       wall's outer face) gives way to the other face when that one has a room in front of it.
+	const double TGround = -RayOrigin.Z / RayDirection.Z;
+	const bool bHasGround = TGround >= 0.0;
+	const FVector Ground = bHasGround ? FVector(RayOrigin + RayDirection * TGround) : FVector::ZeroVector;
+
 	int32 BestSeg = -1;
-	float BestPerp = TNumericLimits<float>::Max();
 	float BestAlong = 0.f;
 	bool bBestLeft = true;
+
+	// a) Exact hits: the nearest along the ray.
+	double BestT = TNumericLimits<double>::Max();
 	for (const auto& Pair : WallSegments)
 	{
 		FVector2D P1, Dir, NLeft; float Len, Half;
 		if (!GetSegmentGeometry(Pair.Key, P1, Dir, NLeft, Len, Half)) continue;
-
-		const float T = (Pair.Value.Height - RayOrigin.Z) / RayDirection.Z;
-		if (T < 0.f) continue;
-		const FVector Top = RayOrigin + RayDirection * T;
-		const FVector2D P(Top.X, Top.Y);
-
-		const float Along = FVector2D::DotProduct(P - P1, Dir);
-		if (Along < 0.f || Along > Len) continue;
-		const float Perp = FVector2D::DotProduct(P - P1, NLeft);
-		const float AbsPerp = FMath::Abs(Perp);
-		if (AbsPerp <= Half + WallDropSnapToleranceCm && AbsPerp < BestPerp)
+		PlannerWallRay::FHit Hit;
+		if (!PlannerWallRay::Intersect(RayOrigin, RayDirection, P1, Dir, NLeft, Len, Half, FMath::Max(1.f, Pair.Value.Height), Hit) || Hit.T >= BestT) continue;
+		if (Hit.EntryAxis == 1)
 		{
-			BestPerp = AbsPerp;
-			BestSeg = Pair.Key;
-			BestAlong = Along;
-			bBestLeft = (AbsPerp <= Half) ? Pair.Value.bLeftSideIsInterior : (Perp > 0.f);
+			// Entering a face inside a door / window / archway: the ray goes through the opening (to the next room's floor).
+			const bool bThroughOpening = Pair.Value.Openings.ContainsByPredicate([&Hit](const FWallOpening& Opening)
+			{
+				return FMath::Abs(Hit.Along - Opening.DistanceFromStart) <= 0.5 * Opening.Width
+					&& Hit.ZAtEntry >= Opening.SillHeight && Hit.ZAtEntry <= Opening.SillHeight + Opening.Height;
+			});
+			if (bThroughOpening) continue;
+		}
+		BestSeg = Pair.Key;
+		BestT = Hit.T;
+		BestAlong = (float)Hit.Along;
+		const double CameraPerp = FVector2D::DotProduct(FVector2D(RayOrigin.X, RayOrigin.Y) - P1, NLeft);
+		if (Hit.EntryAxis == 1)
+		{
+			bBestLeft = Hit.PerpAtEntry > 0.0; // the face the ray enters
+		}
+		else if (FMath::Abs(CameraPerp) > Half)
+		{
+			bBestLeft = CameraPerp > 0.0; // over the top or an end: the face on the camera's side, the one the user sees
+		}
+		else
+		{
+			// Straight down onto the wall (the orthographic camera stands over it): the half of the top under the cursor.
+			bBestLeft = FMath::Abs(Hit.PerpAtEntry) > 0.5 ? Hit.PerpAtEntry > 0.0 : Pair.Value.bLeftSideIsInterior;
 		}
 	}
+
+	// b) Near misses: the floor point beside a wall, else the point just past its top edge (the smallest distance from a face wins).
+	if (BestSeg == -1)
+	{
+		float BestExcess = TNumericLimits<float>::Max();
+		for (const auto& Pair : WallSegments)
+		{
+			FVector2D P1, Dir, NLeft; float Len, Half;
+			if (!GetSegmentGeometry(Pair.Key, P1, Dir, NLeft, Len, Half)) continue;
+			auto Consider = [&](const FVector& Point)
+			{
+				const FVector2D P(Point.X, Point.Y);
+				const float Along = FVector2D::DotProduct(P - P1, Dir);
+				const float Perp = FVector2D::DotProduct(P - P1, NLeft);
+				const float Excess = FMath::Abs(Perp) - Half;
+				// On the wall body the ray went through an opening (it would have met the solid otherwise): not a near miss.
+				if (Along < 0.f || Along > Len || Excess < 0.f || Excess > WallDropSnapToleranceCm) return false;
+				if (Excess < BestExcess)
+				{
+					BestExcess = Excess;
+					BestSeg = Pair.Key;
+					BestAlong = Along;
+					bBestLeft = Perp > 0.f;
+				}
+				return true;
+			};
+			if (bHasGround && Consider(Ground)) continue;
+			const double TTop = (FMath::Max(1.f, Pair.Value.Height) - RayOrigin.Z) / RayDirection.Z;
+			if (TTop >= 0.0) Consider(RayOrigin + RayDirection * TTop);
+		}
+	}
+
 	if (BestSeg != -1)
 	{
+		FVector2D P1, Dir, NLeft; float Len, Half;
+		if (GetSegmentGeometry(BestSeg, P1, Dir, NLeft, Len, Half))
+		{
+			// c) A face with no room in front of it gives way to the other face when that one has a room in front of it.
+			auto RoomInFront = [&](bool bLeft)
+			{
+				const float InsetAlong = FMath::Min(0.5f * Len, Half + 5.f);
+				const FVector2D Probe = P1 + Dir * FMath::Clamp(BestAlong, InsetAlong, Len - InsetAlong) + (bLeft ? NLeft : -NLeft) * (Half + 15.f);
+				return FindRoomAtWorldPos(FVector(Probe.X, Probe.Y, 0.f)) != -1;
+			};
+			if (!RoomInFront(bBestLeft) && RoomInFront(!bBestLeft))
+			{
+				bBestLeft = !bBestLeft;
+			}
+			const FVector2D Pt = P1 + Dir * BestAlong;
+			Info.WorldLocation = FVector(Pt.X, Pt.Y, 0.f);
+		}
 		Info.Target = EPlannerDropTarget::Wall;
 		Info.SegmentID = BestSeg;
 		Info.DistanceAlongWallCm = BestAlong;
 		Info.bLeftSide = bBestLeft;
 		Info.HeightCm = 0.f;
-		FVector2D P1, Dir, NLeft; float Len, Half;
-		if (GetSegmentGeometry(BestSeg, P1, Dir, NLeft, Len, Half))
-		{
-			const FVector2D Pt = P1 + Dir * BestAlong;
-			Info.WorldLocation = FVector(Pt.X, Pt.Y, 0.f);
-		}
 		return Info;
 	}
 
-	// 2. Ground plane (floor inside a room, or a wall footprint at floor level).
-	const float TGround = -RayOrigin.Z / RayDirection.Z;
-	if (TGround >= 0.f)
+	// 2. The floor under the cursor, inside a room.
+	if (bHasGround)
 	{
-		FVector Ground = RayOrigin + RayDirection * TGround;
-		Ground.Z = 0.f;
-		return ResolveDropAtWorldPos2D(Ground);
+		Info.WorldLocation = FVector(Ground.X, Ground.Y, 0.f);
+		const int32 RoomID = FindRoomAtWorldPos(Info.WorldLocation);
+		if (RoomID != -1)
+		{
+			Info.Target = EPlannerDropTarget::Floor;
+			Info.RoomID = RoomID;
+		}
 	}
 	return Info;
 }
@@ -3759,13 +3889,13 @@ bool ARoomPlannerManager::ComputeCabinetSetTransform(const FPlacedCabinetSetData
 	return true;
 }
 
-void ARoomPlannerManager::MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const
+bool ARoomPlannerManager::MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const
 {
 	// Actor must already stand at the face point (DepthOffsetCm == 0) with the attached rotation.
-	if (!Actor) return;
+	if (!Actor) return false;
 	const int32 SegID = FindSegmentIDByGuid(Attachment.WallGuid);
 	FVector2D P1, Dir, NLeft; float Len, Half;
-	if (SegID == -1 || !GetSegmentGeometry(SegID, P1, Dir, NLeft, Len, Half)) return;
+	if (SegID == -1 || !GetSegmentGeometry(SegID, P1, Dir, NLeft, Len, Half)) return false;
 
 	const FVector2D N = Attachment.bLeftSide ? NLeft : -NLeft;
 	const FVector2D Face = P1 + Dir * FMath::Clamp(Attachment.DistanceAlongWallCm, 0.f, Len) + N * Half;
@@ -3804,13 +3934,14 @@ void ARoomPlannerManager::MeasureAttachmentDepth(AActor* Actor, FWallAttachment&
 	}
 	if (!bAnyMesh)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s has no visible mesh bounds yet; depth offset left at 0."), *Actor->GetName());
-		return;
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s has no visible mesh bounds yet; depth offset left at %.1f."), *Actor->GetName(), Attachment.DepthOffsetCm);
+		return false;
 	}
 
 	const float FaceAlongN = FVector2D::DotProduct(Face, N);
 	Attachment.DepthOffsetCm = FaceAlongN - BackAlongN; // push out along N so the rearmost point touches the face
 	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s rear point along wall normal %.1f, face %.1f → depth offset %.1f cm"), *Actor->GetName(), BackAlongN, FaceAlongN, Attachment.DepthOffsetCm);
+	return true;
 }
 
 bool ARoomPlannerManager::SlideAttachmentTo(FWallAttachment& Attachment, const FVector& RequestedLocation) const
@@ -4001,6 +4132,46 @@ void ARoomPlannerManager::RefreshWallAttachedPlacements()
 			D.WallAttachment = FWallAttachment();
 		}
 	}
+}
+
+bool ARoomPlannerManager::RemeasureCabinetSetWallDepth(const FString& InstanceID)
+{
+	if (!HasAuthority()) return false;
+	FPlacedCabinetSetData* D = CabinetSets.Find(InstanceID);
+	AShowroomBooth* Booth = FindCabinetSetActor(InstanceID);
+	if (!D || !Booth || !D->WallAttachment.IsAttached()) return false;
+
+	// As AddCabinetSetOnWall: stand the set on the face point, measure its rear along the wall normal, then push it out.
+	FPlacedCabinetSetData Measured = *D;
+	Measured.WallAttachment.DepthOffsetCm = 0.f;
+	FVector FaceLoc; FRotator FaceRot;
+	if (!ComputeCabinetSetTransform(Measured, FaceLoc, FaceRot)) return false;
+	Booth->SetActorLocationAndRotation(FaceLoc, FaceRot);
+	const bool bMeasured = MeasureAttachmentDepth(Booth, Measured.WallAttachment);
+	if (!bMeasured)
+	{
+		Measured.WallAttachment.DepthOffsetCm = D->WallAttachment.DepthOffsetCm; // nothing visible to measure: keep the stand-off
+	}
+	ComputeCabinetSetTransform(Measured, Measured.Location, Measured.Rotation);
+	Booth->SetActorLocationAndRotation(Measured.Location, Measured.Rotation);
+
+	const bool bChanged = !FMath::IsNearlyEqual(Measured.WallAttachment.DepthOffsetCm, D->WallAttachment.DepthOffsetCm, 0.01f)
+		|| !Measured.Location.Equals(D->Location, 0.01f) || !Measured.Rotation.Equals(D->Rotation, 0.01f);
+	if (bChanged)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Cabinet set %s reconfigured → depth offset %.1f → %.1f cm"),
+			*InstanceID, D->WallAttachment.DepthOffsetCm, Measured.WallAttachment.DepthOffsetCm);
+		*D = Measured;
+		CommitStateAfterMutation();
+	}
+	return bMeasured;
+}
+
+void ARoomPlannerManager::HandleCabinetSetProductChanged(AShowroomBooth* Booth, FName NewProductID)
+{
+	if (!HasAuthority() || !Booth || Booth->PlannerInstanceID.IsEmpty()) return;
+	if (FindCabinetSetActor(Booth->PlannerInstanceID) != Booth) return; // a stale booth of a removed set
+	RemeasureCabinetSetWallDepth(Booth->PlannerInstanceID);
 }
 
 bool ARoomPlannerManager::IsSelectionWallAttached() const
@@ -7081,6 +7252,9 @@ AShowroomBooth* ARoomPlannerManager::SpawnCabinetSetActor(const FPlacedCabinetSe
 
 	Booth->FinishSpawning(SpawnTM);
 
+	// Reconfiguring the set (cabinet / countertop / mirror size, model) can move its rearmost point off the wall face.
+	Booth->OnProductChanged.AddUniqueDynamic(this, &ARoomPlannerManager::HandleCabinetSetProductChanged);
+
 	CabinetSetActorCache.Add(Data.InstanceID, Booth);
 	return Booth;
 }
@@ -7262,9 +7436,13 @@ void ARoomPlannerManager::ReconcileCabinetSetActors()
 			{
 				Booth = SpawnCabinetSetActor(Pair.Value);
 			}
-			else if (!Booth->GetActorLocation().Equals(Pair.Value.Location, 0.5f) || !Booth->GetActorRotation().Equals(Pair.Value.Rotation, 0.1f))
+			else
 			{
-				Booth->SetActorLocationAndRotation(Pair.Value.Location, Pair.Value.Rotation);
+				Booth->OnProductChanged.AddUniqueDynamic(this, &ARoomPlannerManager::HandleCabinetSetProductChanged); // adopted booth
+				if (!Booth->GetActorLocation().Equals(Pair.Value.Location, 0.5f) || !Booth->GetActorRotation().Equals(Pair.Value.Rotation, 0.1f))
+				{
+					Booth->SetActorLocationAndRotation(Pair.Value.Location, Pair.Value.Rotation);
+				}
 			}
 		}
 	}

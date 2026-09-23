@@ -438,6 +438,7 @@ void APlannerRoomLightActor::Build(const FRoomData& Room, const FPlannerRoomLigh
 
 	DestroyLight();
 	if (SurfaceMesh) SurfaceMesh->ClearAllMeshSections();
+	SurfaceMaterial = nullptr; // only BuildSurface sets it; a stale instance would claim a panel that is not there
 	SurfacePolygon.Reset();
 	SurfaceTris.Reset();
 	UsedInsetCm = 0.f;

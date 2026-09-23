@@ -6,11 +6,17 @@
 #include "Blueprint/UserWidget.h"
 #include "Constructor/RoomPlannerTypes.h"
 #include "ColorCatalog/ColorCatalogTypes.h"
+#include "FurnitureConfigurator/UI/PlannerPanelRules.h"
+#include "Styling/SlateTypes.h"
+#include "UObject/ObjectKey.h"
 #include "Widgets/Layout/SScaleBox.h"
 #include "RoomPlannerWidget.generated.h"
 
 class ARoomPlannerManager;
 class AAwsTutorial_PlayerController;
+class UBorder;
+class USizeBox;
+class UVerticalBox;
 class UButton;
 class UTextBlock;
 class UEditableTextBox;
@@ -55,6 +61,118 @@ public:
 
 	/** The «Каталог» toolbar button built by BuildRuntimeLayout. */
 	UButton* GetCatalogToggleButton() const { return BtnCatalogToggle; }
+
+	// ── Planner 5D layout: categories «Планировка» / «Каталог» / «Отделка» ──
+
+	/**
+	 * Opens a category page. In 2D, entering «Каталог» or «Отделка» on a plan with walls switches the Draw tool to «Выбрать». In 3D
+	 * only «Отделка» is shown; the 2D category is remembered and comes back in 2D.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Panel")
+	void SetActiveCategory(EPlannerPanelCategory Category);
+
+	/** The category the panel shows («Отделка» in 3D). */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Panel")
+	EPlannerPanelCategory GetActiveCategory() const;
+
+	/** Re-applies the panel rules (category pages, tool buttons, selection block) after a change made outside the widget. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Panel")
+	void RefreshPanelState();
+
+	/** True when BuildRuntimeLayout built the category layout; false: a WBP without the expected sections keeps the one-row toolbar. */
+	bool HasCategoryLayout() const { return bCategoryLayoutBuilt; }
+
+	/** The tab button of a category («Каталог» is the catalog toggle). */
+	UButton* GetCategoryButton(EPlannerPanelCategory Category) const;
+
+	/** «Очистить план» on the «Планировка» page. */
+	UButton* GetClearPlanButton() const { return BtnClearPlan; }
+
+	/** The scrolling body of the side panel (everything under the category tabs); null without the category layout. */
+	UWidget* GetBodyScroll() const { return BodyScroll; }
+
+	/**
+	 * True when a screen-space point is over the planner's own UI: the side panel, the status strip over the plan, a finish catalog
+	 * beside the panel or the floating context bar. Presses and drops there never act on the plan behind them.
+	 */
+	bool IsScreenPositionOverPlannerUI(const FVector2D& ScreenSpacePosition) const;
+
+	/** IsScreenPositionOverPlannerUI at the Slate cursor. */
+	bool IsCursorOverPlannerUI() const;
+
+	/** Shows a message in the status strip over the plan for a few seconds, whatever the panel shows. */
+	void ShowStatusMessage(const FString& Message, float Seconds = 4.f);
+
+	/** Width of the white side panel (Image_0) in root-canvas units. */
+	float GetPanelWidth() const;
+
+	/** One-line size summary under the selection title («Отделка» and 3D, where the size fields are not shown). */
+	UTextBlock* GetContextSummaryText() const { return TxtContextSummary; }
+
+	/** «Добавить на стену» caption above the door / window creation blocks. */
+	UTextBlock* GetAddToWallCaption() const { return AddToWallCaption; }
+
+	/** The selection's size fields, «Добавить на стену», swing, style and rotate: 2D, on «Планировка» and «Каталог». */
+	bool IsContextEditorVisible() const;
+
+	// ── Replace actions and tool / selection coherence ──
+
+	/** «4×4 м» from the panel: asks first when the plan is not empty (walls, objects or cabinet sets), then builds (centred on the pawn). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Panel")
+	void RequestPresetRoom();
+
+	/** «Очистить план»: asks first; nothing to do on an empty plan. */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Panel")
+	void RequestClearPlan();
+
+	/** True while the confirmation bar asks about replacing / clearing the plan. */
+	bool IsConfirmationPending() const { return PendingConfirmAction != EPlannerConfirmAction::None; }
+
+	UWidget* GetConfirmBar() const { return ConfirmBar; }
+	UButton* GetConfirmAcceptButton() const { return BtnConfirmAccept; }
+	UButton* GetConfirmCancelButton() const { return BtnConfirmCancel; }
+
+	/**
+	 * Remembers a catalog drop so the new instance is selected when it arrives (at once on a listen server, with the next replicated
+	 * update on a client): the item can be moved, rotated or deleted without switching tools first.
+	 */
+	void BeginSelectDroppedItem(EPlannerPlacementKind Kind, const FString& ItemID);
+
+	/** Ask before «4×4 м» replaces a plan that is not empty and before «Очистить план». */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel")
+	bool bConfirmDestructiveActions = true;
+
+	/** After «4×4 м» the tool becomes «Выбрать»: the new room is ready to edit. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel")
+	bool bSelectToolAfterPreset = true;
+
+	// ── «Отделка» page ──
+
+	/**
+	 * The paint (WBP_ColorCatalog) and tile catalogs open beside the panel, so the planner (view switch, selection title, messages,
+	 * dimension lines) stays on screen. Off: the old full-screen catalogs that hide the planner while open.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel")
+	bool bFinishCatalogBesidePanel = true;
+
+	/** A paint or tile catalog is open (beside the panel, or full-screen when bFinishCatalogBesidePanel is off). */
+	bool IsSideCatalogOpen() const;
+
+	/** «Пол» / «Плинтус» / «Потолок» on the «Отделка» page: the same room's other surface (the ceiling in 3D only). */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")
+	void SelectRoomSurfaceForFinish(EPlannerSelectionKind Surface);
+
+	UButton* GetSurfaceButton(EPlannerSelectionKind Surface) const;
+	UWidget* GetSurfaceChooser() const { return SurfaceChooser; }
+
+	/**
+	 * Planner 5D's icons around the selected object: a small bar next to the selection (2D) with delete, rotate and «Отделка». The
+	 * Context in the panel stays the main place for these actions. Off by default.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel")
+	bool bShowFloatingContextBar = false;
+
+	UWidget* GetFloatingContextBar() const { return FloatingContextBar; }
 
 protected:
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -286,6 +404,23 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
 	FLinearColor InactiveTabColor = FLinearColor(0.07f, 0.11f, 0.18f, 1.0f);
+
+	// ── Panel button states, our palette: navy (ActiveTabColor) = where you are, green = switched on, near-black = idle ──
+
+	/** "Switched on": the active tool, swing side, style, ceiling on, the current doors state. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel")
+	FLinearColor ActiveToolColor = FLinearColor(0.18f, 0.8f, 0.44f, 1.0f);
+
+	/** Idle tool / view / tab / option buttons: the near-black they have always had. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel")
+	FLinearColor IdleControlColor = FLinearColor(0.17f, 0.17f, 0.18f, 1.0f);
+
+	/** The selected view and category also get an ActiveTabColor outline (rounded-box buttons only). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel")
+	bool bOutlineSelectedNavigation = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel")
+	float SelectedOutlineWidth = 2.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Catalog")
 	float CatalogButtonWidth = 100.f;
@@ -767,11 +902,14 @@ private:
 	 */
 	void WrapFinishControls();
 
-	/**
-	 * «Каталог» button at the end of the tool row ("Создать стену", "Выбрать", "4×4 м"), styled like "4×4 м": opens and folds the
-	 * catalog section. The row becomes a wrap box so the buttons break onto a second line instead of running past the side panel.
-	 */
+	/** «Каталог» button: the middle category tab (the catalog drawer); built here, placed by BuildCategoryLayout. */
 	void CreateCatalogToggleButton();
+
+	/**
+	 * Fallback for a WBP without the sections the category layout needs: «Каталог» at the end of the tool row ("Создать стену",
+	 * "Выбрать", "4×4 м"), the row a wrap box so the buttons break onto a second line instead of running past the side panel.
+	 */
+	void InstallFallbackToolWrap();
 
 	UFUNCTION() void OnCatalogToggleClicked();
 
@@ -780,6 +918,186 @@ private:
 
 	/** Background of the «Каталог» button while the catalog is folded (the style it was copied from). */
 	FLinearColor CatalogToggleIdleColor = FLinearColor(0.17f, 0.17f, 0.18f, 1.f);
+
+	// ── Category layout (RoomPlannerWidgetLayout.cpp) ──
+
+	/** A button styled like StyleSource with a text label styled like LabelSource's (StyleSource's when null). */
+	UButton* MakeRuntimeButton(const UButton* StyleSource, const FString& Label, FName Name, const FString& Tooltip, const UButton* LabelSource = nullptr);
+
+	/** A caption (LblWallSize's look) or a notice (the panel's ink, wrapping). */
+	UTextBlock* MakePanelText(const FString& Text, FName Name, bool bCaption);
+
+	/** A separator like Image_line_1; its name starts with Image_line so the separator rule picks it up. */
+	UWidget* MakeSeparatorLine(FName Name);
+
+	/** Rounded white frame with the #D9D9D9 outline of our buttons: groups a segment (2D|3D, the tools, the tabs). */
+	static FSlateBrush MakeGroupFrameBrush();
+
+	/** Tabs, the tool segment and the category pages; false (nothing changed) when the WBP lacks the sections it needs. */
+	bool BuildCategoryLayout();
+
+	/** Hint bar and message chip in one strip over the plan, centred on the free area. */
+	void CreateStatusStrip();
+
+	void ClearStrayRootTooltip();
+
+	/** Shows the pages, the tool segment and the notice of the current category; enables the tabs. */
+	void ApplyCategoryVisibility();
+
+	/**
+	 * The category's tool rule on every path (a tab chosen in 3D, walls arriving while «Каталог» / «Отделка» is open, the open-on-catalog
+	 * setting): outside «Планировка», on a plan with walls, the Draw tool becomes «Выбрать».
+	 */
+	void EnforceCategoryTool();
+	void UpdateCategoryButtonStyles();
+
+	/** No walls, no objects, no cabinet sets. */
+	bool IsPlanEmpty() const;
+
+	enum class EPanelButtonState : uint8 { Idle, Selected, On };
+
+	/** Idle / selected (navy, optional outline) / switched on (green). Designed styles are cached so the outline can be taken off. */
+	void ApplyButtonState(UButton* Button, EPanelButtonState State);
+
+	TMap<TObjectKey<UButton>, FButtonStyle> DesignedButtonStyles;
+
+	UFUNCTION() void OnCategoryLayoutClicked();
+	UFUNCTION() void OnCategoryFinishClicked();
+	UFUNCTION() void OnClearPlanClicked();
+	UFUNCTION() void OnNoticePresetClicked();
+
+	bool bCategoryLayoutBuilt = false;
+	EPlannerPanelCategory Active2DCategory = EPlannerPanelCategory::Layout;
+	EPlannerPanelCategory CategoryBeforeCatalog = EPlannerPanelCategory::Layout;
+
+	/** Wall count seen by the last tick (the panel rules follow it). */
+	int32 LastTickWallCount = -1;
+	/** Cached for the enabled state of «Очистить план» only; confirmations test IsPlanEmpty() at the click. */
+	bool bPlanEmptyCached = true;
+	/** Last tooltip state of «Выбрать» (-1 none, 0 disabled, 1 enabled): written on change only. */
+	int8 SelectToolTooltipState = -1;
+
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnCategoryLayout;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnCategoryFinish;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnClearPlan;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnNoticePreset;
+	UPROPERTY(Transient) TObjectPtr<UWidget> CategoryStrip;
+	UPROPERTY(Transient) TObjectPtr<UWidget> EmptyPlanNotice;
+	UPROPERTY(Transient) TObjectPtr<UWidget> ToolsRowWidget;
+	UPROPERTY(Transient) TObjectPtr<UWidget> PageLayoutBody;
+	UPROPERTY(Transient) TObjectPtr<UWidget> PageCatalogBody;
+	UPROPERTY(Transient) TObjectPtr<UWidget> PageFinishBody;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> CatalogPrompt;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> CatalogDragHint;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> FinishPrompt;
+	UPROPERTY(Transient) TObjectPtr<UWidget> PanelBackground;
+	UPROPERTY(Transient) TObjectPtr<USizeBox> StatusStrip;
+	UPROPERTY(Transient) TObjectPtr<UWidget> MessageChip;
+
+	// ── Context (the selection block) ──
+
+	/** Summary line, «Добавить на стену», creation fields in caption order, the style picker, Enter-to-apply on the size fields. */
+	void BuildContextBlock();
+	bool bContextBlockBuilt = false;
+
+	/** Door / window creation blocks: a selected wall only (not an opening), when the editor is shown. */
+	void UpdateCreationBlocksVisibility();
+
+	/** Fills the summary line from the selection's labels (fetched from the manager when Labels is null). */
+	void UpdateContextSummary(const TArray<FPlannerDimensionLabel>* Labels);
+	FString ComposeContextSummary(const TArray<FPlannerDimensionLabel>& Labels) const;
+
+	UFUNCTION() void OnInspectorFieldCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> TxtContextSummary;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> AddToWallCaption;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> StyleCaption;
+
+	// ── Confirmation bar, preset follow-up, dropped item selection, view-switch reconciliation ──
+
+	enum class EPlannerConfirmAction : uint8 { None, PresetRoom, ClearPlan };
+	EPlannerConfirmAction PendingConfirmAction = EPlannerConfirmAction::None;
+
+	/** Question + «Да …» / «Отмена» under the «Шаблон комнаты» row (built with the «Планировка» page). */
+	void CreateConfirmBar(UVerticalBox* LayoutPage);
+	void ShowConfirmation(EPlannerConfirmAction Action);
+	void CancelConfirmation();
+	void RunPresetRoom();
+	UFUNCTION() void OnConfirmAcceptClicked();
+	UFUNCTION() void OnConfirmCancelClicked();
+	UFUNCTION() void OnPresetRoomRequested();
+
+	/** 2D → 3D: a pending placement or question ends. 3D → 2D: a kept selection opens «Отделка» with «Выбрать»; a ceiling pick is let go. */
+	void ReconcileAfterViewSwitch(ERoomPlannerViewMode OldMode);
+
+	void TrySelectDroppedItem();
+	struct FPendingDropSelection
+	{
+		bool bActive = false;
+		EPlannerPlacementKind Kind = EPlannerPlacementKind::None;
+		FString ItemID;
+		TSet<FString> KnownInstances;
+		bool bHasGround = false;
+		FVector2D GroundXY = FVector2D::ZeroVector;
+		double StartTime = 0.0;
+	};
+	FPendingDropSelection PendingDrop;
+
+	bool bSelectToolAfterPresetPending = false;
+	double PresetRequestTime = 0.0;
+
+	/** NativeConstruct's own switch to 2D is not a user's view switch (no reconciliation). */
+	bool bOpeningPlanner = false;
+
+	// ── «Отделка»: room surfaces, catalogs beside the panel ──
+
+	void BuildRoomSurfaceChooser(UVerticalBox* FinishPage);
+	void UpdateSurfaceChooser();
+	UFUNCTION() void OnSurfaceFloorClicked();
+	UFUNCTION() void OnSurfaceBaseboardClicked();
+	UFUNCTION() void OnSurfaceCeilingClicked();
+
+	/** Adds a finish catalog to the viewport beside the side panel. */
+	void OpenFinishFlyout(UUserWidget* Catalog);
+	/** Closes the paint and tile catalogs (their own close paths: the handlers clean up). */
+	void CloseFinishFlyouts();
+	/** Centres the status strip over the free plan area (right of the panel and of a catalog beside it). */
+	void UpdateStatusStripPlacement();
+
+	/** «Потолок» and «Двери [Открыть][Закрыть]» for 3D, built when the WBP has none of them (their handlers exist in code). */
+	void CreateMissingViewOptions();
+
+	/**
+	 * The side panel runs the full viewport height and everything under the category tabs scrolls (the designed LeftPanel slot was
+	 * 380 x 30 with the sections overflowing it, so the tallest states ran off the screen).
+	 */
+	void MakePanelScrollable();
+
+	UPROPERTY(Transient) TObjectPtr<UWidget> BodyScroll;
+
+	// ── Floating context bar (optional, bShowFloatingContextBar) ──
+
+	void CreateFloatingContextBar();
+	/** Places the bar under the selection's anchor label; hidden while drawing / dragging, in 3D, or when the option is off. */
+	void UpdateFloatingContextBar(const TArray<FPlannerDimensionLabel>* Labels);
+	UFUNCTION() void OnFloatingDeleteClicked();
+	UFUNCTION() void OnFloatingFinishClicked();
+
+	UPROPERTY(Transient) TObjectPtr<UWidget> FloatingContextBar;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnFloatingDelete;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnFloatingRotateLeft;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnFloatingRotateRight;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnFloatingFinish;
+
+	UPROPERTY(Transient) TObjectPtr<UWidget> SurfaceChooser;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnSurfaceFloor;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnSurfaceBaseboard;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnSurfaceCeiling;
+
+	UPROPERTY(Transient) TObjectPtr<UWidget> ConfirmBar;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> ConfirmQuestion;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnConfirmAccept;
+	UPROPERTY(Transient) TObjectPtr<UButton> BtnConfirmCancel;
 
 	/** The caption before the floor area ("Площадь пола" in the WBP) and its designed text. */
 	UPROPERTY(Transient)

@@ -722,7 +722,8 @@ struct FPlannerCatalogEntry
 
 /**
  * Settings of the Room Planner's per-room ceiling light (APlannerRoomLightActor): ONE rect light per room whose
- * emission is masked to the room's panel polygon, plus the visible emissive panel of the same polygon.
+ * emission is masked to the room's panel polygon, plus an optional visible emissive panel of the same polygon
+ * (bShowSurface, off by default).
  * Editable on ARoomPlannerManager (RoomLightSettings) and overridable from the player controller
  * (BP_MaxiMallPlayerController → Planner Room Light Settings).
  */
@@ -737,19 +738,26 @@ struct FPlannerRoomLightSettings
 
 	// ── Panel (visible surface, same polygon as the light) ──
 
-	/** Show the emissive panel. The light works without it. */
+	/**
+	 * Show the emissive panel. Off by default: the panel covered the whole ceiling with a flat white glow, hiding the
+	 * ceiling finish. It is only the visible face of the light — it casts no shadow and feeds neither Lumen GI nor
+	 * ray-traced hit lighting (see APlannerRoomLightActor's constructor), so the room's direct lighting is the same
+	 * without it; only its own pixels (and what screen-space reflections make of them) disappear. With the panel off
+	 * the ceiling is lit by bounce light alone, so it reads darker — as a ceiling above recessed downlights does.
+	 * Turn it on for a visible luminous ceiling panel.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel")
-	bool bShowSurface = true;
+	bool bShowSurface = false;
 
-	/** Colour of the luminous panel. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel")
+	/** Colour of the luminous panel (the light's own colour comes from TemperatureK). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (EditCondition = "bShowSurface"))
 	FLinearColor LightColor = FLinearColor(1.f, 0.98f, 0.94f, 1.f);
 
 	/**
 	 * Multiplier on the panel's physical luminance. 1 = the luminance a diffuse panel emitting the light's flux
 	 * really has (flux / (π × panel area)); a 4 × 4 m room gives ≈ 300 cd/m², clearly glowing at EV100 6.8.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0", EditCondition = "bShowSurface"))
 	float EmissiveIntensity = 1.f;
 
 	/** Inset of the panel polygon (and of the light's emitting shape) from the walls (cm). */
@@ -761,7 +769,7 @@ struct FPlannerRoomLightSettings
 	float CeilingOffsetCm = 4.f;
 
 	/** Panel slab thickness (cm). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0.5"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0.5", EditCondition = "bShowSurface"))
 	float SurfaceThicknessCm = 3.f;
 
 	/**
@@ -769,7 +777,7 @@ struct FPlannerRoomLightSettings
 	 * A project material receives the HDR colour (cd/m², alpha 1) in the vector parameters "Color" and "EmissiveColor"
 	 * and the same value as the texture parameter "Texture".
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (EditCondition = "bShowSurface"))
 	TObjectPtr<UMaterialInterface> SurfaceMaterial;
 
 	// ── Light (one rect light per room) ──

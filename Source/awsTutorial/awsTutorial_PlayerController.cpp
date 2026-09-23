@@ -307,14 +307,28 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                 GroundPos = WorldOrigin + t * WorldDirection;
                 GroundPos.Z = 0.f;
 
+                // A press that started over the planner's own UI never draws, selects or places; the flag lasts until the button is up.
+                if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
+                {
+                    bLMBPressOverPlannerUI = PlannerManager->IsCursorOverPlannerUI();
+                }
+                const bool bIgnoreLMB = bLMBPressOverPlannerUI;
+                if (!IsInputKeyDown(EKeys::LeftMouseButton) && !WasInputKeyJustPressed(EKeys::LeftMouseButton))
+                {
+                    bLMBPressOverPlannerUI = false;
+                }
+
                 if (PlannerManager->ActiveToolMode == EPlannerToolMode::DrawWall)
                 {
                     if (IsInputKeyDown(EKeys::LeftMouseButton))
                     {
                         if (!bIs2DDrawingWall)
                         {
-                            bIs2DDrawingWall = true;
-                            PlannerManager->StartInteractiveWallDraw(GroundPos);
+                            if (!bIgnoreLMB)
+                            {
+                                bIs2DDrawingWall = true;
+                                PlannerManager->StartInteractiveWallDraw(GroundPos);
+                            }
                         }
                         else
                         {
@@ -340,7 +354,11 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                 }
                 else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Select)
                 {
-                    if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
+                    if (bIgnoreLMB)
+                    {
+                        // Pressed on the planner UI: no pick, no drag (and no opening drag while the button stays down).
+                    }
+                    else if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
                     {
                         // 1. Wall control point under the cursor → start a corner drag (REQ-02). Ray test: the handle is on the wall top.
                         const int32 NodeID = PlannerManager->FindNodeAtCursorRay(WorldOrigin, WorldDirection, 25.f);
@@ -424,14 +442,14 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                 else if (PlannerManager->ActiveToolMode == EPlannerToolMode::PlaceFurniture)
                 {
                     // Click-to-place armed by BeginPlaceObject / BeginPlaceCabinetSet (REQ-17 / REQ-18)
-                    if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
+                    if (WasInputKeyJustPressed(EKeys::LeftMouseButton) && !bIgnoreLMB)
                     {
                         PlannerPlacePendingAtCursorRay(WorldOrigin, WorldDirection);
                     }
                 }
                 else if (PlannerManager->ActiveToolMode == EPlannerToolMode::Erase)
                 {
-                    if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
+                    if (WasInputKeyJustPressed(EKeys::LeftMouseButton) && !bIgnoreLMB)
                     {
                         int32 TargetSeg = PlannerManager->SelectWallAtWorldPos(GroundPos);
                         if (TargetSeg != -1)
@@ -476,7 +494,8 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
 
     // Planner 3D mode: LMB picks the wall / opening / floor / object / cabinet set under the cursor (REQ-13 in 3D).
     // Passive selection only — the booth double-click / hover interaction below is unaffected.
-    if (PlannerManager && PlannerManager->bPlannerUIOpen && !bIsMouseOverUI && WasInputKeyJustPressed(EKeys::LeftMouseButton))
+    if (PlannerManager && PlannerManager->bPlannerUIOpen && !bIsMouseOverUI && WasInputKeyJustPressed(EKeys::LeftMouseButton)
+        && !PlannerManager->IsCursorOverPlannerUI())
     {
         PlannerPickUnderCursor();
     }

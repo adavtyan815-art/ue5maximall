@@ -461,6 +461,9 @@ private:
     /** True while dragging in 2D top-down mode to draw a wall. */
     bool bIs2DDrawingWall = false;
 
+    /** The current LMB press started over the planner's own UI (side panel, status strip, a catalog beside it): the plan ignores it. */
+    bool bLMBPressOverPlannerUI = false;
+
     /** True while dragging a wall control point in 2D Select mode (REQ-02). */
     bool bIs2DDraggingNode = false;
 

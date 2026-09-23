@@ -497,4 +497,149 @@ bool FPlannerRoomEditsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// A catalog item dropped on a wall in the 2D view goes to the face the user means
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace
+{
+	/** The wall segment lying on the line x = X (from its node positions), or -1. */
+	int32 SegmentOnLineX(const ARoomPlannerManager* Manager, int32 SegmentID, double X)
+	{
+		FWallSegment Segment;
+		FVector2D Start, End;
+		if (SegmentID == -1 || !Manager->GetWallSegmentData(SegmentID, Segment) || !Manager->GetNodePosition(Segment.StartNodeID, Start)
+			|| !Manager->GetNodePosition(Segment.EndNodeID, End)) return -1;
+		return (FMath::IsNearlyEqual(Start.X, X, 0.5) && FMath::IsNearlyEqual(End.X, X, 0.5)) ? SegmentID : -1;
+	}
+
+	/** True when the left side of the segment (normal (-Dir.Y, Dir.X)) faces -X. */
+	bool LeftFacesWest(const ARoomPlannerManager* Manager, int32 SegmentID)
+	{
+		FWallSegment Segment;
+		FVector2D Start, End;
+		Manager->GetWallSegmentData(SegmentID, Segment);
+		Manager->GetNodePosition(Segment.StartNodeID, Start);
+		Manager->GetNodePosition(Segment.EndNodeID, End);
+		const FVector2D Dir = (End - Start).GetSafeNormal();
+		return -Dir.Y < 0.;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerWallDropSideTest, "MaxiMall.Planner.Objects.WallDropSide",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerWallDropSideTest::RunTest(const FString& Parameters)
+{
+	// The 2D camera of «Выбрать» / «Каталог»: perspective, straight down from 1600 cm above the pawn. A wall away from the middle of
+	// the screen shows its whole inner face as a band; the ray to a point on that band meets the wall-top plane far inside the room
+	// and the floor outside the wall.
+	auto Resolve = [](const ARoomPlannerManager* Manager, const FVector& Camera, const FVector& Target)
+	{
+		return Manager->ResolveDropFromCursorRay2D(Camera, (Target - Camera).GetSafeNormal());
+	};
+	// «west» = the face towards -X.
+	auto CheckWallFace = [this](const ARoomPlannerManager* Manager, const FPlannerDropInfo& Drop, double LineX, bool bWantWest, const FString& What)
+	{
+		const int32 Segment = Drop.Target == EPlannerDropTarget::Wall ? SegmentOnLineX(Manager, Drop.SegmentID, LineX) : -1;
+		if (!TestTrue(FString::Printf(TEXT("%s: attaches to the wall at x = %.0f"), *What, LineX), Segment != -1)) return;
+		TestEqual(FString::Printf(TEXT("%s: on its %s face"), *What, bWantWest ? TEXT("west") : TEXT("east")), Drop.bLeftSide == LeftFacesWest(Manager, Segment), bWantWest);
+	};
+
+	// 10 x 8 m room (walls 20 cm, 280 cm high).
+	{
+		FScopedRoomTestWorld TestWorld;
+		ARoomPlannerManager* Manager = TestWorld.World->SpawnActor<ARoomPlannerManager>();
+		if (!TestNotNull(TEXT("Manager"), Manager)) return false;
+		DrawRectangle(Manager, 1000., 800.);
+		const int32 Room = RoomAt(Manager, 500., 400.);
+		if (!TestTrue(TEXT("One room"), Room != -1)) return false;
+		const FVector Camera(500., 400., 1600.);
+
+		// The east wall (x = 1000, inner face x = 990) seen from over the middle of the room: always its room (west) face.
+		struct FCase { const TCHAR* Name; FVector Target; };
+		const FCase OnEastWall[] = {
+			{ TEXT("inner face, middle height (was: the outer face)"), FVector(990., 400., 140.) },
+			{ TEXT("inner face, 170 cm up (was: no wall at all)"), FVector(990., 400., 170.) },
+			{ TEXT("inner face, low"), FVector(990., 400., 30.) },
+			{ TEXT("inner face, far along the wall"), FVector(990., 700., 60.) },
+			{ TEXT("wall top"), FVector(1000., 400., 280.) },
+			{ TEXT("floor just in front of the wall"), FVector(975., 400., 0.) },
+		};
+		for (const FCase& Case : OnEastWall)
+		{
+			const FPlannerDropInfo Drop = Resolve(Manager, Camera, Case.Target);
+			CheckWallFace(Manager, Drop, 1000., true, FString::Printf(TEXT("East wall, %s"), Case.Name));
+			if (Drop.Target == EPlannerDropTarget::Wall)
+			{
+				TestTrue(FString::Printf(TEXT("East wall, %s: at the point under the cursor (%.0f / %.0f)"), Case.Name, Drop.DistanceAlongWallCm, Case.Target.Y),
+					FMath::Abs(Drop.WorldLocation.Y - Case.Target.Y) < 40.);
+			}
+		}
+		// Floor next to the wall, off to the side of the camera: the point along the wall is where the cursor is.
+		const FPlannerDropInfo Beside = Resolve(Manager, FVector(500., 100., 1600.), FVector(985., 700., 0.));
+		CheckWallFace(Manager, Beside, 1000., true, TEXT("Floor 5 cm in front of the wall, seen at an angle"));
+		TestTrue(FString::Printf(TEXT("… at the cursor's place along the wall (y %.1f)"), Beside.WorldLocation.Y), FMath::IsNearlyEqual(Beside.WorldLocation.Y, 700., 1.));
+
+		// The pawn (and the camera following it) outside the room, looking at the wall's outer face: still the room face.
+		CheckWallFace(Manager, Resolve(Manager, FVector(1500., 400., 1600.), FVector(1010., 400., 30.)), 1000., true, TEXT("Camera outside, outer face"));
+		CheckWallFace(Manager, Resolve(Manager, FVector(1500., 400., 1600.), FVector(1000., 400., 280.)), 1000., true, TEXT("Camera outside, wall top"));
+
+		// Straight down onto the wall (the orthographic «Создать стену» camera), on either half of its top: the room face.
+		CheckWallFace(Manager, Manager->ResolveDropFromCursorRay2D(FVector(1000., 400., 2000.), FVector(0., 0., -1.)), 1000., true, TEXT("Straight down on the middle of the top"));
+		CheckWallFace(Manager, Manager->ResolveDropFromCursorRay2D(FVector(1006., 400., 2000.), FVector(0., 0., -1.)), 1000., true, TEXT("Straight down on the outer half of the top"));
+		// The middle of the room: the floor.
+		TestTrue(TEXT("The middle of the room: the floor"), Resolve(Manager, Camera, FVector(500., 400., 0.)).Target == EPlannerDropTarget::Floor);
+
+		// A cabinet set dropped where the old resolver found no wall stands in the room, against the inner face.
+		const TArray<FPlannerCatalogEntry> Sets = Manager->GetAvailableCabinetSets();
+		if (Sets.Num() == 0)
+		{
+			AddError(TEXT("No cabinet sets (DT_FurnitureCatalog): the placement cannot be checked."));
+		}
+		else
+		{
+			const FPlannerDropInfo Drop = Resolve(Manager, Camera, FVector(990., 400., 170.));
+			const FString SetID = Drop.Target == EPlannerDropTarget::Wall ? Manager->AddCabinetSetOnWall(FName(*Sets[0].ID), Drop.SegmentID, Drop.DistanceAlongWallCm, Drop.bLeftSide) : FString();
+			FPlacedCabinetSetData Set;
+			if (TestFalse(TEXT("Cabinet set placed"), SetID.IsEmpty()) && Manager->GetCabinetSet(SetID, Set))
+			{
+				TestTrue(FString::Printf(TEXT("The cabinet set stands in the room, in front of the inner face (x %.1f)"), Set.Location.X),
+					Set.Location.X < 990.1 && RoomAt(Manager, Set.Location.X, Set.Location.Y) == Room);
+			}
+		}
+		Manager->Destroy();
+	}
+
+	// A partition: the face towards the room the camera is over; a drop on the floor just beyond it goes to that far face.
+	{
+		FScopedRoomTestWorld TestWorld;
+		ARoomPlannerManager* Manager = TestWorld.World->SpawnActor<ARoomPlannerManager>();
+		if (!TestNotNull(TEXT("Manager"), Manager)) return false;
+		DrawRectangle(Manager, 1000., 800.);
+		Manager->AddWallBetweenPoints(FVector2D(500., 0.), FVector2D(500., 800.));
+		CheckWallFace(Manager, Resolve(Manager, FVector(250., 400., 1600.), FVector(490., 400., 60.)), 500., true, TEXT("Partition seen from the west room"));
+		CheckWallFace(Manager, Resolve(Manager, FVector(750., 400., 1600.), FVector(510., 400., 60.)), 500., false, TEXT("Partition seen from the east room"));
+		CheckWallFace(Manager, Resolve(Manager, FVector(455., 400., 1600.), FVector(530., 400., 0.)), 500., false, TEXT("Floor 20 cm beyond the partition's east face"));
+		Manager->Destroy();
+	}
+
+	// A door in a partition: the next room's floor seen through the doorway is floor, not the partition.
+	{
+		FScopedRoomTestWorld TestWorld;
+		ARoomPlannerManager* Manager = TestWorld.World->SpawnActor<ARoomPlannerManager>();
+		if (!TestNotNull(TEXT("Manager"), Manager)) return false;
+		DrawRectangle(Manager, 2400., 800.);
+		const int32 Partition = Manager->AddWallBetweenPoints(FVector2D(1200., 0.), FVector2D(1200., 800.));
+		TestTrue(TEXT("Door added"), Manager->AddOpeningToWall(Partition, EOpeningType::Door, 400.f, 90.f, 210.f, 0.f));
+		Manager->RebuildRooms();
+		const FPlannerDropInfo Drop = Resolve(Manager, FVector(200., 400., 1600.), FVector(1300., 400., 0.));
+		TestTrue(TEXT("Seen through the doorway: the east room's floor"), Drop.Target == EPlannerDropTarget::Floor && Drop.RoomID == RoomAt(Manager, 1800., 400.));
+		// Beside the door the partition is solid: its west face.
+		CheckWallFace(Manager, Resolve(Manager, FVector(200., 400., 1600.), FVector(1190., 650., 100.)), 1200., true, TEXT("Partition beside the door"));
+		Manager->Destroy();
+	}
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

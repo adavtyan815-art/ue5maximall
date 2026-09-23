@@ -23,8 +23,8 @@ struct FPlannerOrientedRect
 };
 
 /**
- * The Room Planner's ceiling light for ONE detected room: exactly one real light source plus the visible
- * luminous panel, both with the same polygon shape.
+ * The Room Planner's ceiling light for ONE detected room: exactly one real light source plus an optional visible
+ * luminous panel (FPlannerRoomLightSettings::bShowSurface, off by default), both with the same polygon shape.
  *
  *   • Panel polygon: the room polygon inset from the walls by PolygonInsetCm. A room with a feature narrower than
  *     twice the inset uses a smaller inset (the inset must neither fold nor self-intersect), so rectangle →
@@ -36,8 +36,11 @@ struct FPlannerOrientedRect
  *     emission by the texture without normalizing it. Shadows are ray traced; their rays sample the whole
  *     rectangle and ignore the mask, so the intensity is also divided by the estimated share of the rectangle that
  *     lies inside the room (the walls block the rest).
- *   • Visible panel: the panel polygon, opaque unlit emissive, luminance derived from the light's emitted flux
- *     (flux / (π × panel area)) × EmissiveIntensity, delivered as an HDR float texture.
+ *   • Visible panel (bShowSurface, off by default): the panel polygon, opaque unlit emissive, luminance derived
+ *     from the light's emitted flux (flux / (π × panel area)) × EmissiveIntensity, delivered as an HDR float
+ *     texture. It only shows where the light is: it casts no shadow and feeds neither Lumen GI nor ray-traced hit
+ *     lighting, so the room's direct lighting is identical without it (screen-space traces and reflections do still
+ *     see it while it is on, so turning it off can darken glossy reflections and upper walls a little).
  *
  * Engine behaviour (UE 5.6 source): the path tracer clips emission to the mask texel by texel; the deferred
  * renderer and Lumen multiply the rectangle's lighting by one filtered mask lookup per shading point, which keeps

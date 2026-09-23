@@ -16,7 +16,11 @@
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
+#include "Components/CanvasPanel.h"
+#include "Components/EditableTextBox.h"
+#include "Components/Image.h"
 #include "Components/PanelWidget.h"
+#include "Components/ScrollBox.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/WrapBox.h"
@@ -212,7 +216,8 @@ bool FPlannerCatalogTabsFoldedTest::RunTest(const FString& Parameters)
 
 	// The same after a 3D round trip.
 	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
-	TestTrue(TEXT("3D: the «Каталог» button hides"), Toggle->GetVisibility() == ESlateVisibility::Collapsed);
+	TestTrue(TEXT("3D: the «Каталог» tab stays in place, disabled (placement is 2D-only)"),
+		Toggle->GetVisibility() != ESlateVisibility::Collapsed && !Toggle->GetIsEnabled());
 	TestTrue(TEXT("3D: tabs hidden"), Widget->CatalogTabBar == nullptr || Widget->CatalogTabBar->GetVisibility() == ESlateVisibility::Collapsed);
 	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
 	TestTrue(TEXT("Still no cards after 3D and back"), Widget->Catalog_Container->GetVisibility() == ESlateVisibility::Collapsed);
@@ -249,7 +254,7 @@ bool FPlannerCatalogTabsFoldedTest::RunTest(const FString& Parameters)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tool row: «Каталог» next to the tools, like them, inside the side panel
+// Categories and tools: three tabs on one line, the tool segment never reflows, everything inside the side panel
 // ─────────────────────────────────────────────────────────────────────────────
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerToolbarFitsTest, "MaxiMall.Planner.UI.ToolbarFitsPanel",
@@ -268,39 +273,80 @@ bool FPlannerToolbarFitsTest::RunTest(const FString& Parameters)
 	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
 	if (!Widget) return false;
 	UButton* Toggle = Widget->GetCatalogToggleButton();
+	UButton* LayoutTab = Widget->GetCategoryButton(EPlannerPanelCategory::Layout);
+	UButton* FinishTab = Widget->GetCategoryButton(EPlannerPanelCategory::Finish);
+	UButton* ClearPlan = Widget->GetClearPlanButton();
 	UWidget* Panel = Widget->WidgetTree ? Widget->WidgetTree->FindWidget(TEXT("LeftPanel")) : nullptr;
-	if (!TestNotNull(TEXT("«Каталог» button"), Toggle) || !TestNotNull(TEXT("BtnPresetRoom"), Widget->BtnPresetRoom.Get())
-		|| !TestNotNull(TEXT("BtnDrawWallTool"), Widget->BtnDrawWallTool.Get()) || !TestNotNull(TEXT("LeftPanel"), Panel)) return false;
+	if (!TestTrue(TEXT("Category layout built"), Widget->HasCategoryLayout()) || !TestNotNull(TEXT("«Каталог» tab"), Toggle)
+		|| !TestNotNull(TEXT("«Планировка» tab"), LayoutTab) || !TestNotNull(TEXT("«Отделка» tab"), FinishTab) || !TestNotNull(TEXT("«Очистить план»"), ClearPlan)
+		|| !TestNotNull(TEXT("BtnPresetRoom"), Widget->BtnPresetRoom.Get()) || !TestNotNull(TEXT("BtnDrawWallTool"), Widget->BtnDrawWallTool.Get())
+		|| !TestNotNull(TEXT("BtnSelectTool"), Widget->BtnSelectTool.Get()) || !TestNotNull(TEXT("Btn_3DView"), Widget->Btn_3DView.Get())
+		|| !TestNotNull(TEXT("LeftPanel"), Panel)) return false;
 
-	// In the tool row, last, after "4×4 м"; styled like it.
-	UPanelWidget* Row = Toggle->GetParent();
-	TestTrue(TEXT("In the tool row with the other tools"), Cast<UWrapBox>(Row) != nullptr && Widget->BtnPresetRoom->GetParent() == Row && Widget->BtnDrawWallTool->GetParent() == Row);
-	TestTrue(TEXT("After «4×4 м»"), Row && Row->GetChildIndex(Toggle) == Row->GetChildrenCount() - 1);
-	const UTextBlock* Label = Cast<UTextBlock>(Toggle->GetContent());
-	const UTextBlock* PresetLabel = Cast<UTextBlock>(Widget->BtnPresetRoom->GetContent());
-	TestTrue(TEXT("Labelled «Каталог»"), Label && Label->GetText().ToString() == TEXT("Каталог"));
-	TestTrue(TEXT("Same font as the tools"), Label && PresetLabel && Label->GetFont().Size == PresetLabel->GetFont().Size
-		&& Label->GetFont().FontObject == PresetLabel->GetFont().FontObject && Label->GetFont().TypefaceFontName == PresetLabel->GetFont().TypefaceFontName);
-	TestTrue(TEXT("Same button style"), Toggle->GetStyle().Normal.GetResourceObject() == Widget->BtnPresetRoom->GetStyle().Normal.GetResourceObject());
+	// The three category tabs, in order, on their own row.
+	UPanelWidget* TabRow = Toggle->GetParent();
+	TestTrue(TEXT("«Планировка» | «Каталог» | «Отделка» in one row"), TabRow && LayoutTab->GetParent() == TabRow && FinishTab->GetParent() == TabRow
+		&& TabRow->GetChildIndex(LayoutTab) == 0 && TabRow->GetChildIndex(Toggle) == 1 && TabRow->GetChildIndex(FinishTab) == 2);
+	const UTextBlock* ToolLabel = Cast<UTextBlock>(Widget->BtnDrawWallTool->GetContent());
+	const TPair<UButton*, const TCHAR*> Tabs[] = { { LayoutTab, TEXT("Планировка") }, { Toggle, TEXT("Каталог") }, { FinishTab, TEXT("Отделка") } };
+	for (const TPair<UButton*, const TCHAR*>& Tab : Tabs)
+	{
+		const UTextBlock* Label = Cast<UTextBlock>(Tab.Key->GetContent());
+		TestTrue(FString::Printf(TEXT("Tab labelled «%s»"), Tab.Value), Label && Label->GetText().ToString() == Tab.Value);
+		TestTrue(FString::Printf(TEXT("«%s» in the tools' font"), Tab.Value), Label && ToolLabel && Label->GetFont().Size == ToolLabel->GetFont().Size
+			&& Label->GetFont().FontObject == ToolLabel->GetFont().FontObject && Label->GetFont().TypefaceFontName == ToolLabel->GetFont().TypefaceFontName);
+		// Styled like the 2D / 3D switch: the same hover on all three (the old «Каталог» copied «4×4 м»'s light hover).
+		TestTrue(FString::Printf(TEXT("«%s» hovers like 2D / 3D"), Tab.Value), Tab.Key->GetStyle().Hovered.TintColor == Widget->Btn_3DView->GetStyle().Hovered.TintColor);
+	}
 
-	// All four tools at once (a wall exists, so "Выбрать" shows): nothing runs past the side panel.
+	// «4×4 м» and «Очистить план» on the «Планировка» page; the delete-all icon beside 2D / 3D is gone.
+	TestTrue(TEXT("«4×4 м» and «Очистить план» in one row"), ClearPlan->GetParent() == Widget->BtnPresetRoom->GetParent()
+		&& ClearPlan->GetParent() && ClearPlan->GetParent()->GetName() == TEXT("PlanActionsRow"));
+	TestTrue(TEXT("No delete-all icon in the view row"), !Widget->BtnClearLayout || Widget->BtnClearLayout->GetVisibility() == ESlateVisibility::Collapsed);
+
+	// The tool segment: «Создать стену» | «Выбрать»; «Выбрать» present but disabled before the first wall.
+	TestTrue(TEXT("Draw and Select form the tool segment"), Widget->BtnSelectTool->GetParent() == Widget->BtnDrawWallTool->GetParent()
+		&& Widget->BtnDrawWallTool->GetParent()->GetChildrenCount() == 2);
+	TestTrue(TEXT("«Выбрать» shown before the first wall"), Widget->BtnSelectTool->GetVisibility() == ESlateVisibility::Visible);
+	TestFalse(TEXT("«Выбрать» disabled before the first wall"), Widget->BtnSelectTool->GetIsEnabled());
+
+	const FVector2D ScreenSize(1920.f, 1080.f);
+	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+	const float PanelRight = RightEdge(Panel);
+	TestTrue(TEXT("Side panel laid out"), PanelRight > 100.f);
+	const float TabTop = TopEdge(LayoutTab);
+	const float TabHeight = (float)LayoutTab->GetCachedGeometry().GetLocalSize().Y;
+	for (const TPair<UButton*, const TCHAR*>& Tab : Tabs)
+	{
+		const FGeometry& Geometry = Tab.Key->GetCachedGeometry();
+		TestTrue(FString::Printf(TEXT("«%s» ends inside the side panel (%.1f <= %.1f)"), Tab.Value, RightEdge(Tab.Key), PanelRight), RightEdge(Tab.Key) <= PanelRight + 0.5f);
+		TestTrue(FString::Printf(TEXT("«%s» on the tab line"), Tab.Value), FMath::IsNearlyEqual(TopEdge(Tab.Key), TabTop, 0.5f)
+			&& FMath::IsNearlyEqual((float)Geometry.GetLocalSize().Y, TabHeight, 0.5f));
+		TestTrue(FString::Printf(TEXT("«%s» not clipped (%.1f >= %.1f)"), Tab.Value, Geometry.GetLocalSize().X, Tab.Key->GetDesiredSize().X),
+			Geometry.GetLocalSize().X >= Tab.Key->GetDesiredSize().X - 0.5f);
+	}
+	const float ToolHeight = (float)Widget->BtnDrawWallTool->GetCachedGeometry().GetLocalSize().Y;
+	TestTrue(FString::Printf(TEXT("Tabs as tall as the tools (%.1f / %.1f)"), TabHeight, ToolHeight), TabHeight > 1.f && FMath::IsNearlyEqual(TabHeight, ToolHeight, 0.5f));
+	const UWidget* PageButtons[] = { Widget->BtnDrawWallTool.Get(), Widget->BtnSelectTool.Get(), Widget->BtnPresetRoom.Get(), ClearPlan };
+	for (const UWidget* Button : PageButtons)
+	{
+		TestTrue(FString::Printf(TEXT("%s ends inside the side panel (%.1f <= %.1f)"), *Button->GetName(), RightEdge(Button), PanelRight), RightEdge(Button) <= PanelRight + 0.5f);
+	}
+	const float SelectTop = TopEdge(Widget->BtnSelectTool);
+	const float SelectWidth = (float)Widget->BtnSelectTool->GetCachedGeometry().GetLocalSize().X;
+	TestTrue(TEXT("Draw and Select side by side"), FMath::IsNearlyEqual(TopEdge(Widget->BtnDrawWallTool), SelectTop, 0.5f));
+
+	// A wall: «Выбрать» becomes available in the same place, the same size — the tool segment never reflows.
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World))
 	{
 		Manager->AddWallBetweenPoints(FVector2D(0., 0.), FVector2D(300., 0.));
 	}
-	const FVector2D ScreenSize(1920.f, 1080.f);
+	Widget->RefreshPanelState();
 	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
-	const float PanelRight = RightEdge(Panel);
-	const UWidget* Tools[] = { Widget->BtnDrawWallTool.Get(), Widget->BtnSelectTool.Get(), Widget->BtnPresetRoom.Get(), Toggle };
-	for (const UWidget* Tool : Tools)
-	{
-		if (!Tool || Tool->GetVisibility() == ESlateVisibility::Collapsed) continue;
-		TestTrue(FString::Printf(TEXT("%s ends inside the side panel (%.1f <= %.1f)"), *Tool->GetName(), RightEdge(Tool), PanelRight), RightEdge(Tool) <= PanelRight + 0.5f);
-	}
-	TestTrue(TEXT("«Выбрать» shown with a wall"), Widget->BtnSelectTool && Widget->BtnSelectTool->GetVisibility() != ESlateVisibility::Collapsed);
-	const float ToggleHeight = (float)Toggle->GetCachedGeometry().GetLocalSize().Y;
-	const float PresetHeight = (float)Widget->BtnPresetRoom->GetCachedGeometry().GetLocalSize().Y;
-	TestTrue(FString::Printf(TEXT("As tall as the tools (%.1f / %.1f)"), ToggleHeight, PresetHeight), ToggleHeight > 1.f && FMath::IsNearlyEqual(ToggleHeight, PresetHeight, 0.5f));
+	TestTrue(TEXT("«Выбрать» enabled with a wall"), Widget->BtnSelectTool->GetIsEnabled());
+	TestTrue(FString::Printf(TEXT("«Выбрать» did not move (%.1f / %.1f)"), TopEdge(Widget->BtnSelectTool), SelectTop), FMath::IsNearlyEqual(TopEdge(Widget->BtnSelectTool), SelectTop, 0.5f));
+	TestTrue(FString::Printf(TEXT("«Выбрать» kept its width (%.1f / %.1f)"), Widget->BtnSelectTool->GetCachedGeometry().GetLocalSize().X, SelectWidth),
+		FMath::IsNearlyEqual((float)Widget->BtnSelectTool->GetCachedGeometry().GetLocalSize().X, SelectWidth, 0.5f));
 
 	FString OutDir;
 	if (FParse::Value(FCommandLine::Get(), TEXT("PlannerSnapshotDir="), OutDir) && FApp::CanEverRender())
@@ -309,6 +355,348 @@ bool FPlannerToolbarFitsTest::RunTest(const FString& Parameters)
 		const FString File = FPaths::Combine(OutDir, TEXT("PlannerToolbar.png"));
 		if (SnapshotToPng(Slate.ToSharedRef(), ScreenSize, File)) AddInfo(FString::Printf(TEXT("Toolbar snapshot: %s"), *File));
 	}
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Safety net for the runtime layout: every designed binding still in the tree and wired; building twice changes nothing
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerBindingsIntactTest, "MaxiMall.Planner.UI.BindingsIntact",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerBindingsIntactTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	if (!Widget || !TestNotNull(TEXT("Widget tree"), Widget->WidgetTree.Get())) return false;
+	TestTrue(TEXT("Category layout built"), Widget->HasCategoryLayout());
+	const UWidget* Root = Widget->WidgetTree->RootWidget;
+	auto InTree = [Root](const UWidget* W)
+	{
+		while (W && W != Root) W = W->GetParent();
+		return W != nullptr && W == Root;
+	};
+	struct FNamedWidget { const TCHAR* Key; const UWidget* Value; };
+	struct FNamedButton { const TCHAR* Key; const UButton* Value; };
+
+	// Designed widgets the code binds (the ones the WBP has): still there after the moves, still under the root.
+	const FNamedWidget Designed[] = {
+		{ TEXT("Btn_2DView"), Widget->Btn_2DView }, { TEXT("Btn_3DView"), Widget->Btn_3DView }, { TEXT("BtnSelectTool"), Widget->BtnSelectTool },
+		{ TEXT("BtnDrawWallTool"), Widget->BtnDrawWallTool }, { TEXT("BtnDeleteTool"), Widget->BtnDeleteTool }, { TEXT("BtnAddDoor"), Widget->BtnAddDoor },
+		{ TEXT("BtnAddWindow"), Widget->BtnAddWindow }, { TEXT("BtnPresetRoom"), Widget->BtnPresetRoom }, { TEXT("BtnClearLayout"), Widget->BtnClearLayout },
+		{ TEXT("TxtLiveLength"), Widget->TxtLiveLength }, { TEXT("LiveLengthPanel"), Widget->LiveLengthPanel }, { TEXT("TxtFloorArea"), Widget->TxtFloorArea },
+		{ TEXT("TxtPerimeter"), Widget->TxtPerimeter }, { TEXT("TxtGuidanceHint"), Widget->TxtGuidanceHint }, { TEXT("SnapIndicator"), Widget->SnapIndicator },
+		{ TEXT("mouse_cursor"), Widget->mouse_cursor }, { TEXT("EditableTxtProp1"), Widget->EditableTxtProp1 }, { TEXT("EditableTxtProp2"), Widget->EditableTxtProp2 },
+		{ TEXT("EditableTxtProp3"), Widget->EditableTxtProp3 }, { TEXT("BtnApplyProperties"), Widget->BtnApplyProperties },
+		{ TEXT("TxtApplyProperties"), Widget->TxtApplyProperties }, { TEXT("Border_wall_size"), Widget->Border_wall_size }, { TEXT("LblWallSize"), Widget->LblWallSize },
+		{ TEXT("TotalsBox"), Widget->TotalsBox }, { TEXT("Border_AddDoor"), Widget->Border_AddDoor }, { TEXT("Border_AddWindow"), Widget->Border_AddWindow },
+		{ TEXT("EditableTxtOpeningWidth"), Widget->EditableTxtOpeningWidth }, { TEXT("EditableTxtOpeningHeight"), Widget->EditableTxtOpeningHeight },
+		{ TEXT("EditableTxtOpeningWidth_1"), Widget->EditableTxtOpeningWidth_1 }, { TEXT("EditableTxtOpeningHeight_1"), Widget->EditableTxtOpeningHeight_1 },
+		{ TEXT("EditableTxtOpeningSillHeight"), Widget->EditableTxtOpeningSillHeight }, { TEXT("SelectionLabelPanel"), Widget->SelectionLabelPanel },
+		{ TEXT("SelectionHeaderRow"), Widget->SelectionHeaderRow }, { TEXT("TxtSelectionTitle"), Widget->TxtSelectionTitle },
+		{ TEXT("HorizontalBox_3"), Widget->HorizontalBox_3 }, { TEXT("BtnHelp"), Widget->BtnHelp }, { TEXT("BtnHideHelp"), Widget->BtnHideHelp },
+		{ TEXT("TxtSelectedDims"), Widget->TxtSelectedDims }, { TEXT("TxtDistLeft"), Widget->TxtDistLeft }, { TEXT("TxtDistRight"), Widget->TxtDistRight },
+		{ TEXT("TxtDistFloor"), Widget->TxtDistFloor }, { TEXT("TxtDistNeighbor"), Widget->TxtDistNeighbor }, { TEXT("BtnSwingLeft"), Widget->BtnSwingLeft },
+		{ TEXT("BtnSwingRight"), Widget->BtnSwingRight }, { TEXT("BtnSwingInward"), Widget->BtnSwingInward }, { TEXT("BtnSwingOutward"), Widget->BtnSwingOutward },
+		{ TEXT("SwingRow"), Widget->SwingRow }, { TEXT("RotateRow"), Widget->RotateRow }, { TEXT("BtnFinishPaint"), Widget->BtnFinishPaint },
+		{ TEXT("BtnClearFinish"), Widget->BtnClearFinish }, { TEXT("TxtFinishInfo"), Widget->TxtFinishInfo }, { TEXT("TxtFinishAreas"), Widget->TxtFinishAreas },
+		{ TEXT("BtnRotateLeft"), Widget->BtnRotateLeft }, { TEXT("BtnRotateRight"), Widget->BtnRotateRight }, { TEXT("BtnCancelPlacement"), Widget->BtnCancelPlacement },
+		{ TEXT("TxtOperationMessage"), Widget->TxtOperationMessage }, { TEXT("Catalog_Container"), Widget->Catalog_Container },
+		{ TEXT("CatalogTabBar"), Widget->CatalogTabBar }, { TEXT("BtnCatalogInterior"), Widget->BtnCatalogInterior }, { TEXT("BtnCatalogCabinets"), Widget->BtnCatalogCabinets } };
+	for (const FNamedWidget& Entry : Designed)
+	{
+		TestTrue(FString::Printf(TEXT("%s bound and in the tree"), Entry.Key), Entry.Value != nullptr && InTree(Entry.Value));
+	}
+
+	// Built in code: still reachable.
+	const FNamedWidget Runtime[] = {
+		{ TEXT("«Каталог»"), Widget->GetCatalogToggleButton() }, { TEXT("«Плитка»"), Widget->GetFinishTileButton() },
+		{ TEXT("Dimension overlay"), Widget->GetDimensionOverlay() }, { TEXT("«Планировка»"), Widget->GetCategoryButton(EPlannerPanelCategory::Layout) },
+		{ TEXT("«Отделка» tab"), Widget->GetCategoryButton(EPlannerPanelCategory::Finish) }, { TEXT("«Очистить план»"), Widget->GetClearPlanButton() } };
+	for (const FNamedWidget& Entry : Runtime)
+	{
+		TestTrue(FString::Printf(TEXT("%s built and in the tree"), Entry.Key), Entry.Value != nullptr && InTree(Entry.Value));
+	}
+
+	// Every button still does what it did: bound in C++, or in the Blueprint graph (Save, Back).
+	const FNamedButton Clickable[] = {
+		{ TEXT("Btn_2DView"), Widget->Btn_2DView }, { TEXT("Btn_3DView"), Widget->Btn_3DView }, { TEXT("BtnSelectTool"), Widget->BtnSelectTool },
+		{ TEXT("BtnDrawWallTool"), Widget->BtnDrawWallTool }, { TEXT("BtnDeleteTool"), Widget->BtnDeleteTool }, { TEXT("BtnAddDoor"), Widget->BtnAddDoor },
+		{ TEXT("BtnAddWindow"), Widget->BtnAddWindow }, { TEXT("BtnPresetRoom"), Widget->BtnPresetRoom }, { TEXT("BtnClearLayout"), Widget->BtnClearLayout },
+		{ TEXT("BtnHelp"), Widget->BtnHelp }, { TEXT("BtnHideHelp"), Widget->BtnHideHelp }, { TEXT("BtnApplyProperties"), Widget->BtnApplyProperties },
+		{ TEXT("BtnSwingLeft"), Widget->BtnSwingLeft }, { TEXT("BtnSwingRight"), Widget->BtnSwingRight }, { TEXT("BtnSwingInward"), Widget->BtnSwingInward },
+		{ TEXT("BtnSwingOutward"), Widget->BtnSwingOutward }, { TEXT("BtnFinishPaint"), Widget->BtnFinishPaint }, { TEXT("BtnClearFinish"), Widget->BtnClearFinish },
+		{ TEXT("BtnRotateLeft"), Widget->BtnRotateLeft }, { TEXT("BtnRotateRight"), Widget->BtnRotateRight }, { TEXT("BtnCancelPlacement"), Widget->BtnCancelPlacement },
+		{ TEXT("BtnCatalogInterior"), Widget->BtnCatalogInterior }, { TEXT("BtnCatalogCabinets"), Widget->BtnCatalogCabinets },
+		{ TEXT("«Каталог»"), Widget->GetCatalogToggleButton() }, { TEXT("«Плитка»"), Widget->GetFinishTileButton() },
+		{ TEXT("«Планировка»"), Widget->GetCategoryButton(EPlannerPanelCategory::Layout) }, { TEXT("«Отделка» tab"), Widget->GetCategoryButton(EPlannerPanelCategory::Finish) },
+		{ TEXT("«Очистить план»"), Widget->GetClearPlanButton() } };
+	for (const FNamedButton& Entry : Clickable)
+	{
+		TestTrue(FString::Printf(TEXT("%s is wired"), Entry.Key), Entry.Value && Entry.Value->OnClicked.IsBound());
+	}
+	const UButton* Save = Widget->WidgetTree->FindWidget<UButton>(TEXT("BtnSave"));
+	const UButton* Back = Widget->WidgetTree->FindWidget<UButton>(TEXT("BackButton"));
+	TestTrue(TEXT("«Сохранить» (Blueprint) still wired and in the tree"), Save && InTree(Save) && Save->OnClicked.IsBound());
+	TestTrue(TEXT("← Back (Blueprint) still wired and in the tree"), Back && InTree(Back) && Back->OnPressed.IsBound());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerRuntimeLayoutIdempotentTest, "MaxiMall.Planner.UI.RuntimeLayoutIdempotent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerRuntimeLayoutIdempotentTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	if (!Widget || !TestNotNull(TEXT("Widget tree"), Widget->WidgetTree.Get())) return false;
+	UPanelWidget* Sections = Widget->WidgetTree->FindWidget<UPanelWidget>(TEXT("PanelSections"));
+	if (!TestNotNull(TEXT("PanelSections"), Sections)) return false;
+	auto ChildNames = [](const UPanelWidget* Panel)
+	{
+		TArray<FString> Names;
+		for (int32 i = 0; i < Panel->GetChildrenCount(); ++i) Names.Add(Panel->GetChildAt(i) ? Panel->GetChildAt(i)->GetName() : FString(TEXT("-")));
+		return Names;
+	};
+	auto CountWidgets = [Widget]()
+	{
+		int32 Count = 0;
+		Widget->WidgetTree->ForEachWidget([&Count](UWidget*) { ++Count; });
+		return Count;
+	};
+	const TArray<FString> Before = ChildNames(Sections);
+	const int32 WidgetsBefore = CountWidgets();
+	Widget->BuildRuntimeLayout();
+	TestTrue(TEXT("Building the layout again keeps the sections"), ChildNames(Sections) == Before);
+	TestEqual(TEXT("Building the layout again adds no widget"), CountWidgets(), WidgetsBefore);
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The planner UI is an input boundary; messages are visible in every state
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerPanelInputBoundaryTest, "MaxiMall.Planner.UI.PanelIsInputBoundary",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerPanelInputBoundaryTest::RunTest(const FString& Parameters)
+{
+	if (!FSlateApplication::IsInitialized())
+	{
+		AddInfo(TEXT("Skipped: no Slate application."));
+		return true;
+	}
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	if (!Widget || !TestNotNull(TEXT("Hint bar"), Widget->HorizontalBox_3.Get())) return false;
+	const FVector2D ScreenSize(1920.f, 1080.f);
+	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+
+	TestTrue(TEXT("A point on the side panel is planner UI"), Widget->IsScreenPositionOverPlannerUI(FVector2D(200.f, 600.f)));
+	TestTrue(TEXT("A point between the panel's buttons is planner UI"), Widget->IsScreenPositionOverPlannerUI(FVector2D(410.f, 300.f)));
+	TestFalse(TEXT("A point on the plan is not"), Widget->IsScreenPositionOverPlannerUI(FVector2D(1000.f, 600.f)));
+	const FGeometry& Hint = Widget->HorizontalBox_3->GetCachedGeometry();
+	const FVector2D HintCentre = Hint.GetAbsolutePosition() + Hint.GetAbsoluteSize() * 0.5f;
+	TestTrue(TEXT("The hint bar over the plan is planner UI"), Widget->IsScreenPositionOverPlannerUI(HintCentre));
+	// The hint is centred over the free plan area beside the panel, not over the viewport's centre.
+	const float FreeCentre = (Widget->GetPanelWidth() + ScreenSize.X) * 0.5f;
+	TestTrue(FString::Printf(TEXT("Hint centred over the plan (%.1f ~ %.1f)"), HintCentre.X, FreeCentre), FMath::IsNearlyEqual((float)HintCentre.X, FreeCentre, 2.f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerStatusMessageVisibleTest, "MaxiMall.Planner.UI.StatusMessageAlwaysVisible",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerStatusMessageVisibleTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager) || !TestNotNull(TEXT("TxtOperationMessage"), Widget->TxtOperationMessage.Get())) return false;
+
+	// An empty plan, in 3D: where the old message line (inside the totals) was hidden.
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	Manager->NotifyOperationRejected(TEXT("Проверка сообщения"));
+	TestEqual(TEXT("The message text"), Widget->TxtOperationMessage->GetText().ToString(), FString(TEXT("Проверка сообщения")));
+	bool bAllShown = true;
+	bool bInsideTotals = false;
+	for (const UWidget* W = Widget->TxtOperationMessage; W; W = W->GetParent())
+	{
+		bAllShown &= W->IsVisible();
+		bInsideTotals |= (W == Widget->TotalsBox);
+	}
+	TestTrue(TEXT("The message and every panel around it are shown (empty plan, 3D)"), bAllShown);
+	TestFalse(TEXT("The message is not inside the totals any more"), bInsideTotals);
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One visual language: navy = where you are, green = switched on, near-black = idle (our palette)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerActiveStateVocabularyTest, "MaxiMall.Planner.UI.ActiveStateVocabulary",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerActiveStateVocabularyTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	if (!Widget || !TestNotNull(TEXT("Btn_2DView"), Widget->Btn_2DView.Get()) || !TestNotNull(TEXT("Btn_3DView"), Widget->Btn_3DView.Get())
+		|| !TestNotNull(TEXT("BtnDrawWallTool"), Widget->BtnDrawWallTool.Get())) return false;
+	UButton* LayoutTab = Widget->GetCategoryButton(EPlannerPanelCategory::Layout);
+	UButton* FinishTab = Widget->GetCategoryButton(EPlannerPanelCategory::Finish);
+	if (!TestNotNull(TEXT("«Планировка» tab"), LayoutTab) || !TestNotNull(TEXT("«Отделка» tab"), FinishTab)) return false;
+	const float DesignedOutline = Widget->Btn_3DView->GetStyle().Normal.OutlineSettings.Width;
+
+	// 2D: the 2D side is selected (navy, still enabled — it must not look unavailable), 3D idle; the Draw tool switched on (green).
+	TestTrue(TEXT("2D selected: navy"), Widget->Btn_2DView->GetBackgroundColor().Equals(Widget->ActiveTabColor));
+	TestTrue(TEXT("2D selected: still enabled"), Widget->Btn_2DView->GetIsEnabled());
+	TestTrue(TEXT("3D idle: the near-black idle colour"), Widget->Btn_3DView->GetBackgroundColor().Equals(Widget->IdleControlColor));
+	TestTrue(TEXT("Draw tool on: green"), Widget->BtnDrawWallTool->GetBackgroundColor().Equals(Widget->ActiveToolColor));
+	TestTrue(TEXT("«Планировка» selected: navy"), LayoutTab->GetBackgroundColor().Equals(Widget->ActiveTabColor));
+	TestTrue(TEXT("«Отделка» idle"), FinishTab->GetBackgroundColor().Equals(Widget->IdleControlColor));
+	if (Widget->bOutlineSelectedNavigation && Widget->Btn_2DView->GetStyle().Normal.DrawAs == ESlateBrushDrawType::RoundedBox)
+	{
+		TestTrue(TEXT("2D selected: navy outline"), FMath::IsNearlyEqual(Widget->Btn_2DView->GetStyle().Normal.OutlineSettings.Width, Widget->SelectedOutlineWidth));
+	}
+
+	// 3D: the other way round; the outline goes back to the designed one.
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	TestTrue(TEXT("3D selected: navy"), Widget->Btn_3DView->GetBackgroundColor().Equals(Widget->ActiveTabColor));
+	TestTrue(TEXT("2D idle"), Widget->Btn_2DView->GetBackgroundColor().Equals(Widget->IdleControlColor));
+	TestTrue(TEXT("2D idle: designed outline back"), FMath::IsNearlyEqual(Widget->Btn_2DView->GetStyle().Normal.OutlineSettings.Width, DesignedOutline));
+	TestTrue(TEXT("3D: «Отделка» is the shown category"), FinishTab->GetBackgroundColor().Equals(Widget->ActiveTabColor));
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Categories: one page at a time, the tool follows, 3D shows «Отделка»
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerCategoryRulesTest, "MaxiMall.Planner.UI.CategoryRules",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerCategoryRulesTest::RunTest(const FString& Parameters)
+{
+	using namespace PlannerPanelRules;
+	FPlannerPanelInputs In;
+	In.bIs2D = true;
+	In.Category = EPlannerPanelCategory::Layout;
+	In.bHasWalls = false;
+	FPlannerPanelVisibility V = Compute(In);
+	TestTrue(TEXT("«Планировка»: tools and its page only"), V.bToolsRow && V.bLayoutPage && !V.bCatalogPage && !V.bFinishPage && !V.bEmptyPlanNotice);
+
+	In.Category = EPlannerPanelCategory::Catalog;
+	V = Compute(In);
+	TestTrue(TEXT("«Каталог» on an empty plan: its page and the notice, no tools"), V.bCatalogPage && V.bEmptyPlanNotice && !V.bToolsRow && !V.bLayoutPage);
+
+	In.Category = EPlannerPanelCategory::Finish;
+	In.bHasWalls = true;
+	V = Compute(In);
+	TestTrue(TEXT("«Отделка» with walls: its page only"), V.bFinishPage && !V.bEmptyPlanNotice && !V.bToolsRow && !V.bCatalogPage);
+
+	In.bIs2D = false;
+	In.Category = EPlannerPanelCategory::Layout;
+	V = Compute(In);
+	TestTrue(TEXT("3D: «Отделка» shown whatever the 2D tab"), V.Shown == EPlannerPanelCategory::Finish && V.bFinishPage && !V.bToolsRow && !V.bLayoutPage);
+	TestTrue(TEXT("3D: the editing tabs disabled, «Отделка» enabled"), !V.bLayoutTabEnabled && !V.bCatalogTabEnabled && V.bFinishTabEnabled);
+
+	TestTrue(TEXT("«Каталог» opens from any tab"), AfterCatalogToggle(EPlannerPanelCategory::Layout, EPlannerPanelCategory::Layout) == EPlannerPanelCategory::Catalog
+		&& AfterCatalogToggle(EPlannerPanelCategory::Finish, EPlannerPanelCategory::Layout) == EPlannerPanelCategory::Catalog);
+	TestTrue(TEXT("«Каталог» again goes back to the tab before it"), AfterCatalogToggle(EPlannerPanelCategory::Catalog, EPlannerPanelCategory::Finish) == EPlannerPanelCategory::Finish
+		&& AfterCatalogToggle(EPlannerPanelCategory::Catalog, EPlannerPanelCategory::Catalog) == EPlannerPanelCategory::Layout);
+
+	TestTrue(TEXT("«Каталог» / «Отделка» with walls put the Draw tool away"), SwitchesDrawToSelect(EPlannerPanelCategory::Catalog, true, true)
+		&& SwitchesDrawToSelect(EPlannerPanelCategory::Finish, true, true));
+	TestFalse(TEXT("… not on an empty plan, not on «Планировка», not when another tool is on"), SwitchesDrawToSelect(EPlannerPanelCategory::Catalog, false, true)
+		|| SwitchesDrawToSelect(EPlannerPanelCategory::Layout, true, true) || SwitchesDrawToSelect(EPlannerPanelCategory::Finish, true, false));
+
+	TestTrue(TEXT("A draw started outside «Планировка» brings it back"), ReturnsToLayout(EPlannerPanelCategory::Catalog, true, true));
+	TestFalse(TEXT("… not on «Планировка», not in 3D, not without a draw"), ReturnsToLayout(EPlannerPanelCategory::Layout, true, true)
+		|| ReturnsToLayout(EPlannerPanelCategory::Catalog, false, true) || ReturnsToLayout(EPlannerPanelCategory::Catalog, true, false));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerCategorySwitchingTest, "MaxiMall.Planner.UI.CategorySwitching",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerCategorySwitchingTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager) || !TestTrue(TEXT("Category layout built"), Widget->HasCategoryLayout())) return false;
+	UWidget* Tools = Widget->WidgetTree->FindWidget(TEXT("ToolsRow"));
+	UWidget* LayoutPage = Widget->WidgetTree->FindWidget(TEXT("PageLayoutBody"));
+	UWidget* CatalogPage = Widget->WidgetTree->FindWidget(TEXT("PageCatalogBody"));
+	UWidget* FinishPage = Widget->WidgetTree->FindWidget(TEXT("PageFinishBody"));
+	UWidget* Notice = Widget->WidgetTree->FindWidget(TEXT("EmptyPlanNotice"));
+	UButton* LayoutTab = Widget->GetCategoryButton(EPlannerPanelCategory::Layout);
+	UButton* CatalogTab = Widget->GetCategoryButton(EPlannerPanelCategory::Catalog);
+	UButton* FinishTab = Widget->GetCategoryButton(EPlannerPanelCategory::Finish);
+	if (!TestNotNull(TEXT("ToolsRow"), Tools) || !TestNotNull(TEXT("PageLayoutBody"), LayoutPage) || !TestNotNull(TEXT("PageCatalogBody"), CatalogPage)
+		|| !TestNotNull(TEXT("PageFinishBody"), FinishPage) || !TestNotNull(TEXT("EmptyPlanNotice"), Notice)
+		|| !TestNotNull(TEXT("Tabs"), LayoutTab) || !TestNotNull(TEXT("«Каталог»"), CatalogTab) || !TestNotNull(TEXT("«Отделка»"), FinishTab)) return false;
+	auto Shown = [](const UWidget* W) { return W->GetVisibility() != ESlateVisibility::Collapsed; };
+
+	// Opened: «Планировка», the Draw tool.
+	TestTrue(TEXT("Opens on «Планировка»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Layout);
+	TestTrue(TEXT("«Планировка»: tools and its page shown, the others folded"), Shown(Tools) && Shown(LayoutPage) && !Shown(CatalogPage) && !Shown(FinishPage) && !Shown(Notice));
+
+	// «Каталог» on an empty plan: browsable, the Draw tool stays, a notice says what to do first.
+	CatalogTab->OnClicked.Broadcast();
+	TestTrue(TEXT("«Каталог» opened"), Widget->GetActiveCategory() == EPlannerPanelCategory::Catalog && Widget->IsCatalogOpen());
+	TestTrue(TEXT("Empty plan: the Draw tool stays"), Manager->ActiveToolMode == EPlannerToolMode::DrawWall);
+	TestTrue(TEXT("Empty plan: its page and the notice"), Shown(CatalogPage) && Shown(Notice) && !Shown(Tools) && !Shown(LayoutPage));
+
+	// A wall draw started there brings the panel back to «Планировка».
+	Manager->StartInteractiveWallDraw(FVector(0., 0., 0.));
+	Widget->RefreshPanelState();
+	TestTrue(TEXT("Drawing: back on «Планировка»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Layout && !Widget->IsCatalogOpen());
+	Manager->CancelInteractiveWallDraw();
+
+	// «Каталог» twice: back to where it was.
+	CatalogTab->OnClicked.Broadcast();
+	CatalogTab->OnClicked.Broadcast();
+	TestTrue(TEXT("«Каталог» again folds it: back on «Планировка»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Layout);
+
+	// With walls, «Отделка» puts the Draw tool away (a click on the plan selects).
+	Manager->AddWallBetweenPoints(FVector2D(0., 0.), FVector2D(400., 0.));
+	Widget->RefreshPanelState();
+	FinishTab->OnClicked.Broadcast();
+	TestTrue(TEXT("«Отделка» opened"), Widget->GetActiveCategory() == EPlannerPanelCategory::Finish);
+	TestTrue(TEXT("«Отделка» with walls: «Выбрать»"), Manager->ActiveToolMode == EPlannerToolMode::Select);
+	TestTrue(TEXT("«Отделка»: its page only"), Shown(FinishPage) && !Shown(Tools) && !Shown(LayoutPage) && !Shown(CatalogPage) && !Shown(Notice));
+	FinishTab->OnClicked.Broadcast();
+	TestTrue(TEXT("«Отделка» clicked again stays"), Widget->GetActiveCategory() == EPlannerPanelCategory::Finish);
+	CatalogTab->OnClicked.Broadcast();
+	TestTrue(TEXT("From «Отделка»: «Каталог»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Catalog);
+	CatalogTab->OnClicked.Broadcast();
+	TestTrue(TEXT("«Каталог» folded: back on «Отделка»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Finish);
+
+	// 3D: «Отделка» only; the editing tabs stay in place, disabled. Back in 2D the tab comes back.
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	TestTrue(TEXT("3D: «Отделка»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Finish && Shown(FinishPage) && !Shown(Tools));
+	TestTrue(TEXT("3D: «Планировка» and «Каталог» disabled, «Отделка» enabled"), !LayoutTab->GetIsEnabled() && !CatalogTab->GetIsEnabled() && FinishTab->GetIsEnabled());
+	TestTrue(TEXT("3D: all three tabs still shown"), Shown(LayoutTab) && Shown(CatalogTab) && Shown(FinishTab));
+	LayoutTab->OnClicked.Broadcast(); // remembered for 2D; 3D still shows «Отделка»
+	TestTrue(TEXT("3D: still «Отделка»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Finish && Shown(FinishPage));
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
+	TestTrue(TEXT("2D: the chosen tab"), Widget->GetActiveCategory() == EPlannerPanelCategory::Layout && Shown(Tools) && Shown(LayoutPage));
+	TestTrue(TEXT("2D: all tabs enabled"), LayoutTab->GetIsEnabled() && CatalogTab->GetIsEnabled() && FinishTab->GetIsEnabled());
 	return true;
 }
 
@@ -381,7 +769,9 @@ bool FPlannerFinishControlsFitTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Description wraps"), Widget->TxtFinishInfo->GetAutoWrapText());
 	TestTrue(TEXT("Description is dark on the white side panel"), Widget->TxtFinishInfo->GetColorAndOpacity().GetSpecifiedColor().GetLuminance() < 0.3f);
 
-	// Everything shown at once, with the longest kind of description.
+	// The «Отделка» page (the finish controls live there), then everything shown at once, with the longest kind of description.
+	// The page first: switching it re-runs the finish rules, which fold the controls while nothing is selected.
+	Widget->SetActiveCategory(EPlannerPanelCategory::Finish);
 	Widget->BtnFinishPaint->SetVisibility(ESlateVisibility::Visible);
 	TileButton->SetVisibility(ESlateVisibility::Visible);
 	Widget->BtnClearFinish->SetVisibility(ESlateVisibility::Visible);
@@ -1286,6 +1676,774 @@ bool FPlannerDimensionSnapshotTest::RunTest(const FString& Parameters)
 	const FString File = FPaths::Combine(OutDir, TEXT("DimensionLines.png"));
 	TestTrue(TEXT("Snapshot written"), SnapshotToPng(Scene, FVector2D(1000.f, 520.f), File));
 	AddInfo(FString::Printf(TEXT("Dimension lines snapshot: %s"), *File));
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Context: one coherent block per selection kind
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerContextByKindTest, "MaxiMall.Planner.UI.ContextByKind",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerContextByKindTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager) || !TestNotNull(TEXT("Title"), Widget->TxtSelectionTitle.Get())
+		|| !TestNotNull(TEXT("Delete"), Widget->BtnDeleteTool.Get()) || !TestNotNull(TEXT("Size block"), Widget->Border_wall_size.Get())
+		|| !TestNotNull(TEXT("Door block"), Widget->Border_AddDoor.Get()) || !TestNotNull(TEXT("Summary"), Widget->GetContextSummaryText())
+		|| !TestNotNull(TEXT("«Добавить на стену»"), Widget->GetAddToWallCaption()) || !TestNotNull(TEXT("Style row"), Widget->StyleRow.Get())) return false;
+	auto Shown = [](const UWidget* W) { return W && W->GetVisibility() != ESlateVisibility::Collapsed && W->GetVisibility() != ESlateVisibility::Hidden; };
+	auto Title = [Widget]() { return Widget->TxtSelectionTitle->GetText().ToString(); };
+
+	// 5 x 4 m room, a door on the south wall (0,0) → (500,0); the room is on its left (+Y).
+	const int32 N1 = Manager->AddNode(FVector2D(0., 0.));
+	const int32 N2 = Manager->AddNode(FVector2D(500., 0.));
+	const int32 N3 = Manager->AddNode(FVector2D(500., 400.));
+	const int32 N4 = Manager->AddNode(FVector2D(0., 400.));
+	const int32 South = Manager->AddWall(N1, N2);
+	Manager->AddWall(N2, N3);
+	Manager->AddWall(N3, N4);
+	Manager->AddWall(N4, N1);
+	TestTrue(TEXT("Door added"), Manager->AddOpeningToWall(South, EOpeningType::Door, 200.f, 90.f, 210.f, 0.f));
+	Manager->RebuildRooms();
+	Widget->RefreshPanelState();
+
+	// The creation fields read in the order of their captions.
+	if (Widget->EditableTxtOpeningWidth && Widget->EditableTxtOpeningHeight && Widget->EditableTxtOpeningWidth->GetParent())
+	{
+		UPanelWidget* DoorRow = Widget->EditableTxtOpeningWidth->GetParent();
+		TestTrue(TEXT("Door fields: width, then height"), DoorRow->GetChildIndex(Widget->EditableTxtOpeningWidth) < DoorRow->GetChildIndex(Widget->EditableTxtOpeningHeight));
+	}
+	if (Widget->EditableTxtOpeningHeight_1 && Widget->EditableTxtOpeningSillHeight && Widget->EditableTxtOpeningWidth_1 && Widget->EditableTxtOpeningHeight_1->GetParent())
+	{
+		UPanelWidget* WindowRow = Widget->EditableTxtOpeningHeight_1->GetParent();
+		TestTrue(TEXT("Window fields: width, height, sill"), WindowRow->GetChildIndex(Widget->EditableTxtOpeningWidth_1) < WindowRow->GetChildIndex(Widget->EditableTxtOpeningHeight_1)
+			&& WindowRow->GetChildIndex(Widget->EditableTxtOpeningHeight_1) < WindowRow->GetChildIndex(Widget->EditableTxtOpeningSillHeight));
+	}
+
+	// A wall on «Планировка»: title, delete, its size fields and «Добавить на стену».
+	Manager->ClearAllSelection();
+	Manager->SelectedSegmentID = South;
+	Manager->SelectedOpeningIndex = -1;
+	Manager->bSelectedWallFaceLeft = true;
+	Widget->RefreshPanelState();
+	TestEqual(TEXT("Wall: title"), Title(), FString(TEXT("Стена")));
+	TestTrue(TEXT("Wall: delete, size fields, «Добавить на стену» with both blocks"), Shown(Widget->BtnDeleteTool) && Shown(Widget->Border_wall_size)
+		&& Shown(Widget->GetAddToWallCaption()) && Shown(Widget->Border_AddDoor) && Shown(Widget->Border_AddWindow));
+	TestFalse(TEXT("Wall on «Планировка»: no summary line (the fields show the sizes)"), Shown(Widget->GetContextSummaryText()));
+
+	// The door: its own sizes only — no creation blocks; the empty third field folds; swing and styles.
+	Manager->SelectedOpeningIndex = 0;
+	Widget->RefreshPanelState();
+	TestEqual(TEXT("Door: title"), Title(), FString(TEXT("Дверь")));
+	TestFalse(TEXT("Door: no «Добавить на стену» blocks"), Shown(Widget->GetAddToWallCaption()) || Shown(Widget->Border_AddDoor) || Shown(Widget->Border_AddWindow));
+	TestTrue(TEXT("Door: the third size field folds (no empty slot)"), Widget->EditableTxtProp3 && Widget->EditableTxtProp3->GetVisibility() == ESlateVisibility::Collapsed);
+	TestTrue(TEXT("Door: swing row"), Shown(Widget->SwingRow));
+	TestTrue(TEXT("Door: style picker with the door styles"), Shown(Widget->StyleRow) && Widget->StyleRow->GetChildrenCount() > 0);
+	TestTrue(TEXT("Door: «Стиль» caption"), Shown(Widget->WidgetTree->FindWidget(TEXT("StyleCaption"))));
+
+	// «Отделка»: the wall is named with its face, a one-line summary (clear length, captioned), no editor.
+	Manager->SelectedOpeningIndex = -1;
+	Widget->SetActiveCategory(EPlannerPanelCategory::Finish);
+	TestTrue(FString::Printf(TEXT("«Отделка»: wall title names the face (%s)"), *Title()), Title().StartsWith(TEXT("Стена · ")));
+	TestFalse(TEXT("«Отделка»: no size fields, no creation blocks"), Shown(Widget->Border_wall_size) || Shown(Widget->Border_AddDoor) || Shown(Widget->GetAddToWallCaption()));
+	const FString Summary = Widget->GetContextSummaryText()->GetText().ToString();
+	TestTrue(FString::Printf(TEXT("«Отделка»: summary with the clear length, captioned (%s)"), *Summary), Shown(Widget->GetContextSummaryText())
+		&& (Summary.StartsWith(TEXT("Длина по стороне в комнату: ")) || Summary.StartsWith(TEXT("Длина по наружной стороне: "))));
+	TestTrue(TEXT("«Отделка» (2D): delete still offered for a wall"), Shown(Widget->BtnDeleteTool));
+	// A corner of another wall dragged meanwhile: the line keeps the selected wall's value (the drag's labels are that corner's walls).
+	if (Manager->StartNodeDrag(N3))
+	{
+		Widget->RefreshPanelState();
+		TestEqual(TEXT("Corner dragged: the summary keeps the selected wall's value"), Widget->GetContextSummaryText()->GetText().ToString(), Summary);
+		int32 DraggedNode = -1;
+		FVector2D DraggedTo;
+		Manager->EndNodeDrag(DraggedNode, DraggedTo);
+	}
+
+	// A floor: nothing to delete.
+	Widget->SetActiveCategory(EPlannerPanelCategory::Layout);
+	Manager->ClearAllSelection();
+	Manager->SelectFloorAtWorldPos(FVector(250., 200., 0.));
+	Widget->RefreshPanelState();
+	TestEqual(TEXT("Floor: title"), Title(), FString(TEXT("Пол")));
+	TestFalse(TEXT("Floor: no delete button (a floor cannot be deleted)"), Shown(Widget->BtnDeleteTool));
+
+	// 3D: the picked wall is named (the finishes go to it), with its summary; no delete, no editor.
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	Manager->SelectedSegmentID = South;
+	Manager->SelectedOpeningIndex = -1;
+	Manager->bSelectedWallFaceLeft = true;
+	Widget->RefreshPanelState();
+	TestTrue(FString::Printf(TEXT("3D: the picked wall is named (%s)"), *Title()), Shown(Widget->TxtSelectionTitle) && Title().StartsWith(TEXT("Стена · ")));
+	TestTrue(TEXT("3D: summary shown"), Shown(Widget->GetContextSummaryText()));
+	TestFalse(TEXT("3D: no delete, no size fields"), Shown(Widget->BtnDeleteTool) || Shown(Widget->Border_wall_size));
+	// 3D ceiling and baseboard: the room's own numbers.
+	Manager->SelectRoomSurfaceAtWorldPos(FVector(250., 200., 0.), EPlannerSelectionKind::Ceiling);
+	Widget->RefreshPanelState();
+	TestTrue(FString::Printf(TEXT("3D ceiling: its area (%s)"), *Widget->GetContextSummaryText()->GetText().ToString()),
+		Shown(Widget->GetContextSummaryText()) && Widget->GetContextSummaryText()->GetText().ToString().StartsWith(TEXT("Площадь: ")));
+	Manager->SelectRoomSurfaceAtWorldPos(FVector(250., 200., 0.), EPlannerSelectionKind::Baseboard);
+	Widget->RefreshPanelState();
+	TestTrue(FString::Printf(TEXT("3D baseboard: the room's perimeter (%s)"), *Widget->GetContextSummaryText()->GetText().ToString()),
+		Shown(Widget->GetContextSummaryText()) && Widget->GetContextSummaryText()->GetText().ToString().StartsWith(TEXT("Периметр комнаты: ")));
+	Manager->SelectedSegmentID = South; // back to the wall picked in 3D for the 2D check below
+	Manager->SelectedOpeningIndex = -1;
+	Manager->SelectedRoomID = -1;
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
+	TestTrue(TEXT("Back in 2D with the wall picked in 3D: «Отделка»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Finish);
+	Widget->SetActiveCategory(EPlannerPanelCategory::Layout); // the editor (rotate) is on «Планировка»
+
+	// Objects: rotate offered; for one hung on a wall it stays in place, disabled.
+	const TArray<FPlannerCatalogEntry> Objects = Manager->GetAvailableObjects();
+	if (Objects.Num() == 0)
+	{
+		AddInfo(TEXT("DT_PlannerObjects has no rows: rotate rules not checked."));
+		return true;
+	}
+	Manager->ClearAllSelection();
+	const FString FloorObject = Manager->AddPlacedObject(Objects[0].ID, FVector(250., 200., 0.), FRotator::ZeroRotator, FVector::OneVector);
+	if (TestFalse(TEXT("Object placed"), FloorObject.IsEmpty()))
+	{
+		Manager->SelectPlacedObject(FloorObject);
+		Widget->RefreshPanelState();
+		TestTrue(TEXT("Object on the floor: rotate shown and enabled"), Shown(Widget->RotateRow) && Widget->BtnRotateLeft && Widget->BtnRotateLeft->GetIsEnabled());
+		TestTrue(TEXT("Object: delete"), Shown(Widget->BtnDeleteTool));
+	}
+	const FString WallObject = Manager->AddPlacedObjectOnWall(Objects[0].ID, South, 400.f, true, 100.f);
+	if (!WallObject.IsEmpty())
+	{
+		Manager->ClearAllSelection();
+		Manager->SelectPlacedObject(WallObject);
+		Widget->RefreshPanelState();
+		if (Manager->IsSelectionWallAttached())
+		{
+			TestTrue(TEXT("Object on a wall: rotate stays, disabled"), Shown(Widget->RotateRow) && Widget->BtnRotateLeft && !Widget->BtnRotateLeft->GetIsEnabled());
+		}
+	}
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replace actions ask first; a drop selects the new item; a 3D pick carried into 2D
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerConfirmReplaceTest, "MaxiMall.Planner.UI.ConfirmReplace",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerConfirmReplaceTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager) || !TestNotNull(TEXT("Confirmation bar"), Widget->GetConfirmBar())
+		|| !TestNotNull(TEXT("«4×4 м»"), Widget->BtnPresetRoom.Get()) || !TestNotNull(TEXT("«Очистить план»"), Widget->GetClearPlanButton())
+		|| !TestNotNull(TEXT("«Отмена»"), Widget->GetConfirmCancelButton()) || !TestNotNull(TEXT("«Да»"), Widget->GetConfirmAcceptButton())) return false;
+	auto BarShown = [Widget]() { return Widget->GetConfirmBar()->GetVisibility() != ESlateVisibility::Collapsed; };
+
+	// An empty plan: «4×4 м» builds at once, nothing to ask.
+	Widget->BtnPresetRoom->OnClicked.Broadcast();
+	TestFalse(TEXT("Empty plan: «4×4 м» asks nothing"), Widget->IsConfirmationPending() || BarShown());
+
+	// Walls on the plan (added without a replicated update: the check is made at the click).
+	Manager->AddWallBetweenPoints(FVector2D(0., 0.), FVector2D(300., 0.));
+	Manager->AddWallBetweenPoints(FVector2D(300., 0.), FVector2D(300., 300.));
+	const int32 Walls = Manager->GetWallCount();
+	Widget->BtnPresetRoom->OnClicked.Broadcast();
+	TestTrue(TEXT("«4×4 м» over walls: the question is shown"), Widget->IsConfirmationPending() && BarShown());
+	TestEqual(TEXT("… and nothing is replaced yet"), Manager->GetWallCount(), Walls);
+	Widget->GetConfirmCancelButton()->OnClicked.Broadcast();
+	TestFalse(TEXT("«Отмена»: the question goes"), Widget->IsConfirmationPending() || BarShown());
+	TestEqual(TEXT("«Отмена»: the plan stays"), Manager->GetWallCount(), Walls);
+
+	// «Очистить план» asks too; a tab change or a view change answers "no".
+	Widget->GetClearPlanButton()->OnClicked.Broadcast();
+	TestTrue(TEXT("«Очистить план»: the question"), Widget->IsConfirmationPending() && BarShown());
+	Widget->SetActiveCategory(EPlannerPanelCategory::Catalog);
+	TestFalse(TEXT("A tab change cancels it"), Widget->IsConfirmationPending());
+	Widget->SetActiveCategory(EPlannerPanelCategory::Layout);
+	Widget->GetClearPlanButton()->OnClicked.Broadcast();
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	TestFalse(TEXT("A view change cancels it"), Widget->IsConfirmationPending());
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
+
+	// «Да» closes the question and runs the action (the server call itself needs a player; none here).
+	Widget->GetClearPlanButton()->OnClicked.Broadcast();
+	Widget->GetConfirmAcceptButton()->OnClicked.Broadcast();
+	TestFalse(TEXT("«Да»: the question goes"), Widget->IsConfirmationPending() || BarShown());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerDropSelectionTest, "MaxiMall.Planner.UI.DropSelection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerDropSelectionTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager)) return false;
+	const TArray<FPlannerCatalogEntry> Objects = Manager->GetAvailableObjects();
+	if (Objects.Num() == 0)
+	{
+		AddInfo(TEXT("DT_PlannerObjects has no rows: drop selection not checked."));
+		return true;
+	}
+	Manager->AddWallBetweenPoints(FVector2D(0., 0.), FVector2D(500., 0.));
+	Manager->AddWallBetweenPoints(FVector2D(500., 0.), FVector2D(500., 400.));
+	Manager->AddWallBetweenPoints(FVector2D(500., 400.), FVector2D(0., 400.));
+	Manager->AddWallBetweenPoints(FVector2D(0., 400.), FVector2D(0., 0.));
+	Widget->RefreshPanelState();
+	Widget->SetActiveCategory(EPlannerPanelCategory::Catalog);
+	Widget->SetToolMode(EPlannerToolMode::DrawWall); // even with the Draw tool on, the dropped item ends up selected
+
+	// The drop is recorded, the server adds the item, the replicated update arrives: the new item is selected.
+	Widget->BeginSelectDroppedItem(EPlannerPlacementKind::Object, Objects[0].ID);
+	const FString First = Manager->AddPlacedObject(Objects[0].ID, FVector(250., 200., 0.), FRotator::ZeroRotator, FVector::OneVector);
+	if (!TestFalse(TEXT("Object placed"), First.IsEmpty())) return false;
+	Manager->OnRoomPlannerUpdated.Broadcast(Manager->ExportLayoutToJSON());
+	TestEqual(TEXT("The dropped item is selected"), Manager->SelectedObjectID, First);
+	TestTrue(TEXT("… with «Выбрать» (it can be moved at once)"), Manager->ActiveToolMode == EPlannerToolMode::Select);
+	TestTrue(TEXT("… and the catalog stays open"), Widget->GetActiveCategory() == EPlannerPanelCategory::Catalog);
+
+	// A second drop of the same item: the new one is selected, not the one already there.
+	Widget->BeginSelectDroppedItem(EPlannerPlacementKind::Object, Objects[0].ID);
+	const FString Second = Manager->AddPlacedObject(Objects[0].ID, FVector(120., 120., 0.), FRotator::ZeroRotator, FVector::OneVector);
+	Manager->OnRoomPlannerUpdated.Broadcast(Manager->ExportLayoutToJSON());
+	TestTrue(TEXT("Second drop: the new item is selected"), !Second.IsEmpty() && Manager->SelectedObjectID == Second);
+
+	// An update without a new instance (the drop was refused) selects nothing.
+	Manager->ClearAllSelection();
+	Widget->BeginSelectDroppedItem(EPlannerPlacementKind::Object, Objects[0].ID);
+	Manager->OnRoomPlannerUpdated.Broadcast(Manager->ExportLayoutToJSON());
+	TestTrue(TEXT("Refused drop: nothing selected"), Manager->SelectedObjectID.IsEmpty());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerViewSwitchReconcileTest, "MaxiMall.Planner.UI.ViewSwitchReconcile",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerViewSwitchReconcileTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager)) return false;
+	Manager->AddWallBetweenPoints(FVector2D(0., 0.), FVector2D(500., 0.));
+	Manager->AddWallBetweenPoints(FVector2D(500., 0.), FVector2D(500., 400.));
+	Manager->AddWallBetweenPoints(FVector2D(500., 400.), FVector2D(0., 400.));
+	Manager->AddWallBetweenPoints(FVector2D(0., 400.), FVector2D(0., 0.));
+	Widget->RefreshPanelState();
+	TestTrue(TEXT("Starts with the Draw tool"), Manager->ActiveToolMode == EPlannerToolMode::DrawWall);
+
+	// A floor picked in 3D for finishing: back in 2D it is still selected, on «Отделка», with «Выбрать» (not the Draw tool).
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	Manager->SelectRoomSurfaceAtWorldPos(FVector(250., 200., 0.), EPlannerSelectionKind::Floor);
+	TestTrue(TEXT("3D: floor picked"), Manager->GetSelectionKind() == EPlannerSelectionKind::Floor);
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
+	TestTrue(TEXT("2D: still the floor"), Manager->GetSelectionKind() == EPlannerSelectionKind::Floor);
+	TestTrue(TEXT("2D: on «Отделка»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Finish);
+	TestTrue(TEXT("2D: with «Выбрать»"), Manager->ActiveToolMode == EPlannerToolMode::Select);
+
+	// A ceiling picked in 3D: the plan view cannot show it, so the pick is let go.
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	Manager->SelectRoomSurfaceAtWorldPos(FVector(250., 200., 0.), EPlannerSelectionKind::Ceiling);
+	TestTrue(TEXT("3D: ceiling picked"), Manager->GetSelectionKind() == EPlannerSelectionKind::Ceiling);
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
+	TestTrue(TEXT("2D: the ceiling pick is let go"), Manager->GetSelectionKind() == EPlannerSelectionKind::None);
+
+	// Nothing picked: the tab chosen before comes back.
+	Widget->SetActiveCategory(EPlannerPanelCategory::Catalog);
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
+	TestTrue(TEXT("Nothing picked: back on «Каталог»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Catalog);
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// «Отделка»: the room's surfaces from the panel; catalogs beside the panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerRoomSurfaceChooserTest, "MaxiMall.Planner.UI.RoomSurfaceChooser",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerRoomSurfaceChooserTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager) || !TestNotNull(TEXT("Surface chooser"), Widget->GetSurfaceChooser())) return false;
+	UButton* Floor = Widget->GetSurfaceButton(EPlannerSelectionKind::Floor);
+	UButton* Baseboard = Widget->GetSurfaceButton(EPlannerSelectionKind::Baseboard);
+	UButton* Ceiling = Widget->GetSurfaceButton(EPlannerSelectionKind::Ceiling);
+	if (!TestNotNull(TEXT("«Пол»"), Floor) || !TestNotNull(TEXT("«Плинтус»"), Baseboard) || !TestNotNull(TEXT("«Потолок»"), Ceiling)) return false;
+	auto Shown = [](const UWidget* W) { return W && W->GetVisibility() != ESlateVisibility::Collapsed; };
+
+	// 6 x 4 m divided in two rooms.
+	Manager->AddWallBetweenPoints(FVector2D(0., 0.), FVector2D(600., 0.));
+	Manager->AddWallBetweenPoints(FVector2D(600., 0.), FVector2D(600., 400.));
+	Manager->AddWallBetweenPoints(FVector2D(600., 400.), FVector2D(0., 400.));
+	Manager->AddWallBetweenPoints(FVector2D(0., 400.), FVector2D(0., 0.));
+	Manager->AddWallBetweenPoints(FVector2D(300., 0.), FVector2D(300., 400.));
+	Widget->RefreshPanelState();
+	Widget->SetActiveCategory(EPlannerPanelCategory::Finish);
+	TestFalse(TEXT("Nothing selected: no surface buttons"), Shown(Widget->GetSurfaceChooser()));
+
+	const int32 Right = Manager->SelectFloorAtWorldPos(FVector(450., 200., 0.));
+	Widget->RefreshPanelState();
+	TestTrue(TEXT("A floor: the room's surfaces offered"), Right != -1 && Shown(Widget->GetSurfaceChooser()));
+	TestFalse(TEXT("2D: no «Потолок» (the plan view hides the ceiling)"), Shown(Ceiling));
+	TestTrue(TEXT("«Пол» shown as the current surface"), Floor->GetBackgroundColor().Equals(Widget->ActiveTabColor));
+
+	Baseboard->OnClicked.Broadcast();
+	TestTrue(TEXT("«Плинтус»: the same room's baseboard"), Manager->GetSelectionKind() == EPlannerSelectionKind::Baseboard && Manager->SelectedRoomID == Right);
+	TestTrue(TEXT("«Плинтус» shown as the current surface"), Baseboard->GetBackgroundColor().Equals(Widget->ActiveTabColor)
+		&& Floor->GetBackgroundColor().Equals(Widget->InactiveTabColor));
+	TestTrue(TEXT("The finish buttons follow (a baseboard takes paint and tiles)"), Shown(Widget->BtnFinishPaint) && Shown(Widget->GetFinishTileButton()));
+	Floor->OnClicked.Broadcast();
+	TestTrue(TEXT("«Пол»: back to the same room's floor"), Manager->GetSelectionKind() == EPlannerSelectionKind::Floor && Manager->SelectedRoomID == Right);
+
+	// 3D: the ceiling too.
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	const int32 Picked = Manager->SelectRoomSurfaceAtWorldPos(FVector(450., 200., 0.), EPlannerSelectionKind::Floor);
+	Widget->RefreshPanelState();
+	TestTrue(TEXT("3D: «Потолок» offered"), Picked == Right && Shown(Ceiling));
+	Ceiling->OnClicked.Broadcast();
+	TestTrue(TEXT("«Потолок»: the same room's ceiling"), Manager->GetSelectionKind() == EPlannerSelectionKind::Ceiling && Manager->SelectedRoomID == Right);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerFinishFlyoutPlacementTest, "MaxiMall.Planner.UI.FinishFlyoutPlacement",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerFinishFlyoutPlacementTest::RunTest(const FString& Parameters)
+{
+	using namespace PlannerPanelRules;
+	const float Panel = 426.f;
+	// The strip is centred over the free plan area: [426, W] alone, [852, W] with a catalog beside the panel.
+	for (const float Width : { 1920.f, 1280.f })
+	{
+		const float Alone = 0.5f * Width + StatusStripOffset(Panel, 0.f);
+		const float Beside = 0.5f * Width + StatusStripOffset(Panel, Panel);
+		TestTrue(FString::Printf(TEXT("%.0f: centred over [426, W]"), Width), FMath::IsNearlyEqual(Alone, 0.5f * (Panel + Width)));
+		TestTrue(FString::Printf(TEXT("%.0f: centred over [852, W]"), Width), FMath::IsNearlyEqual(Beside, 0.5f * (2.f * Panel + Width)));
+		TestTrue(FString::Printf(TEXT("%.0f: at least 400 units of plan left beside both panels"), Width), Width - 2.f * Panel >= 400.f);
+	}
+	TestTrue(TEXT("The catalog's column is UI"), IsOverSideCatalog(430.f, Panel, Panel) && IsOverSideCatalog(850.f, Panel, Panel));
+	TestFalse(TEXT("… the panel and the plan are not that column"), IsOverSideCatalog(200.f, Panel, Panel) || IsOverSideCatalog(900.f, Panel, Panel));
+	TestFalse(TEXT("… and there is no column without a catalog"), IsOverSideCatalog(500.f, Panel, 0.f));
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3D view options (coded before, never shown: the WBP had no widgets for them)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerViewOptions3DTest, "MaxiMall.Planner.UI.ViewOptions3D",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerViewOptions3DTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager) || !TestNotNull(TEXT("«Потолок»"), Widget->BtnToggleCeiling.Get())
+		|| !TestNotNull(TEXT("«Открыть»"), Widget->BtnDoorsOpen.Get()) || !TestNotNull(TEXT("«Закрыть»"), Widget->BtnDoorsClose.Get())
+		|| !TestNotNull(TEXT("View options row"), Widget->ViewOptionsRow.Get())) return false;
+	TestTrue(TEXT("All three wired"), Widget->BtnToggleCeiling->OnClicked.IsBound() && Widget->BtnDoorsOpen->OnClicked.IsBound() && Widget->BtnDoorsClose->OnClicked.IsBound());
+	TestTrue(TEXT("2D: the row is folded"), Widget->ViewOptionsRow->GetVisibility() == ESlateVisibility::Collapsed);
+
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	TestTrue(TEXT("3D: the row and its buttons are shown"), Widget->ViewOptionsRow->GetVisibility() != ESlateVisibility::Collapsed
+		&& Widget->BtnToggleCeiling->GetVisibility() == ESlateVisibility::Visible && Widget->BtnDoorsOpen->GetVisibility() == ESlateVisibility::Visible);
+	TestTrue(TEXT("3D: the ceiling is on (green)"), Manager->bCeilingVisible && Widget->BtnToggleCeiling->GetBackgroundColor().Equals(Widget->ActiveToolColor));
+	Widget->BtnToggleCeiling->OnClicked.Broadcast();
+	TestTrue(TEXT("«Потолок»: off, idle colour"), !Manager->bCeilingVisible && Widget->BtnToggleCeiling->GetBackgroundColor().Equals(Widget->IdleControlColor));
+	Widget->BtnDoorsOpen->OnClicked.Broadcast();
+	TestTrue(TEXT("«Открыть»: doors open, shown on"), Manager->GetDefaultOpeningLeavesOpen() && Widget->BtnDoorsOpen->GetBackgroundColor().Equals(Widget->ActiveToolColor)
+		&& Widget->BtnDoorsClose->GetBackgroundColor().Equals(Widget->IdleControlColor));
+	Widget->BtnDoorsClose->OnClicked.Broadcast();
+	TestTrue(TEXT("«Закрыть»: doors closed"), !Manager->GetDefaultOpeningLeavesOpen() && Widget->BtnDoorsClose->GetBackgroundColor().Equals(Widget->ActiveToolColor));
+
+	if (FSlateApplication::IsInitialized())
+	{
+		PaintOffscreen(Slate.ToSharedRef(), FVector2D(1920.f, 1080.f));
+		UWidget* Panel = Widget->WidgetTree->FindWidget(TEXT("LeftPanel"));
+		const UWidget* Buttons[] = { Widget->BtnToggleCeiling.Get(), Widget->BtnDoorsOpen.Get(), Widget->BtnDoorsClose.Get() };
+		for (const UWidget* Button : Buttons)
+		{
+			TestTrue(FString::Printf(TEXT("%s inside the side panel"), *Button->GetName()), Panel && RightEdge(Button) <= RightEdge(Panel) + 0.5f && RightEdge(Button) > 1.f);
+		}
+		TestTrue(TEXT("«Потолок», «Открыть», «Закрыть» on one line"), FMath::IsNearlyEqual(TopEdge(Widget->BtnToggleCeiling), TopEdge(Widget->BtnDoorsClose), 0.5f)
+			&& FMath::IsNearlyEqual(TopEdge(Widget->BtnDoorsOpen), TopEdge(Widget->BtnDoorsClose), 0.5f));
+	}
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
+	TestTrue(TEXT("Back in 2D: folded again"), Widget->ViewOptionsRow->GetVisibility() == ESlateVisibility::Collapsed);
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guidance that matches the panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerHintTextsTest, "MaxiMall.Planner.UI.HintTexts",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerHintTextsTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager) || !TestNotNull(TEXT("Hint"), Widget->TxtGuidanceHint.Get())) return false;
+	auto Hint = [Widget]() { Widget->UpdateGuidanceHintText(); return Widget->TxtGuidanceHint->GetText().ToString(); };
+	auto CheckWording = [this](const FString& State, const FString& Text)
+	{
+		TestFalse(FString::Printf(TEXT("%s: no «справа» (the panel is on the left): %s"), *State, *Text), Text.Contains(TEXT("справа")));
+		TestFalse(FString::Printf(TEXT("%s: no «'2D Вид'» (the button says «2D»): %s"), *State, *Text), Text.Contains(TEXT("'2D Вид'")));
+		bool bCyrillicTimes = false;
+		for (int32 i = 1; i + 1 < Text.Len(); ++i)
+		{
+			bCyrillicTimes |= Text[i] == TEXT('х') && FChar::IsDigit(Text[i - 1]) && FChar::IsDigit(Text[i + 1]);
+		}
+		TestFalse(FString::Printf(TEXT("%s: «4×4» with the multiplication sign: %s"), *State, *Text), bCyrillicTimes);
+	};
+
+	CheckWording(TEXT("Opened"), Hint());
+	Widget->SetActiveCategory(EPlannerPanelCategory::Catalog);
+	const FString CatalogEmpty = Hint();
+	CheckWording(TEXT("«Каталог», no walls"), CatalogEmpty);
+	TestTrue(TEXT("«Каталог», no walls: build the room first"), CatalogEmpty.StartsWith(TEXT("Сначала постройте комнату")));
+
+	const int32 N1 = Manager->AddNode(FVector2D(0., 0.));
+	const int32 N2 = Manager->AddNode(FVector2D(500., 0.));
+	const int32 N3 = Manager->AddNode(FVector2D(500., 400.));
+	const int32 N4 = Manager->AddNode(FVector2D(0., 400.));
+	const int32 South = Manager->AddWall(N1, N2);
+	Manager->AddWall(N2, N3);
+	Manager->AddWall(N3, N4);
+	Manager->AddWall(N4, N1);
+	Manager->AddOpeningToWall(South, EOpeningType::Door, 200.f, 90.f, 210.f, 0.f);
+	Manager->RebuildRooms();
+	Widget->RefreshPanelState();
+	Widget->SetActiveCategory(EPlannerPanelCategory::Catalog);
+	TestTrue(TEXT("«Каталог» with walls: drag a card"), Hint().StartsWith(TEXT("Перетащите карточку")));
+	Widget->SetActiveCategory(EPlannerPanelCategory::Finish);
+	const FString FinishNothing = Hint();
+	CheckWording(TEXT("«Отделка», nothing selected"), FinishNothing);
+	TestTrue(TEXT("«Отделка», nothing selected: surface first"), FinishNothing.StartsWith(TEXT("Кликните по стене")));
+
+	// On «Отделка» the hints for a selection talk about finishes (the page hides sizes, «Добавить на стену», rotate).
+	Manager->SelectedSegmentID = South;
+	Manager->SelectedOpeningIndex = -1;
+	TestTrue(TEXT("«Отделка», a wall: finish it"), Hint().StartsWith(TEXT("Стена выбрана: назначьте")));
+	Manager->SelectedOpeningIndex = 0;
+	TestTrue(TEXT("«Отделка», a door: its trim"), Hint().StartsWith(TEXT("Проём выбран: назначьте")));
+	Widget->SetActiveCategory(EPlannerPanelCategory::Layout);
+	const FString DoorOnLayout = Hint();
+	CheckWording(TEXT("Door selected"), DoorOnLayout);
+	TestTrue(TEXT("«Планировка», a door: drag it, sizes in the panel"), DoorOnLayout.StartsWith(TEXT("Проём выбран: тяните")));
+	Widget->SetActiveCategory(EPlannerPanelCategory::Finish);
+	Manager->ClearAllSelection();
+	Manager->SelectRoomSurfaceAtWorldPos(FVector(250., 200., 0.), EPlannerSelectionKind::Baseboard);
+	TestTrue(TEXT("Baseboard selected: the hint names the baseboard"), Hint().StartsWith(TEXT("Плинтус выбран")));
+	Manager->ClearAllSelection();
+
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	const FString Hint3D = Hint();
+	CheckWording(TEXT("3D"), Hint3D);
+	TestTrue(TEXT("3D: picking and finishing are mentioned"), Hint3D.Contains(TEXT("Краск")) && Hint3D.Contains(TEXT("«2D»")));
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The category's tool rule holds on every path (review of P0–P3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerCategoryToolRuleTest, "MaxiMall.Planner.UI.CategoryToolRule",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerCategoryToolRuleTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager) || !TestTrue(TEXT("Category layout built"), Widget->HasCategoryLayout())) return false;
+
+	// Walls arriving while «Каталог» is open on an empty plan (a load, another user's edit): «Выбрать», not the Draw tool.
+	Widget->SetActiveCategory(EPlannerPanelCategory::Catalog);
+	TestTrue(TEXT("Empty plan on «Каталог»: the Draw tool stays"), Manager->ActiveToolMode == EPlannerToolMode::DrawWall);
+	Manager->AddWallBetweenPoints(FVector2D(0., 0.), FVector2D(400., 0.));
+	Manager->AddWallBetweenPoints(FVector2D(400., 0.), FVector2D(400., 300.));
+	Widget->RefreshPanelState();
+	TestTrue(TEXT("Walls arrived on «Каталог»: «Выбрать»"), Manager->ActiveToolMode == EPlannerToolMode::Select);
+
+	// «Планировка» with the Draw tool, then 3D: clicking the shown «Отделка» there changes nothing; back in 2D, «Планировка» and Draw.
+	Widget->SetActiveCategory(EPlannerPanelCategory::Layout);
+	Widget->SetToolMode(EPlannerToolMode::DrawWall);
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	if (UButton* FinishTab = Widget->GetCategoryButton(EPlannerPanelCategory::Finish)) FinishTab->OnClicked.Broadcast();
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
+	TestTrue(TEXT("«Отделка» clicked in 3D: back on «Планировка»"), Widget->GetActiveCategory() == EPlannerPanelCategory::Layout);
+	TestTrue(TEXT("… with the Draw tool (it was left on)"), Manager->ActiveToolMode == EPlannerToolMode::DrawWall);
+
+	// «Каталог» chosen in 3D (from Blueprint) with the Draw tool on: back in 2D the rule applies.
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	Widget->SetCatalogOpen(true);
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D);
+	TestTrue(TEXT("«Каталог» chosen in 3D: shown in 2D"), Widget->GetActiveCategory() == EPlannerPanelCategory::Catalog);
+	TestTrue(TEXT("… with «Выбрать», not the Draw tool"), Manager->ActiveToolMode == EPlannerToolMode::Select);
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status strip: only its painted parts are UI, a long hint wraps inside it, the labels paint over it
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerStatusStripLayoutTest, "MaxiMall.Planner.UI.StatusStripLayout",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerStatusStripLayoutTest::RunTest(const FString& Parameters)
+{
+	if (!FSlateApplication::IsInitialized())
+	{
+		AddInfo(TEXT("Skipped: no Slate application."));
+		return true;
+	}
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	if (!Widget || !TestNotNull(TEXT("Hint bar"), Widget->HorizontalBox_3.Get()) || !TestNotNull(TEXT("Hint"), Widget->TxtGuidanceHint.Get())
+		|| !TestNotNull(TEXT("«X»"), Widget->BtnHideHelp.Get())) return false;
+	UCanvasPanel* Root = Cast<UCanvasPanel>(Widget->WidgetTree->RootWidget);
+	UWidget* Strip = Widget->WidgetTree->FindWidget(TEXT("StatusStrip"));
+	if (!TestNotNull(TEXT("Root canvas"), Root) || !TestNotNull(TEXT("Status strip"), Strip)) return false;
+
+	// Paint order: the selection labels and the live wall length stay over the strip.
+	if (Widget->SelectionLabelPanel && Widget->SelectionLabelPanel->GetParent() == Root)
+	{
+		TestTrue(TEXT("Selection labels paint over the strip"), Root->GetChildIndex(Strip) < Root->GetChildIndex(Widget->SelectionLabelPanel));
+	}
+	if (Widget->LiveLengthPanel && Widget->LiveLengthPanel->GetParent() == Root)
+	{
+		TestTrue(TEXT("The live wall length paints over the strip"), Root->GetChildIndex(Strip) < Root->GetChildIndex(Widget->LiveLengthPanel));
+	}
+
+	// A narrow screen and the longest hint (3D): it wraps inside the strip, «X» stays on screen.
+	const FVector2D ScreenSize(1280.f, 900.f);
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+	Widget->RefreshPanelState(); // the strip takes the free width it measured
+	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+	const float LineHeight = FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->GetMaxCharacterHeight(Widget->TxtGuidanceHint->GetFont());
+	TestTrue(TEXT("The long hint wraps"), Widget->TxtGuidanceHint->GetCachedGeometry().GetLocalSize().Y > 1.5f * LineHeight);
+	TestTrue(FString::Printf(TEXT("«X» inside the strip (%.1f <= %.1f)"), RightEdge(Widget->BtnHideHelp), RightEdge(Strip)), RightEdge(Widget->BtnHideHelp) <= RightEdge(Strip) + 0.5f);
+	TestTrue(FString::Printf(TEXT("«X» on screen (%.1f <= %.0f)"), RightEdge(Widget->BtnHideHelp), ScreenSize.X), RightEdge(Widget->BtnHideHelp) <= ScreenSize.X);
+
+	// The wrap width does not shrink after a shorter hint: the long hint wraps the same way again.
+	const float LongHintHeight = (float)Widget->TxtGuidanceHint->GetCachedGeometry().GetLocalSize().Y;
+	Widget->SetViewMode(ERoomPlannerViewMode::View2D); // a shorter hint
+	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+	PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+	TestTrue(FString::Printf(TEXT("After a shorter hint the long one wraps as before (%.1f / %.1f)"), Widget->TxtGuidanceHint->GetCachedGeometry().GetLocalSize().Y, LongHintHeight),
+		FMath::IsNearlyEqual((float)Widget->TxtGuidanceHint->GetCachedGeometry().GetLocalSize().Y, LongHintHeight, 1.f));
+
+	// Only the painted pill and «X» are UI; the transparent band above the pill lets presses through to the plan.
+	const UWidget* Pill = Widget->TxtGuidanceHint->GetParent();
+	if (TestNotNull(TEXT("Hint pill"), Pill))
+	{
+		const FGeometry& PillGeometry = Pill->GetCachedGeometry();
+		const FVector2D PillCentre = PillGeometry.GetAbsolutePosition() + PillGeometry.GetAbsoluteSize() * 0.5f;
+		TestTrue(TEXT("The pill is planner UI"), Widget->IsScreenPositionOverPlannerUI(PillCentre));
+		const FVector2D AbovePill(PillCentre.X, PillGeometry.GetAbsolutePosition().Y - 5.f);
+		if (Widget->HorizontalBox_3->GetCachedGeometry().IsUnderLocation(AbovePill))
+		{
+			TestFalse(TEXT("The transparent band above the pill is not"), Widget->IsScreenPositionOverPlannerUI(AbovePill));
+		}
+	}
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The panel fits the screen height: the body scrolls, every section can be reached
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerPanelFitsHeightTest, "MaxiMall.Planner.UI.PanelFitsHeight",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerPanelFitsHeightTest::RunTest(const FString& Parameters)
+{
+	if (!FSlateApplication::IsInitialized())
+	{
+		AddInfo(TEXT("Skipped: no Slate application."));
+		return true;
+	}
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	UScrollBox* Body = Widget ? Cast<UScrollBox>(Widget->GetBodyScroll()) : nullptr;
+	UWidget* Info = Widget ? Widget->WidgetTree->FindWidget(TEXT("InfoBlock")) : nullptr;
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager) || !TestNotNull(TEXT("Scrolling body"), Body) || !TestNotNull(TEXT("InfoBlock"), Info)) return false;
+	TestTrue(TEXT("The totals are in the scrolling body"), Info->GetParent() == Body);
+
+	// The tallest state: a wall selected (sizes, «Добавить на стену») with the catalog open on its cards.
+	const int32 N1 = Manager->AddNode(FVector2D(0., 0.));
+	const int32 N2 = Manager->AddNode(FVector2D(500., 0.));
+	const int32 N3 = Manager->AddNode(FVector2D(500., 400.));
+	const int32 N4 = Manager->AddNode(FVector2D(0., 400.));
+	const int32 South = Manager->AddWall(N1, N2);
+	Manager->AddWall(N2, N3);
+	Manager->AddWall(N3, N4);
+	Manager->AddWall(N4, N1);
+	Manager->RebuildRooms();
+	Widget->RefreshPanelState();
+	Widget->SetActiveCatalogTab(EPlannerPlacementKind::Object);
+	Manager->SelectedSegmentID = South;
+	Manager->SelectedOpeningIndex = -1;
+	Widget->RefreshPanelState();
+
+	const FVector2D Sizes[] = { FVector2D(1920.f, 1080.f), FVector2D(1280.f, 720.f) };
+	for (const FVector2D& Size : Sizes)
+	{
+		Body->SetScrollOffset(0.f);
+		PaintOffscreen(Slate.ToSharedRef(), Size);
+		TestTrue(FString::Printf(TEXT("%.0fx%.0f: the body ends on screen (%.1f <= %.0f)"), Size.X, Size.Y, BottomEdge(Body), Size.Y), BottomEdge(Body) <= Size.Y + 0.5f);
+		TestTrue(FString::Printf(TEXT("%.0fx%.0f: the panel runs the full height (%.1f)"), Size.X, Size.Y, BottomEdge(Body)), BottomEdge(Body) >= Size.Y - 60.f);
+		const float End = Body->GetScrollOffsetOfEnd();
+		if (Size.Y <= 720.f)
+		{
+			TestTrue(FString::Printf(TEXT("%.0fx%.0f: more content than space, so the body scrolls (%.1f)"), Size.X, Size.Y, End), End > 0.f);
+		}
+		// Scrolled to the end, the last section (the totals) is inside the visible body.
+		Body->SetScrollOffset(End);
+		PaintOffscreen(Slate.ToSharedRef(), Size);
+		TestTrue(FString::Printf(TEXT("%.0fx%.0f: the totals can be scrolled into view (%.1f <= %.1f)"), Size.X, Size.Y, BottomEdge(Info), BottomEdge(Body)),
+			BottomEdge(Info) <= BottomEdge(Body) + 1.f && BottomEdge(Info) > TopEdge(Body));
+	}
+	Body->SetScrollOffset(0.f);
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Floating context bar (off by default): where it goes when turned on
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerContextBarPlacementTest, "MaxiMall.Planner.UI.ContextBarPlacement",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerContextBarPlacementTest::RunTest(const FString& Parameters)
+{
+	using namespace PlannerPanelRules;
+	const FVector2D Viewport(1920.f, 1080.f);
+	const FVector2D Bar(220.f, 40.f);
+	const float Panel = 426.f;
+	const FVector2D Middle = PlaceContextBar(FVector2D(1000.f, 500.f), Bar, Viewport, Panel);
+	TestTrue(TEXT("Centred under the label"), FMath::IsNearlyEqual(Middle.X, 1000.f - 110.f) && Middle.Y > 500.f);
+	TestTrue(TEXT("Never over the side panel"), PlaceContextBar(FVector2D(430.f, 500.f), Bar, Viewport, Panel).X >= Panel + 8.f - 0.01f);
+	TestTrue(TEXT("Never over a catalog beside the panel"), PlaceContextBar(FVector2D(700.f, 500.f), Bar, Viewport, 2.f * Panel).X >= 2.f * Panel + 8.f - 0.01f);
+	const FVector2D Corner = PlaceContextBar(FVector2D(1915.f, 1075.f), Bar, Viewport, Panel);
+	TestTrue(TEXT("Kept inside the viewport"), Corner.X + Bar.X <= Viewport.X - 8.f + 0.01f && Corner.Y + Bar.Y <= Viewport.Y - 8.f + 0.01f);
+
+	// Off by default: built, never shown.
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	if (!Widget || !TestNotNull(TEXT("Floating bar built"), Widget->GetFloatingContextBar())) return false;
+	TestFalse(TEXT("Off by default"), Widget->bShowFloatingContextBar);
+	TestTrue(TEXT("Off: folded"), Widget->GetFloatingContextBar()->GetVisibility() == ESlateVisibility::Collapsed);
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Snapshots of the main states (only with -PlannerSnapshotDir= and a GPU)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerPanelSnapshotsTest, "MaxiMall.Planner.UI.PanelSnapshots",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerPanelSnapshotsTest::RunTest(const FString& Parameters)
+{
+	FString OutDir;
+	if (!FParse::Value(FCommandLine::Get(), TEXT("PlannerSnapshotDir="), OutDir) || !FApp::CanEverRender() || !FSlateApplication::IsInitialized())
+	{
+		AddInfo(TEXT("Skipped: no -PlannerSnapshotDir= or no renderer."));
+		return true;
+	}
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+	TSharedPtr<SWidget> Slate;
+	URoomPlannerWidget* Widget = CreatePlannerWidget(*this, TestWorld.World, Slate);
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World);
+	if (!Widget || !TestNotNull(TEXT("Manager"), Manager)) return false;
+	const FVector2D ScreenSize(1920.f, 1080.f);
+	auto Snap = [&](const TCHAR* Name)
+	{
+		Widget->RefreshPanelState();
+		PaintOffscreen(Slate.ToSharedRef(), ScreenSize);
+		const FString File = FPaths::Combine(OutDir, Name);
+		if (SnapshotToPng(Slate.ToSharedRef(), ScreenSize, File)) AddInfo(FString::Printf(TEXT("Snapshot: %s"), *File));
+	};
+
+	const int32 N1 = Manager->AddNode(FVector2D(0., 0.));
+	const int32 N2 = Manager->AddNode(FVector2D(500., 0.));
+	const int32 N3 = Manager->AddNode(FVector2D(500., 400.));
+	const int32 N4 = Manager->AddNode(FVector2D(0., 400.));
+	const int32 South = Manager->AddWall(N1, N2);
+	Manager->AddWall(N2, N3);
+	Manager->AddWall(N3, N4);
+	Manager->AddWall(N4, N1);
+	Manager->AddOpeningToWall(South, EOpeningType::Door, 200.f, 90.f, 210.f, 0.f);
+	Manager->RebuildRooms();
+	Widget->SetToolMode(EPlannerToolMode::Select);
+
+	// «Планировка», a wall selected.
+	Manager->SelectedSegmentID = South;
+	Manager->SelectedOpeningIndex = -1;
+	Manager->bSelectedWallFaceLeft = true;
+	Snap(TEXT("PanelLayoutWall.png"));
+	// «Планировка», a door selected.
+	Manager->SelectedOpeningIndex = 0;
+	Snap(TEXT("PanelLayoutDoor.png"));
+	// The replace question.
+	Manager->ClearAllSelection();
+	Widget->RequestPresetRoom();
+	Snap(TEXT("PanelConfirmPreset.png"));
+	Widget->SetActiveCategory(EPlannerPanelCategory::Layout);
+	// «Отделка», the floor selected.
+	Manager->SelectFloorAtWorldPos(FVector(250., 200., 0.));
+	Widget->SetActiveCategory(EPlannerPanelCategory::Finish);
+	Snap(TEXT("PanelFinishFloor.png"));
+	// 3D, a wall face picked.
+	Widget->SetViewMode(ERoomPlannerViewMode::View3D);
+	Manager->SelectedSegmentID = South;
+	Manager->SelectedOpeningIndex = -1;
+	Manager->bSelectedWallFaceLeft = true;
+	Snap(TEXT("Panel3DWall.png"));
 	return true;
 }
 

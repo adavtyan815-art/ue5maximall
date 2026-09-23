@@ -35,6 +35,7 @@
 #include "Components/WrapBoxSlot.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Misc/ScopeExit.h"
 #include "Styling/CoreStyle.h"
 
 void URoomPlannerWidget::NativeOnInitialized()
@@ -46,13 +47,29 @@ void URoomPlannerWidget::NativeOnInitialized()
 
 void URoomPlannerWidget::BuildRuntimeLayout()
 {
+	if (!PanelBackground && WidgetTree)
+	{
+		PanelBackground = WidgetTree->FindWidget(PlannerPanelNames::PanelBackground);
+	}
 	CreateTileCatalogButton();
 	WrapFinishControls();
 	CreateCatalogToggleButton();
+	// Planner 5D's structure in our panel: category tabs, the tool segment and one page per category. A WBP without the sections
+	// it needs keeps the one-row toolbar.
+	if (!BuildCategoryLayout())
+	{
+		InstallFallbackToolWrap();
+	}
+	BuildContextBlock();
+	CreateMissingViewOptions();
+	MakePanelScrollable();
+	CreateStatusStrip();
+	CreateFloatingContextBar();
 	CreateDimensionOverlay();
+	ClearStrayRootTooltip();
 	if (!FloorAreaCaption && WidgetTree)
 	{
-		FloorAreaCaption = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("TOTALFLOORAREA")));
+		FloorAreaCaption = Cast<UTextBlock>(WidgetTree->FindWidget(PlannerPanelNames::FloorAreaCaption));
 		if (FloorAreaCaption) FloorAreaCaptionText = FloorAreaCaption->GetText();
 	}
 }
@@ -109,7 +126,7 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnDeleteTool) { BtnDeleteTool->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnDeleteToolClicked); }
 	if (BtnAddDoor) { BtnAddDoor->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnAddDoorClicked); }
 	if (BtnAddWindow) { BtnAddWindow->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnAddWindowClicked); }
-	if (BtnPresetRoom) { BtnPresetRoom->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnPresetRoomClicked); }
+	if (BtnPresetRoom) { BtnPresetRoom->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnPresetRoomRequested); } // asks first on a plan that is not empty
 	if (BtnClearLayout) { BtnClearLayout->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnClearLayoutClicked); }
 	if (BtnToggleCeiling) { BtnToggleCeiling->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnToggleCeilingClicked); }
 	if (Btn_ToggleCeiling) { Btn_ToggleCeiling->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnToggleCeilingClicked); }
@@ -130,8 +147,8 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnPresetRoom) BtnPresetRoom->SetToolTipText(FText::FromString(TEXT("Построить готовую комнату 4×4 м")));
 	if (BtnClearLayout) BtnClearLayout->SetToolTipText(FText::FromString(TEXT("Очистить весь план")));
 	if (BtnApplyProperties) BtnApplyProperties->SetToolTipText(FText::FromString(TEXT("Применить введённые размеры (см) к выбранному элементу")));
-	if (BtnRotateLeft) BtnRotateLeft->SetToolTipText(FText::FromString(TEXT("Повернуть объект на 90° против часовой стрелки")));
-	if (BtnRotateRight) BtnRotateRight->SetToolTipText(FText::FromString(TEXT("Повернуть объект на 90° по часовой стрелке")));
+	if (BtnRotateLeft) BtnRotateLeft->SetToolTipText(FText::FromString(TEXT("Повернуть объект на 15° против часовой стрелки")));
+	if (BtnRotateRight) BtnRotateRight->SetToolTipText(FText::FromString(TEXT("Повернуть объект на 15° по часовой стрелке")));
 	if (BtnCancelPlacement) BtnCancelPlacement->SetToolTipText(FText::FromString(TEXT("Отменить размещение объекта")));
 	if (BtnHelp) BtnHelp->SetToolTipText(FText::FromString(TEXT("Показать подсказки")));
 	if (BtnHideHelp) BtnHideHelp->SetToolTipText(FText::FromString(TEXT("Скрыть подсказки")));
@@ -147,8 +164,9 @@ void URoomPlannerWidget::NativeConstruct()
 	if (EditableTxtOpeningHeight) { EditableTxtOpeningHeight->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnOpeningHeightCommitted); }
 	if (EditableTxtOpeningSillHeight) { EditableTxtOpeningSillHeight->OnTextCommitted.AddUniqueDynamic(this, &URoomPlannerWidget::OnOpeningSillHeightCommitted); }
 
-	// UI Sanitization: Immediately collapse contextual/unselected buttons
-	if (BtnSelectTool) BtnSelectTool->SetVisibility(ESlateVisibility::Collapsed);
+	// UI Sanitization: Immediately collapse contextual/unselected buttons. «Выбрать» stays in the tool segment (disabled until the
+	// first wall), so the segment never changes size.
+	if (BtnDrawWallTool) BtnDrawWallTool->SetToolTipText(FText::FromString(TEXT("Инструмент «Стена»: зажмите и тяните ЛКМ на плане")));
 	if (BtnAddDoor) BtnAddDoor->SetVisibility(ESlateVisibility::Collapsed);
 	if (BtnAddWindow) BtnAddWindow->SetVisibility(ESlateVisibility::Collapsed);
 	if (EditableTxtOpeningWidth) EditableTxtOpeningWidth->SetVisibility(ESlateVisibility::Collapsed);
@@ -166,7 +184,7 @@ void URoomPlannerWidget::NativeConstruct()
 
 	if (TxtGuidanceHint)
 	{
-		TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или выберите пресет 4х4 м")));
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или нажмите «4×4 м»")));
 	}
 
 	BindManagerDelegates();
@@ -198,7 +216,7 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnSwingRight) BtnSwingRight->SetToolTipText(FText::FromString(TEXT("Петли справа (вид изнутри комнаты)")));
 	if (BtnSwingInward) BtnSwingInward->SetToolTipText(FText::FromString(TEXT("Открывается внутрь комнаты")));
 	if (BtnSwingOutward) BtnSwingOutward->SetToolTipText(FText::FromString(TEXT("Открывается наружу")));
-	if (BtnFinishPaint) BtnFinishPaint->SetToolTipText(FText::FromString(TEXT("Выбрать отделку (краска RAL / NCS) для выбранной поверхности")));
+	if (BtnFinishPaint) BtnFinishPaint->SetToolTipText(FText::FromString(TEXT("Краска RAL / NCS для выбранной поверхности")));
 	if (BtnClearFinish) BtnClearFinish->SetToolTipText(FText::FromString(TEXT("Убрать отделку с выбранной поверхности")));
 
 	{
@@ -219,18 +237,28 @@ void URoomPlannerWidget::NativeConstruct()
 	if (BtnCatalogCabinets) BtnCatalogCabinets->SetToolTipText(FText::FromString(TEXT("Комплекты тумб: перетащите к стене")));
 	ActiveCatalogTab = (DefaultCatalogTab == EPlannerPlacementKind::CabinetSet) ? EPlannerPlacementKind::CabinetSet : EPlannerPlacementKind::Object;
 	// The catalog is folded when the planner opens (the «Каталог» button opens it), and neither «Интерьер» nor «Тумбы» is active:
-	// the card area stays folded until a tab is clicked.
+	// the card area stays folded until a tab is clicked. bOpenCatalogTabOnStart opens on the «Каталог» tab with DefaultCatalogTab.
 	bCatalogTabChosen = bOpenCatalogTabOnStart;
-	bCatalogOpen = bOpenCatalogTabOnStart;
+	bCatalogOpen = bOpenCatalogTabOnStart && !bCategoryLayoutBuilt;
+	Active2DCategory = EPlannerPanelCategory::Layout; // bOpenCatalogTabOnStart opens «Каталог» below, through its tool rule
+	CategoryBeforeCatalog = EPlannerPanelCategory::Layout;
+	bPlanEmptyCached = IsPlanEmpty();
 	CollectSeparatorLines();
 	RefreshCatalogPanels();
 	UpdateCatalogTabStyles();
 	ApplyCatalogSectionVisibility();
 
-	// Automatically enter 2D Top-Down Drawing Mode on open
+	// Automatically enter 2D Top-Down Drawing Mode on open (not a user's view switch: nothing to reconcile, the start tab stays)
 	CurrentViewMode = ERoomPlannerViewMode::View3D;
+	bOpeningPlanner = true;
 	SetViewMode(ERoomPlannerViewMode::View2D);
 	SetToolMode(EPlannerToolMode::DrawWall);
+	bOpeningPlanner = false;
+	if (bOpenCatalogTabOnStart && bCategoryLayoutBuilt)
+	{
+		// After the forced Draw tool: the «Каталог» category applies its rule (a re-opened plan with walls gets «Выбрать»).
+		SetActiveCatalogTab(DefaultCatalogTab);
+	}
 
 	// Initialize UI state
 	UpdateViewModeButtonStyles();
@@ -291,6 +319,13 @@ void URoomPlannerWidget::NativeDestruct()
 
 FReply URoomPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	// A press on the panel background, between its buttons, on the status strip or on a catalog beside the panel reaches this root
+	// unhandled: it must not draw, select or pick on the plan hidden behind the UI.
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && IsScreenPositionOverPlannerUI(InMouseEvent.GetScreenSpacePosition()))
+	{
+		return FReply::Handled();
+	}
+
 	if (CurrentViewMode == ERoomPlannerViewMode::View2D && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
 		AAwsTutorial_PlayerController* PC = GetPreviewController();
@@ -515,54 +550,47 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	// Separator lines follow every section visibility change, wherever it was made.
 	UpdateSeparatorLines();
 
-	if (TxtOperationMessage && OperationMessageClearTime > 0.f && GetWorld() && GetWorld()->GetTimeSeconds() > OperationMessageClearTime)
+	if (OperationMessageClearTime > 0.f && GetWorld() && GetWorld()->GetTimeSeconds() > OperationMessageClearTime)
 	{
 		OperationMessageClearTime = 0.f;
-		TxtOperationMessage->SetVisibility(ESlateVisibility::Collapsed);
+		if (TxtOperationMessage) TxtOperationMessage->SetVisibility(ESlateVisibility::Collapsed);
+		if (MessageChip) MessageChip->SetVisibility(ESlateVisibility::Collapsed);
 	}
+
+	// The status strip stays centred over the free plan area and wraps at its width (a finish catalog beside the panel narrows it).
+	UpdateStatusStripPlacement();
 
 	if (PlannerManager)
 	{
-		// Logic for Select button
 		bool bIs2D = (CurrentViewMode == ERoomPlannerViewMode::View2D);
-		bool bHasWalls = PlannerManager->GetWallCount() > 0;
-		if (BtnSelectTool)
-		{
-			BtnSelectTool->SetVisibility((bIs2D && bHasWalls) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		const int32 WallCount = PlannerManager->GetWallCount();
+		bool bHasWalls = WallCount > 0;
 
-			if (!bHasWalls)
-			{
-				BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Пока нет стен для работы")));
-			}
-			else
-			{
-				BtnSelectTool->SetToolTipText(FText::GetEmpty());
-			}
-		}
-		
 		// If Select tool is active but no walls exist, force revert to Draw Wall
 		if (!bHasWalls && PlannerManager->ActiveToolMode == EPlannerToolMode::Select)
 		{
 			SetToolMode(EPlannerToolMode::DrawWall);
+			ShowStatusMessage(TEXT("Стен нет — включён инструмент «Создать стену»"));
 		}
 
-		// Logic for Door/Window tools (visible only if a wall is selected, 2D only: openings are edited in 2D)
-		bool bHasSelection = bIs2D && PlannerManager->SelectedSegmentID != -1;
-		ESlateVisibility DoorWinVis = bHasSelection ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+		// The category rules follow the plan: «Выбрать» enabled with walls, the empty-plan notice, and a wall draw started outside
+		// «Планировка» (possible only on a plan without walls) brings the panel back to «Планировка».
+		const bool bDrawing = bIsWidgetDrawingWall || PlannerManager->IsWallDrawingActive();
+		if (bCategoryLayoutBuilt && PlannerPanelRules::ReturnsToLayout(Active2DCategory, bIs2D, bDrawing))
+		{
+			SetActiveCategory(EPlannerPanelCategory::Layout);
+		}
+		if (WallCount != LastTickWallCount)
+		{
+			LastTickWallCount = WallCount;
+			EnforceCategoryTool(); // walls arrived while «Каталог» / «Отделка» is open (a load, a replicated edit): not the Draw tool there
+			ApplyCategoryVisibility();
+			UpdateToolModeButtonStyles();
+		}
 
-		if (BtnAddDoor) BtnAddDoor->SetVisibility(DoorWinVis);
-		if (BtnAddWindow) BtnAddWindow->SetVisibility(DoorWinVis);
-		if (EditableTxtOpeningWidth) EditableTxtOpeningWidth->SetVisibility(DoorWinVis);
-		if (EditableTxtOpeningHeight) EditableTxtOpeningHeight->SetVisibility(DoorWinVis);
-
-		if (EditableTxtOpeningWidth_1) EditableTxtOpeningWidth_1->SetVisibility(DoorWinVis);
-		if (EditableTxtOpeningHeight_1) EditableTxtOpeningHeight_1->SetVisibility(DoorWinVis);
-		if (EditableTxtOpeningSillHeight) EditableTxtOpeningSillHeight->SetVisibility(DoorWinVis);
-
-		// The Borders that frame the door / window creation groups follow their content, so the
-		// selection section becomes truly empty (and its separators fold) when nothing is selected.
-		if (Border_AddDoor) Border_AddDoor->SetVisibility(DoorWinVis);
-		if (Border_AddWindow) Border_AddWindow->SetVisibility(DoorWinVis);
+		// Door / window creation blocks: a selected wall only, 2D (openings are edited in 2D). Their Borders follow their content, so
+		// the selection section becomes truly empty (and its separators fold) when nothing is selected.
+		UpdateCreationBlocksVisibility();
 
 		UpdateGuidanceHintText();
 	}
@@ -571,7 +599,9 @@ void URoomPlannerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 void URoomPlannerWidget::SetViewMode(ERoomPlannerViewMode NewMode)
 {
 	if (CurrentViewMode == NewMode) return;
+	const ERoomPlannerViewMode OldMode = CurrentViewMode;
 	CurrentViewMode = NewMode;
+	ON_SCOPE_EXIT { ReconcileAfterViewSwitch(OldMode); };
 	AAwsTutorial_PlayerController* PC = GetPreviewController();
 	if (PlannerManager)
 	{
@@ -603,37 +633,39 @@ void URoomPlannerWidget::SetToolMode(EPlannerToolMode NewToolMode)
 
 void URoomPlannerWidget::UpdateToolModeButtonStyles()
 {
-	FLinearColor ActiveColor(0.18f, 0.8f, 0.44f, 1.0f);
-	FLinearColor InactiveColor(0.17f, 0.17f, 0.18f, 1.0f);
-
 	EPlannerToolMode CurrentToolMode = EPlannerToolMode::DrawWall;
 	if (PlannerManager)
 	{
 		CurrentToolMode = PlannerManager->ActiveToolMode;
 	}
+	const bool bHasWalls = PlannerManager && PlannerManager->GetWallCount() > 0;
 
-	if (BtnSelectTool) 
+	if (BtnSelectTool)
 	{
-		if (PlannerManager && PlannerManager->GetWallCount() == 0)
+		// Always in the segment; disabled (the native disabled look) until the first wall, with the reason in the tooltip. (The
+		// one-row fallback toolbar still hides its tools in 3D.)
+		const ESlateVisibility SelectVis = (bCategoryLayoutBuilt || CurrentViewMode == ERoomPlannerViewMode::View2D) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+		if (BtnSelectTool->GetVisibility() != SelectVis) BtnSelectTool->SetVisibility(SelectVis);
+		if (BtnSelectTool->GetIsEnabled() != bHasWalls) BtnSelectTool->SetIsEnabled(bHasWalls);
+		ApplyButtonState(BtnSelectTool, CurrentToolMode == EPlannerToolMode::Select ? EPanelButtonState::On : EPanelButtonState::Idle);
+		const int8 TooltipState = bHasWalls ? 1 : 0;
+		if (TooltipState != SelectToolTooltipState)
 		{
-			BtnSelectTool->SetBackgroundColor(FLinearColor(0.05f, 0.05f, 0.05f, 1.0f)); // Visually disabled
-			BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Инструмент недоступен: пока нет построенных стен")));
-		}
-		else
-		{
-			BtnSelectTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Select ? ActiveColor : InactiveColor);
-			BtnSelectTool->SetToolTipText(FText::FromString(TEXT("Выделение: кликните стену, проём, пол или объект")));
+			SelectToolTooltipState = TooltipState;
+			BtnSelectTool->SetToolTipText(FText::FromString(bHasWalls
+				? TEXT("Выделение: кликните стену, проём, пол или объект")
+				: TEXT("Пока нет стен для работы")));
 		}
 	}
 	if (BtnDrawWallTool)
 	{
-		BtnDrawWallTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::DrawWall ? ActiveColor : InactiveColor);
-		BtnDrawWallTool->SetToolTipText(FText::FromString(TEXT("Инструмент 'Стена': зажмите и тяните ЛКМ на плане")));
+		ApplyButtonState(BtnDrawWallTool, CurrentToolMode == EPlannerToolMode::DrawWall ? EPanelButtonState::On : EPanelButtonState::Idle);
 	}
 	if (BtnDeleteTool)
 	{
-		BtnDeleteTool->SetBackgroundColor(CurrentToolMode == EPlannerToolMode::Erase ? ActiveColor : InactiveColor);
-		BtnDeleteTool->SetToolTipText(FText::FromString(TEXT("Удалить выбранный элемент (клавиша Delete)")));
+		// Deletes the selection: an action, never shown as a switched-on tool.
+		ApplyButtonState(BtnDeleteTool, EPanelButtonState::Idle);
+		BtnDeleteTool->SetToolTipText(FText::FromString(TEXT("Удалить выбранный элемент (клавиша Delete / Backspace)")));
 	}
 
 	UpdateGuidanceHintText();
@@ -641,26 +673,51 @@ void URoomPlannerWidget::UpdateToolModeButtonStyles()
 
 void URoomPlannerWidget::UpdateViewModeButtonStyles()
 {
-	FLinearColor ActiveColor(0.2f, 0.6f, 1.0f, 1.0f);
-	FLinearColor InactiveColor(0.17f, 0.17f, 0.18f, 1.0f);
-
 	bool bIs2D = (CurrentViewMode == ERoomPlannerViewMode::View2D);
 
-	if (Btn2DView) { Btn2DView->SetBackgroundColor(bIs2D ? ActiveColor : InactiveColor); Btn2DView->SetIsEnabled(!bIs2D); }
-	if (Btn_2DView) { Btn_2DView->SetBackgroundColor(bIs2D ? ActiveColor : InactiveColor); Btn_2DView->SetIsEnabled(!bIs2D); }
-	if (Btn3DView) { Btn3DView->SetBackgroundColor(!bIs2D ? ActiveColor : InactiveColor); Btn3DView->SetIsEnabled(bIs2D); }
-	if (Btn_3DView) { Btn_3DView->SetBackgroundColor(!bIs2D ? ActiveColor : InactiveColor); Btn_3DView->SetIsEnabled(bIs2D); }
+	// The selected view is navy and stays enabled (clicking it again changes nothing): it must not look unavailable.
+	UButton* ViewButtons2D[] = { Btn2DView.Get(), Btn_2DView.Get() };
+	UButton* ViewButtons3D[] = { Btn3DView.Get(), Btn_3DView.Get() };
+	for (UButton* Button : ViewButtons2D)
+	{
+		if (!Button) continue;
+		if (!Button->GetIsEnabled()) Button->SetIsEnabled(true);
+		ApplyButtonState(Button, bIs2D ? EPanelButtonState::Selected : EPanelButtonState::Idle);
+	}
+	for (UButton* Button : ViewButtons3D)
+	{
+		if (!Button) continue;
+		if (!Button->GetIsEnabled()) Button->SetIsEnabled(true);
+		ApplyButtonState(Button, !bIs2D ? EPanelButtonState::Selected : EPanelButtonState::Idle);
+	}
 
-	bool bCeilingOn = PlannerManager && PlannerManager->bCeilingVisible;
-	if (BtnToggleCeiling) BtnToggleCeiling->SetBackgroundColor(bCeilingOn ? ActiveColor : InactiveColor);
-	if (Btn_ToggleCeiling) Btn_ToggleCeiling->SetBackgroundColor(bCeilingOn ? ActiveColor : InactiveColor);
-	if (BtnCeiling) BtnCeiling->SetBackgroundColor(bCeilingOn ? ActiveColor : InactiveColor);
+	// The ceiling toggle is a 3D view option (entering 3D shows the ceiling; the plan view never does).
+	const bool bCeilingOn = PlannerManager && PlannerManager->bCeilingVisible;
+	UButton* CeilingButtons[] = { BtnToggleCeiling.Get(), Btn_ToggleCeiling.Get(), BtnCeiling.Get() };
+	for (UButton* Button : CeilingButtons)
+	{
+		if (!Button) continue;
+		ApplyButtonState(Button, bCeilingOn ? EPanelButtonState::On : EPanelButtonState::Idle);
+		Button->SetVisibility(bIs2D ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	}
 
 	ESlateVisibility ToolsVis = bIs2D ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
-	if (BtnDrawWallTool) BtnDrawWallTool->SetVisibility(ToolsVis);
-	if (BtnClearLayout) BtnClearLayout->SetVisibility(ToolsVis);
-	if (BtnPresetRoom) BtnPresetRoom->SetVisibility(ToolsVis);
-	if (BtnCatalogToggle) BtnCatalogToggle->SetVisibility(ToolsVis); // placement is 2D-only, like the catalog it opens
+	if (bCategoryLayoutBuilt)
+	{
+		// The tool segment and the category pages decide; the buttons themselves stay visible. Delete-all is «Очистить план» on
+		// the «Планировка» page now: the trash icon beside 2D/3D goes, the trash icon means "delete the selection" only.
+		if (BtnDrawWallTool && BtnDrawWallTool->GetVisibility() != ESlateVisibility::Visible) BtnDrawWallTool->SetVisibility(ESlateVisibility::Visible);
+		if (BtnPresetRoom && BtnPresetRoom->GetVisibility() != ESlateVisibility::Visible) BtnPresetRoom->SetVisibility(ESlateVisibility::Visible);
+		if (BtnClearLayout) BtnClearLayout->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	else
+	{
+		if (BtnDrawWallTool) BtnDrawWallTool->SetVisibility(ToolsVis);
+		if (BtnClearLayout) BtnClearLayout->SetVisibility(ToolsVis);
+		if (BtnPresetRoom) BtnPresetRoom->SetVisibility(ToolsVis);
+		if (BtnSelectTool) BtnSelectTool->SetVisibility(ToolsVis);
+		if (BtnCatalogToggle) BtnCatalogToggle->SetVisibility(ToolsVis); // placement is 2D-only, like the catalog it opens
+	}
 	if (Image_1) Image_1->SetVisibility(ToolsVis);
 
 	// 3D view options: door / window leaves.
@@ -670,12 +727,12 @@ void URoomPlannerWidget::UpdateViewModeButtonStyles()
 	if (ViewOptionsRow) ViewOptionsRow->SetVisibility(bIs2D ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
 	{
 		const bool bLeavesOpen = PlannerManager && PlannerManager->GetDefaultOpeningLeavesOpen();
-		if (BtnDoorsOpen) BtnDoorsOpen->SetBackgroundColor(bLeavesOpen ? ActiveColor : InactiveColor);
-		if (BtnDoorsClose) BtnDoorsClose->SetBackgroundColor(!bLeavesOpen ? ActiveColor : InactiveColor);
+		ApplyButtonState(BtnDoorsOpen, bLeavesOpen ? EPanelButtonState::On : EPanelButtonState::Idle);
+		ApplyButtonState(BtnDoorsClose, !bLeavesOpen ? EPanelButtonState::On : EPanelButtonState::Idle);
 	}
 
-	// Catalog area (tabs, sections, separators) is a 2D-only workflow like placement itself.
-	ApplyCatalogSectionVisibility();
+	// Category pages (and the catalog area inside «Каталог») follow the view: editing pages are 2D-only.
+	ApplyCategoryVisibility();
 	UpdateSummaryStatsUI();
 
 	UpdateGuidanceHintText();
@@ -690,14 +747,22 @@ void URoomPlannerWidget::SetActiveCatalogTab(EPlannerPlacementKind Tab)
 	const EPlannerPlacementKind NewTab = (Tab == EPlannerPlacementKind::CabinetSet) ? EPlannerPlacementKind::CabinetSet : EPlannerPlacementKind::Object;
 	const bool bChanged = !bCatalogTabChosen || NewTab != ActiveCatalogTab;
 	bCatalogTabChosen = true;
-	bCatalogOpen = true; // a tab is clicked in an open catalog; picking one from code opens it as well
 	ActiveCatalogTab = NewTab;
 	if (bChanged)
 	{
 		RefreshCatalogPanels(); // the single content area is (re-)populated with this tab's cards
 	}
 	UpdateCatalogTabStyles();
-	ApplyCatalogSectionVisibility();
+	// A tab is clicked in an open catalog; picking one from code opens the «Каталог» category as well.
+	if (bCategoryLayoutBuilt && Active2DCategory != EPlannerPanelCategory::Catalog)
+	{
+		SetActiveCategory(EPlannerPanelCategory::Catalog);
+	}
+	else
+	{
+		bCatalogOpen = true;
+		ApplyCatalogSectionVisibility();
+	}
 }
 
 void URoomPlannerWidget::UpdateCatalogTabStyles()
@@ -712,29 +777,53 @@ void URoomPlannerWidget::UpdateCatalogTabStyles()
 
 void URoomPlannerWidget::SetCatalogOpen(bool bOpen)
 {
+	if (bCategoryLayoutBuilt)
+	{
+		// The catalog is the «Каталог» category: open = that tab; folded = back to the tab open before it.
+		if (bOpen)
+		{
+			SetActiveCategory(EPlannerPanelCategory::Catalog);
+		}
+		else if (Active2DCategory == EPlannerPanelCategory::Catalog)
+		{
+			SetActiveCategory(PlannerPanelRules::AfterCatalogToggle(EPlannerPanelCategory::Catalog, CategoryBeforeCatalog));
+		}
+		return;
+	}
 	bCatalogOpen = bOpen;
 	ApplyCatalogSectionVisibility();
 }
 
 void URoomPlannerWidget::OnCatalogToggleClicked()
 {
+	if (bCategoryLayoutBuilt)
+	{
+		SetActiveCategory(PlannerPanelRules::AfterCatalogToggle(Active2DCategory, CategoryBeforeCatalog));
+		return;
+	}
 	SetCatalogOpen(!bCatalogOpen);
 }
 
 void URoomPlannerWidget::ApplyCatalogSectionVisibility()
 {
-	// The tabs and the cards show only while the catalog is open (the «Каталог» button) and only in 2D.
+	// The tabs and the cards show only while the catalog is open (the «Каталог» tab) and only in 2D.
 	const bool bIs2D = (CurrentViewMode == ERoomPlannerViewMode::View2D);
+	if (bCategoryLayoutBuilt)
+	{
+		bCatalogOpen = (Active2DCategory == EPlannerPanelCategory::Catalog);
+	}
 	const ESlateVisibility Vis = (bIs2D && bCatalogOpen) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
-	if (BtnCatalogToggle)
+	if (BtnCatalogToggle && !bCategoryLayoutBuilt)
 	{
 		BtnCatalogToggle->SetBackgroundColor(bCatalogOpen ? ActiveTabColor : CatalogToggleIdleColor);
 	}
 	if (CatalogTabBar) CatalogTabBar->SetVisibility(Vis);
 	if (BtnCatalogInterior && !CatalogTabBar) BtnCatalogInterior->SetVisibility(Vis);
 	if (BtnCatalogCabinets && !CatalogTabBar) BtnCatalogCabinets->SetVisibility(Vis);
-	// The card area opens with the first tab click.
+	// The card area opens with the first tab click; until then a line says what to do.
 	if (Catalog_Container) Catalog_Container->SetVisibility(bCatalogTabChosen ? Vis : ESlateVisibility::Collapsed);
+	if (CatalogPrompt) CatalogPrompt->SetVisibility((bIs2D && bCatalogOpen && !bCatalogTabChosen) ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (CatalogDragHint) CatalogDragHint->SetVisibility((bIs2D && bCatalogOpen && bCatalogTabChosen) ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	UpdateSeparatorLines();
 }
 
@@ -848,13 +937,13 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 
 	if (CurrentViewMode == ERoomPlannerViewMode::View3D)
 	{
-		TxtGuidanceHint->SetText(FText::FromString(TEXT("3D Просмотр: Удерживайте ПКМ для вращения камеры • Колесо мыши для зума • Кликните '2D Вид' для редактирования")));
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("3D: кликните по стене, полу, потолку или объекту и назначьте «Краску» или «Плитку» • ПКМ — вращение камеры • колесо — зум • «2D» — редактирование плана")));
 		return;
 	}
 
 	if (!PlannerManager)
 	{
-		TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или выберите пресет 4х4 м")));
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или нажмите «4×4 м»")));
 		return;
 	}
 
@@ -871,12 +960,19 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 		return;
 	}
 
+	// «Каталог» / «Отделка» on a plan without walls: the room comes first.
+	if (bCategoryLayoutBuilt && Active2DCategory != EPlannerPanelCategory::Layout && PlannerManager->GetWallCount() == 0)
+	{
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("Сначала постройте комнату: нарисуйте стену на плане или нажмите «4×4 м»")));
+		return;
+	}
+
 	switch (PlannerManager->ActiveToolMode)
 	{
 	case EPlannerToolMode::DrawWall:
 		if (PlannerManager->GetWallCount() == 0)
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или выберите пресет 4х4 м")));
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Зажмите ЛКМ и потяните мышь, чтобы нарисовать первую стену, или нажмите «4×4 м»")));
 		}
 		else
 		{
@@ -889,9 +985,19 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 		{
 			TxtGuidanceHint->SetText(FText::FromString(TEXT("Перетаскивание угла: длины стен обновляются в реальном времени. Отпустите ЛКМ, чтобы применить")));
 		}
+		else if (bCategoryLayoutBuilt && Active2DCategory == EPlannerPanelCategory::Finish && PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None
+			&& PlannerManager->SelectedRoomID == -1)
+		{
+			// «Отделка» shows the finishes only (no size fields, no creation blocks, no rotate): the hint says what this page does.
+			const EPlannerSelectionKind Kind = PlannerManager->GetSelectionKind();
+			TxtGuidanceHint->SetText(FText::FromString(Kind == EPlannerSelectionKind::Wall ? TEXT("Стена выбрана: назначьте «Краску» или «Плитку» этой стороне стены")
+				: (Kind == EPlannerSelectionKind::Opening ? TEXT("Проём выбран: назначьте краску наличнику / раме")
+				: (Kind == EPlannerSelectionKind::Object ? TEXT("Объект выбран: назначьте «Краску»")
+				: TEXT("Отделка для тумб недоступна: выберите стену, пол, дверь / окно или объект")))));
+		}
 		else if (PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("Проём выбран: тяните вдоль стены, задайте размеры и сторону открывания справа")));
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Проём выбран: тяните его вдоль стены; размеры, открывание и стиль — в панели слева")));
 		}
 		else if (PlannerManager->SelectedSegmentID != -1)
 		{
@@ -899,11 +1005,23 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 		}
 		else if (PlannerManager->SelectedRoomID != -1)
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("Пол выбран: назначьте краску или плитку")));
+			// The room surface that is actually selected (a baseboard or a ceiling carried over from 3D is not "the floor").
+			const EPlannerSelectionKind Surface = PlannerManager->GetSelectionKind();
+			TxtGuidanceHint->SetText(FText::FromString(Surface == EPlannerSelectionKind::Baseboard ? TEXT("Плинтус выбран: назначьте краску или плитку на вкладке «Отделка»")
+				: (Surface == EPlannerSelectionKind::Ceiling ? TEXT("Потолок выбран: назначьте краску или плитку на вкладке «Отделка»")
+				: TEXT("Пол выбран: назначьте краску или плитку на вкладке «Отделка»"))));
 		}
 		else if (!PlannerManager->SelectedObjectID.IsEmpty() || !PlannerManager->SelectedCabinetSetID.IsEmpty())
 		{
 			TxtGuidanceHint->SetText(FText::FromString(TEXT("Объект выбран: тяните для перемещения, поверните кнопками или удалите клавишей Delete")));
+		}
+		else if (bCategoryLayoutBuilt && Active2DCategory == EPlannerPanelCategory::Catalog)
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Перетащите карточку из каталога на пол или на стену")));
+		}
+		else if (bCategoryLayoutBuilt && Active2DCategory == EPlannerPanelCategory::Finish)
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Кликните по стене, полу, двери / окну или объекту, затем «Краска» или «Плитка»")));
 		}
 		else
 		{
@@ -940,10 +1058,32 @@ AAwsTutorial_PlayerController* URoomPlannerWidget::GetPreviewController() const
 
 void URoomPlannerWidget::HandleRoomPlannerUpdated(const FString& JSONState)
 {
+	bPlanEmptyCached = IsPlanEmpty();
+	// «4×4 м» built: its walls are here, so the new room is ready to edit with «Выбрать» (a stale request expires).
+	if (bSelectToolAfterPresetPending && PlannerManager)
+	{
+		const double Now = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.0;
+		if (Now - PresetRequestTime > 10.0)
+		{
+			bSelectToolAfterPresetPending = false;
+		}
+		else if (PlannerManager->GetWallCount() > 0)
+		{
+			bSelectToolAfterPresetPending = false;
+			if (CurrentViewMode == ERoomPlannerViewMode::View2D && PlannerManager->ActiveToolMode == EPlannerToolMode::DrawWall)
+			{
+				SetToolMode(EPlannerToolMode::Select);
+			}
+		}
+	}
+	// A catalog drop has arrived: select the new item (the drawer stays open).
+	TrySelectDroppedItem();
+	EnforceCategoryTool();
 	UpdateSummaryStatsUI();
 	UpdateDynamicPropertiesPanel();
 	UpdateToolModeButtonStyles();
 	UpdateFinishUI();
+	ApplyCategoryVisibility();
 }
 
 void URoomPlannerWidget::On2DViewClicked() { SetViewMode(ERoomPlannerViewMode::View2D); }
@@ -1031,7 +1171,8 @@ void URoomPlannerWidget::OnWallSelected(int32 SegmentID, float LengthMeters)
 {
 	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 	{
-		if (SegmentID != -1)
+		// 2D only: a wall picked in 3D must not change the plan camera (the 3D → 2D switch sets it from the tool).
+		if (SegmentID != -1 && CurrentViewMode == ERoomPlannerViewMode::View2D)
 		{
 			PC->UpdateRoomPlannerCameraToolMode(EPlannerToolMode::Select);
 		}
@@ -1055,7 +1196,11 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 {
 	if (!PlannerManager) return;
 
-	if (PlannerManager->SelectedSegmentID != -1 && CurrentViewMode == ERoomPlannerViewMode::View2D)
+	// The size fields, «Добавить на стену», swing, style and rotate are the Context's editor: 2D, not on «Отделка» (which shows the
+	// title, a one-line size summary and the finishes instead).
+	const bool bEditorVisible = IsContextEditorVisible();
+
+	if (PlannerManager->SelectedSegmentID != -1 && bEditorVisible)
 	{
 		if (PlannerManager->SelectedOpeningIndex != -1)
 		{
@@ -1092,7 +1237,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 				}
 				else // It's a door
 				{
-					if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Hidden);
+					if (EditableTxtProp3) EditableTxtProp3->SetVisibility(ESlateVisibility::Collapsed); // no empty slot in the size row
 					if (LblWallSize) LblWallSize->SetText(FText::FromString((SelectedOpeningType == EOpeningType::Archway ? TEXT("Проём, см: ширина · высота") : TEXT("Дверь, см: ширина · высота"))));
 					if (TxtApplyProperties) TxtApplyProperties->SetText(FText::FromString(TEXT("Применить")));
 				}
@@ -1150,7 +1295,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 
 	// REQ-07: swing controls only for a selected door / window, 2D only
 	const EPlannerSelectionKind Kind = PlannerManager->GetSelectionKind();
-	const ESlateVisibility SwingVis = (bIs2DPanel && Kind == EPlannerSelectionKind::Opening) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	const ESlateVisibility SwingVis = (bEditorVisible && Kind == EPlannerSelectionKind::Opening) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 	if (BtnSwingLeft) BtnSwingLeft->SetVisibility(SwingVis);
 	if (BtnSwingRight) BtnSwingRight->SetVisibility(SwingVis);
 	if (BtnSwingInward) BtnSwingInward->SetVisibility(SwingVis);
@@ -1161,34 +1306,52 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 		EOpeningSwingSide Side; EOpeningSwingDirection Dir;
 		if (GetSelectedOpeningSwing(Side, Dir))
 		{
-			const FLinearColor Active(0.18f, 0.8f, 0.44f, 1.f), Inactive(0.17f, 0.17f, 0.18f, 1.f);
-			if (BtnSwingLeft) BtnSwingLeft->SetBackgroundColor(Side == EOpeningSwingSide::Left ? Active : Inactive);
-			if (BtnSwingRight) BtnSwingRight->SetBackgroundColor(Side == EOpeningSwingSide::Right ? Active : Inactive);
-			if (BtnSwingInward) BtnSwingInward->SetBackgroundColor(Dir == EOpeningSwingDirection::Inward ? Active : Inactive);
-			if (BtnSwingOutward) BtnSwingOutward->SetBackgroundColor(Dir == EOpeningSwingDirection::Outward ? Active : Inactive);
+			ApplyButtonState(BtnSwingLeft, Side == EOpeningSwingSide::Left ? EPanelButtonState::On : EPanelButtonState::Idle);
+			ApplyButtonState(BtnSwingRight, Side == EOpeningSwingSide::Right ? EPanelButtonState::On : EPanelButtonState::Idle);
+			ApplyButtonState(BtnSwingInward, Dir == EOpeningSwingDirection::Inward ? EPanelButtonState::On : EPanelButtonState::Idle);
+			ApplyButtonState(BtnSwingOutward, Dir == EOpeningSwingDirection::Outward ? EPanelButtonState::On : EPanelButtonState::Idle);
 		}
 	}
 
 	// Door / window / archway style picker (built-in catalog): 2D only, like the swing controls.
 	if (StyleRow)
 	{
-		const bool bShowStyles = bIs2DPanel && Kind == EPlannerSelectionKind::Opening;
+		const bool bShowStyles = bEditorVisible && Kind == EPlannerSelectionKind::Opening;
 		StyleRow->SetVisibility(bShowStyles ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		if (StyleCaption) StyleCaption->SetVisibility(bShowStyles ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 		if (bShowStyles)
 		{
 			RefreshStyleRow();
 		}
 	}
 
-	// REQ-17 / REQ-18: rotate controls for objects / cabinet sets
-	const ESlateVisibility RotVis = (bIs2DPanel && (Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet)) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	// REQ-17 / REQ-18: rotate controls for objects / cabinet sets. An object hung on a wall takes its rotation from the wall: the
+	// buttons stay (the row does not jump) but are disabled and say why.
+	const ESlateVisibility RotVis = (bEditorVisible && (Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet)) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 	if (BtnRotateLeft) BtnRotateLeft->SetVisibility(RotVis);
 	if (BtnRotateRight) BtnRotateRight->SetVisibility(RotVis);
 	if (RotateRow) RotateRow->SetVisibility(RotVis == ESlateVisibility::Visible ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
-
-	// Selection header: "<type / name>   [Delete]". Exists only while something is selected in 2D (editing is 2D-only).
+	if (RotVis == ESlateVisibility::Visible)
 	{
-		const FString Title = bIs2DPanel ? GetSelectionTitleText() : FString();
+		const bool bRotatable = !PlannerManager->IsSelectionWallAttached();
+		UButton* RotateButtons[] = { BtnRotateLeft.Get(), BtnRotateRight.Get() };
+		for (UButton* Button : RotateButtons)
+		{
+			if (!Button || Button->GetIsEnabled() == bRotatable) continue;
+			Button->SetIsEnabled(bRotatable);
+			Button->SetToolTipText(FText::FromString(!bRotatable ? TEXT("Объект закреплён на стене: его поворот задаётся стеной")
+				: (Button == BtnRotateLeft ? TEXT("Повернуть объект на 15° против часовой стрелки") : TEXT("Повернуть объект на 15° по часовой стрелке"))));
+		}
+	}
+
+	// Selection header: "<type / name>   [Delete]", in 2D and 3D (in 3D it names the picked surface the finishes go to). Delete only
+	// in 2D and only for what can be deleted (a wall, an opening, an object, a cabinet set; not a floor, ceiling or baseboard).
+	{
+		FString Title = GetSelectionTitleText();
+		if (Kind == EPlannerSelectionKind::Wall && !bEditorVisible && !Title.IsEmpty())
+		{
+			Title += PlannerManager->IsSelectedWallFaceInterior() ? TEXT(" · сторона в комнату") : TEXT(" · наружная сторона");
+		}
 		const bool bShowHeader = !Title.IsEmpty();
 		if (TxtSelectionTitle)
 		{
@@ -1196,10 +1359,15 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 			TxtSelectionTitle->SetVisibility(bShowHeader ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 		}
 		if (SelectionHeaderRow) SelectionHeaderRow->SetVisibility(bShowHeader ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
-		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(bShowHeader ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		const bool bDeletable = Kind == EPlannerSelectionKind::Wall || Kind == EPlannerSelectionKind::Opening
+			|| Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet;
+		if (BtnDeleteTool) BtnDeleteTool->SetVisibility((bIs2DPanel && bDeletable) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		if (Image_2) Image_2->SetVisibility((bIs2DPanel && bShowHeader) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 	if (BtnCancelPlacement) BtnCancelPlacement->SetVisibility((bIs2DPanel && PlannerManager->HasPendingPlacement()) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 
+	UpdateCreationBlocksVisibility();
+	UpdateContextSummary(nullptr);
 	UpdateFinishUI();
 }
 
@@ -1660,6 +1828,11 @@ void URoomPlannerWidget::BindManagerDelegates()
 	PlannerManager->OnSelectionChanged.AddUniqueDynamic(this, &URoomPlannerWidget::HandleSelectionChanged);
 	PlannerManager->OnFloorSelected.AddUniqueDynamic(this, &URoomPlannerWidget::HandleFloorSelected);
 	PlannerManager->bPlannerUIOpen = true;
+	// Input paths that read raw mouse state (the controller tick, the manager's corner drag) ask the panel at the moment of the press.
+	PlannerManager->SetPlannerUIHitTest([WeakThis = TWeakObjectPtr<URoomPlannerWidget>(this)]()
+	{
+		return WeakThis.IsValid() && WeakThis->IsCursorOverPlannerUI();
+	});
 	// The manager binds here (NativeConstruct), not in the tick fallback, so the session flag that drives the
 	// planner's bounded 3D exposure must be raised here as well.
 	PlannerManager->SetPlannerSessionActive(true);
@@ -1684,18 +1857,28 @@ void URoomPlannerWidget::UnbindManagerDelegates()
 	PlannerManager->OnOperationRejected.RemoveAll(this);
 	PlannerManager->OnSelectionChanged.RemoveAll(this);
 	PlannerManager->OnFloorSelected.RemoveAll(this);
+	PlannerManager->ClearPlannerUIHitTest();
 	bManagerDelegatesBound = false;
 }
 
 void URoomPlannerWidget::HandleOperationRejected(const FString& Reason)
 {
+	ShowStatusMessage(Reason, 4.f);
+	OnOperationRejectedMessage(Reason);
+}
+
+void URoomPlannerWidget::ShowStatusMessage(const FString& Message, float Seconds)
+{
 	if (TxtOperationMessage)
 	{
-		TxtOperationMessage->SetText(FText::FromString(Reason));
+		TxtOperationMessage->SetText(FText::FromString(Message));
 		TxtOperationMessage->SetVisibility(ESlateVisibility::HitTestInvisible);
-		OperationMessageClearTime = GetWorld() ? GetWorld()->GetTimeSeconds() + 4.f : 0.f;
 	}
-	OnOperationRejectedMessage(Reason);
+	if (MessageChip)
+	{
+		MessageChip->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	OperationMessageClearTime = GetWorld() ? GetWorld()->GetTimeSeconds() + Seconds : 0.f;
 }
 
 void URoomPlannerWidget::HandleSelectionChanged()
@@ -1774,10 +1957,17 @@ void URoomPlannerWidget::UpdateSelectionLabelsUI()
 			SelectionLabelPanel->SetVisibility(ESlateVisibility::Collapsed);
 			OnSelectionLabelsUpdated(TArray<FPlannerDimensionLabel>());
 		}
+		if (TxtContextSummary && TxtContextSummary->GetVisibility() != ESlateVisibility::Collapsed)
+		{
+			UpdateContextSummary(nullptr);
+		}
+		UpdateFloatingContextBar(nullptr);
 		return;
 	}
 
 	const TArray<FPlannerDimensionLabel> Labels = GetSelectionLabels();
+	UpdateContextSummary(&Labels); // live while a corner or the object is dragged
+	UpdateFloatingContextBar(&Labels);
 
 	auto FindLabel = [&Labels](const TCHAR* Key) -> const FPlannerDimensionLabel*
 	{
@@ -1924,10 +2114,18 @@ void URoomPlannerWidget::RefreshStyleRow()
 			UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
 			if (!Button || !Label) continue;
 
+			// Our buttons' look (the "Добавить дверь" style: slate, rounded, #D9D9D9 outline) with the captions' Roboto Bold 10.5.
+			if (const UButton* StyleSource = BtnAddDoor ? BtnAddDoor.Get() : BtnApplyProperties.Get())
+			{
+				Button->SetStyle(StyleSource->GetStyle());
+			}
 			Label->SetText(FText::FromString(Style.DisplayName));
-			Label->SetFont(FCoreStyle::GetDefaultFontStyle("Regular", 10));
+			Label->SetFont(LblWallSize ? LblWallSize->GetFont() : FCoreStyle::GetDefaultFontStyle("Bold", 10.5f));
 			Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-			Button->AddChild(Label);
+			if (UButtonSlot* LabelSlot = Cast<UButtonSlot>(Button->AddChild(Label)))
+			{
+				LabelSlot->SetPadding(FMargin(2.f, 1.f));
+			}
 			Button->StyleID = Style.ID;
 			Button->SetToolTipText(FText::FromString(FString::Printf(TEXT("Стиль: %s"), *Style.DisplayName)));
 			Button->OnStyleClicked.BindUObject(this, &URoomPlannerWidget::OnStyleButtonClicked);
@@ -1942,12 +2140,11 @@ void URoomPlannerWidget::RefreshStyleRow()
 		StyleRowBuiltKey = Key;
 	}
 
-	const FLinearColor Active(0.18f, 0.8f, 0.44f, 1.f), Inactive(0.17f, 0.17f, 0.18f, 1.f);
 	for (UWidget* Child : StyleRow->GetAllChildren())
 	{
 		if (UPlannerStyleButton* Button = Cast<UPlannerStyleButton>(Child))
 		{
-			Button->SetBackgroundColor(Button->StyleID == CurrentStyle ? Active : Inactive);
+			ApplyButtonState(Button, Button->StyleID == CurrentStyle ? EPanelButtonState::On : EPanelButtonState::Idle);
 		}
 	}
 }
@@ -2016,7 +2213,23 @@ void URoomPlannerWidget::OpenPaintCatalogForSelection()
 	// The catalog collapses this widget and later forces it back to Visible; remember the designed visibility.
 	VisibilityBeforePaintCatalog = GetVisibility();
 
-	UColorCatalogWidget* Catalog = UColorCatalogWidget::OpenColorCatalogForWidget(this, CatalogClass);
+	UColorCatalogWidget* Catalog = nullptr;
+	if (bFinishCatalogBesidePanel)
+	{
+		// Beside the panel: the planner stays on screen. Created without a calling widget, so the shared catalog neither collapses
+		// the planner nor forces it visible on close (its other users open it through OpenColorCatalogForWidget as before).
+		if (::IsValid(ActivePlannerTileCatalog) && ActivePlannerTileCatalog->IsInViewport())
+		{
+			ActivePlannerTileCatalog->CloseCatalog(); // one finish catalog at a time
+		}
+		APlayerController* CatalogOwner = GetOwningPlayer() ? GetOwningPlayer() : UGameplayStatics::GetPlayerController(GetWorld(), 0);
+		Catalog = CatalogOwner ? CreateWidget<UColorCatalogWidget>(CatalogOwner, CatalogClass) : nullptr;
+		OpenFinishFlyout(Catalog);
+	}
+	else
+	{
+		Catalog = UColorCatalogWidget::OpenColorCatalogForWidget(this, CatalogClass);
+	}
 	if (!Catalog)
 	{
 		return;
@@ -2141,6 +2354,8 @@ FString URoomPlannerWidget::GetSelectedFinishText() const
 		{
 		case EPlannerSelectionKind::Wall:      Surface = PlannerManager->IsSelectedWallFaceInterior() ? TEXT("Сторона в комнату: ") : TEXT("Наружная сторона: "); break;
 		case EPlannerSelectionKind::Opening:   Surface = TEXT("Наличник / рама: "); break;
+		case EPlannerSelectionKind::Floor:     Surface = TEXT("Пол: "); break;
+		case EPlannerSelectionKind::Object:    Surface = TEXT("Объект: "); break;
 		case EPlannerSelectionKind::Ceiling:   Surface = TEXT("Потолок: "); break;
 		case EPlannerSelectionKind::Baseboard: Surface = TEXT("Плинтус: "); break;
 		default: break;
@@ -2186,6 +2401,14 @@ void URoomPlannerWidget::UpdateFinishUI()
 		TxtFinishInfo->SetText(FText::FromString(bCanFinish ? GetSelectedFinishText() : FString()));
 		TxtFinishInfo->SetVisibility(bCanFinish ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
+	if (FinishPrompt)
+	{
+		// The «Отделка» page with nothing to finish selected: what to click (surface first, then the colour or tile).
+		FinishPrompt->SetText(FText::FromString(CurrentViewMode == ERoomPlannerViewMode::View2D
+			? TEXT("Выберите на плане стену, пол, дверь / окно или объект, затем «Краска» или «Плитка»")
+			: TEXT("Кликните по стене, полу, потолку или объекту, затем «Краска» или «Плитка»")));
+		FinishPrompt->SetVisibility(bCanFinish ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
 	// Tiles go on surfaces (wall faces, floors, ceilings, baseboards), not on door / window trim or objects.
 	if (BtnFinishTile)
 	{
@@ -2202,6 +2425,7 @@ void URoomPlannerWidget::UpdateFinishUI()
 		const bool bHasWalls = PlannerManager && PlannerManager->GetWallCount() > 0;
 		TxtFinishAreas->SetText(FText::FromString(bHasWalls ? GetFinishAreaSummaryText() : FString()));
 	}
+	UpdateSurfaceChooser();
 }
 
 void URoomPlannerWidget::CreateTileCatalogButton()
@@ -2210,36 +2434,9 @@ void URoomPlannerWidget::CreateTileCatalogButton()
 	UPanelWidget* Row = BtnFinishPaint->GetParent();
 	if (!Row || !Row->CanHaveMultipleChildren()) return;
 
-	BtnFinishTile = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("BtnFinishTile"));
-	if (!BtnFinishTile) return;
-
 	// Same look as the "Отделка" button beside it.
-	BtnFinishTile->SetStyle(BtnFinishPaint->GetStyle());
-	BtnFinishTile->SetBackgroundColor(BtnFinishPaint->GetBackgroundColor());
-	BtnFinishTile->SetColorAndOpacity(BtnFinishPaint->GetColorAndOpacity());
-
-	UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("BtnFinishTileLabel"));
-	Label->SetText(FText::FromString(TEXT("Плитка")));
-	const UTextBlock* PaintLabel = Cast<UTextBlock>(BtnFinishPaint->GetContent());
-	if (PaintLabel)
-	{
-		Label->SetFont(PaintLabel->GetFont());
-		Label->SetColorAndOpacity(PaintLabel->GetColorAndOpacity());
-	}
-	else
-	{
-		Label->SetFont(FCoreStyle::GetDefaultFontStyle("Bold", 13.5f));
-		Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-	}
-	if (UButtonSlot* LabelSlot = Cast<UButtonSlot>(BtnFinishTile->AddChild(Label)))
-	{
-		if (const UButtonSlot* PaintLabelSlot = PaintLabel ? Cast<UButtonSlot>(PaintLabel->Slot) : nullptr)
-		{
-			LabelSlot->SetPadding(PaintLabelSlot->GetPadding());
-			LabelSlot->SetHorizontalAlignment(PaintLabelSlot->GetHorizontalAlignment());
-			LabelSlot->SetVerticalAlignment(PaintLabelSlot->GetVerticalAlignment());
-		}
-	}
+	BtnFinishTile = MakeRuntimeButton(BtnFinishPaint, TEXT("Плитка"), TEXT("BtnFinishTile"), TEXT("Выбрать плитку из каталога для выбранной поверхности"));
+	if (!BtnFinishTile) return;
 
 	UPanelSlot* RowSlot = Row->InsertChildAt(Row->GetChildIndex(BtnFinishPaint) + 1, BtnFinishTile);
 	UHorizontalBoxSlot* TileSlot = Cast<UHorizontalBoxSlot>(RowSlot);
@@ -2252,7 +2449,6 @@ void URoomPlannerWidget::CreateTileCatalogButton()
 		TileSlot->SetVerticalAlignment(PaintSlot->GetVerticalAlignment());
 	}
 
-	BtnFinishTile->SetToolTipText(FText::FromString(TEXT("Выбрать плитку из каталога для выбранной поверхности")));
 	BtnFinishTile->SetVisibility(ESlateVisibility::Collapsed);
 	BtnFinishTile->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnFinishTileClicked);
 }
@@ -2260,43 +2456,28 @@ void URoomPlannerWidget::CreateTileCatalogButton()
 void URoomPlannerWidget::CreateCatalogToggleButton()
 {
 	if (BtnCatalogToggle || !WidgetTree) return;
-	UButton* StyleSource = BtnPresetRoom ? BtnPresetRoom.Get() : BtnDrawWallTool.Get();
+	// The category tabs copy the 2D/3D switch (their hover stays slate); the fallback toolbar copies "4×4 м" beside it.
+	UButton* StyleSource = Btn_3DView ? Btn_3DView.Get() : (BtnPresetRoom ? BtnPresetRoom.Get() : BtnDrawWallTool.Get());
 	if (!StyleSource) return;
-	UHorizontalBox* Row = Cast<UHorizontalBox>(StyleSource->GetParent());
-	if (!Row) return;
 
-	BtnCatalogToggle = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("BtnCatalogToggle"));
+	BtnCatalogToggle = MakeRuntimeButton(StyleSource, TEXT("Каталог"), TEXT("BtnCatalogToggle"),
+		TEXT("Каталог: интерьер и тумбы (перетащите карточку на план). Нажмите ещё раз, чтобы свернуть"), BtnDrawWallTool);
 	if (!BtnCatalogToggle) return;
-	// Same look as "4×4 м" beside it; while the catalog is open it takes the active tab colour.
-	BtnCatalogToggle->SetStyle(StyleSource->GetStyle());
-	BtnCatalogToggle->SetColorAndOpacity(StyleSource->GetColorAndOpacity());
-	CatalogToggleIdleColor = StyleSource->GetBackgroundColor();
+	CatalogToggleIdleColor = IdleControlColor;
 	BtnCatalogToggle->SetBackgroundColor(CatalogToggleIdleColor);
-
-	UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("BtnCatalogToggleLabel"));
-	Label->SetText(FText::FromString(TEXT("Каталог")));
-	const UTextBlock* SourceLabel = Cast<UTextBlock>(StyleSource->GetContent());
-	if (SourceLabel)
-	{
-		Label->SetFont(SourceLabel->GetFont());
-		Label->SetColorAndOpacity(SourceLabel->GetColorAndOpacity());
-	}
-	else
-	{
-		Label->SetFont(FCoreStyle::GetDefaultFontStyle("Bold", 13.5f));
-		Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-	}
-	if (UButtonSlot* LabelSlot = Cast<UButtonSlot>(BtnCatalogToggle->AddChild(Label)))
-	{
-		if (const UButtonSlot* SourceLabelSlot = SourceLabel ? Cast<UButtonSlot>(SourceLabel->Slot) : nullptr)
-		{
-			LabelSlot->SetPadding(SourceLabelSlot->GetPadding());
-			LabelSlot->SetHorizontalAlignment(SourceLabelSlot->GetHorizontalAlignment());
-			LabelSlot->SetVerticalAlignment(SourceLabelSlot->GetVerticalAlignment());
-		}
-	}
-	BtnCatalogToggle->SetToolTipText(FText::FromString(TEXT("Показать / скрыть каталог: интерьер и тумбы")));
 	BtnCatalogToggle->OnClicked.AddUniqueDynamic(this, &URoomPlannerWidget::OnCatalogToggleClicked);
+}
+
+void URoomPlannerWidget::InstallFallbackToolWrap()
+{
+	if (!WidgetTree || !BtnCatalogToggle || BtnCatalogToggle->GetParent()) return;
+	UButton* RowMember = BtnPresetRoom ? BtnPresetRoom.Get() : BtnDrawWallTool.Get();
+	UHorizontalBox* Row = RowMember ? Cast<UHorizontalBox>(RowMember->GetParent()) : nullptr;
+	if (!Row) return;
+	// Styled like "4×4 м" beside it; while the catalog is open it takes the active tab colour.
+	BtnCatalogToggle->SetStyle(RowMember->GetStyle());
+	CatalogToggleIdleColor = RowMember->GetBackgroundColor();
+	BtnCatalogToggle->SetBackgroundColor(CatalogToggleIdleColor);
 
 	// The tool row as a wrap box (with the new button last): four buttons do not fit the side panel's width on one line.
 	UWrapBox* Tools = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(), TEXT("ToolButtons"));
@@ -2470,7 +2651,23 @@ void URoomPlannerWidget::OpenTileCatalogForSelection()
 	// The catalog collapses this widget and later forces it back to Visible; remember the designed visibility.
 	VisibilityBeforeTileCatalog = GetVisibility();
 
-	UPlannerTileCatalogWidget* Catalog = UPlannerTileCatalogWidget::OpenForWidget(this, PlannerTileCatalogWidgetClass);
+	UPlannerTileCatalogWidget* Catalog = nullptr;
+	if (bFinishCatalogBesidePanel)
+	{
+		// Beside the panel, the planner stays on screen (no calling widget: nothing is collapsed or forced visible on close).
+		if (::IsValid(ActivePlannerColorCatalog) && ActivePlannerColorCatalog->IsInViewport())
+		{
+			ActivePlannerColorCatalog->CloseColorCatalog(); // one finish catalog at a time
+		}
+		APlayerController* CatalogOwner = GetOwningPlayer() ? GetOwningPlayer() : UGameplayStatics::GetPlayerController(GetWorld(), 0);
+		TSubclassOf<UPlannerTileCatalogWidget> TileClass = PlannerTileCatalogWidgetClass ? PlannerTileCatalogWidgetClass : TSubclassOf<UPlannerTileCatalogWidget>(UPlannerTileCatalogWidget::StaticClass());
+		Catalog = CatalogOwner ? CreateWidget<UPlannerTileCatalogWidget>(CatalogOwner, TileClass) : nullptr;
+		OpenFinishFlyout(Catalog);
+	}
+	else
+	{
+		Catalog = UPlannerTileCatalogWidget::OpenForWidget(this, PlannerTileCatalogWidgetClass);
+	}
 	if (!Catalog)
 	{
 		return;
@@ -2547,6 +2744,7 @@ void URoomPlannerWidget::BeginPlaceObject(const FString& AssetID)
 		HandleOperationRejected(TEXT("Размещение объектов доступно только в 2D режиме"));
 		return;
 	}
+	if (bCategoryLayoutBuilt) SetActiveCategory(EPlannerPanelCategory::Catalog); // «Отменить размещение» is on that page (first: it may switch the tool)
 	PlannerManager->BeginPlaceObject(AssetID);
 	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 	{
@@ -2564,6 +2762,7 @@ void URoomPlannerWidget::BeginPlaceCabinetSet(FName ProductID)
 		HandleOperationRejected(TEXT("Размещение гарнитуров доступно только в 2D режиме"));
 		return;
 	}
+	if (bCategoryLayoutBuilt) SetActiveCategory(EPlannerPanelCategory::Catalog); // «Отменить размещение» is on that page (first: it may switch the tool)
 	PlannerManager->BeginPlaceCabinetSet(ProductID);
 	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 	{
@@ -2692,10 +2891,10 @@ bool URoomPlannerWidget::IsScreenPositionOverCatalogPanels(const FVector2D& Scre
 
 void URoomPlannerWidget::HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition)
 {
-	if (IsScreenPositionOverCatalogPanels(ScreenSpacePosition))
+	if (IsScreenPositionOverPlannerUI(ScreenSpacePosition))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Drag of '%s' released over the catalog panel — ignored."), *ItemID);
-		return; // dropped back onto the catalog: not a placement
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Drag of '%s' released over the planner UI — ignored."), *ItemID);
+		return; // dropped back onto the panel (the cards, the tabs, the toolbar ...): not a placement on the plan hidden behind it
 	}
 	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Drag-cancel path: '%s' (kind %d) released at screen (%.0f, %.0f)"), *ItemID, (int32)Kind, ScreenSpacePosition.X, ScreenSpacePosition.Y);
 	DropCatalogItemAtScreenPosition(Kind, ItemID, ScreenSpacePosition);
@@ -2717,7 +2916,7 @@ bool URoomPlannerWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDr
 		if (const UPlannerCatalogItemWidget* Card = Cast<UPlannerCatalogItemWidget>(InOperation->Payload))
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] NativeOnDrop path: '%s' (kind %d) at screen (%.0f, %.0f)"), *Card->ItemID, (int32)Card->Kind, InDragDropEvent.GetScreenSpacePosition().X, InDragDropEvent.GetScreenSpacePosition().Y);
-			if (!IsScreenPositionOverCatalogPanels(InDragDropEvent.GetScreenSpacePosition()))
+			if (!IsScreenPositionOverPlannerUI(InDragDropEvent.GetScreenSpacePosition()))
 			{
 				DropCatalogItemAtScreenPosition(Card->Kind, Card->ItemID, InDragDropEvent.GetScreenSpacePosition());
 			}
@@ -2745,7 +2944,9 @@ bool URoomPlannerWidget::DropCatalogItemUnderCursor(EPlannerPlacementKind Kind, 
 		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] DropCatalogItemUnderCursor: owning player is not AAwsTutorial_PlayerController"));
 		return false;
 	}
+	BeginSelectDroppedItem(Kind, ItemID); // before the call: on a listen server the new item arrives inside it
 	const bool bSent = PC->PlannerDropCatalogItemUnderCursor(Kind, ItemID);
+	if (!bSent) PendingDrop = FPendingDropSelection();
 	UpdateDynamicPropertiesPanel();
 	return bSent;
 }
@@ -2768,7 +2969,9 @@ bool URoomPlannerWidget::DropCatalogItemAtScreenPosition(EPlannerPlacementKind K
 		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] DropCatalogItemAtScreenPosition: owning player is not AAwsTutorial_PlayerController"));
 		return false;
 	}
+	BeginSelectDroppedItem(Kind, ItemID); // before the call: on a listen server the new item arrives inside it
 	const bool bSent = PC->PlannerDropCatalogItemAtScreenPosition(Kind, ItemID, ScreenSpacePosition);
+	if (!bSent) PendingDrop = FPendingDropSelection();
 	UpdateDynamicPropertiesPanel();
 	return bSent;
 }
