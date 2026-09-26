@@ -335,6 +335,36 @@ UProceduralMeshComponent* AProceduralWallActor::CreateLeafComponent()
 	return Leaf;
 }
 
+void AProceduralWallActor::SyncOpeningHighlightComponents(int32 Count)
+{
+	while (OpeningHighlightMeshes.Num() > Count)
+	{
+		if (UProceduralMeshComponent* Highlight = OpeningHighlightMeshes.Pop())
+		{
+			Highlight->DestroyComponent();
+		}
+	}
+	while (OpeningHighlightMeshes.Num() < Count)
+	{
+		OpeningHighlightMeshes.Add(CreateOpeningHighlightComponent());
+	}
+}
+
+UProceduralMeshComponent* AProceduralWallActor::CreateOpeningHighlightComponent()
+{
+	UProceduralMeshComponent* Highlight = NewObject<UProceduralMeshComponent>(this);
+	Highlight->CreationMethod = EComponentCreationMethod::Instance;
+	Highlight->SetupAttachment(SceneRoot);
+	Highlight->bRenderInMainPass = true;
+	Highlight->bRenderCustomDepth = false;
+	Highlight->SetVisibility(false);
+	// A selection box is a drawing aid: nothing ever traces against it, the manager only toggles its visibility.
+	Highlight->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Highlight->RegisterComponent();
+	AddInstanceComponent(Highlight);
+	return Highlight;
+}
+
 void AProceduralWallActor::ApplyLeafPose(int32 OpeningIndex)
 {
 	UProceduralMeshComponent* Leaf = LeafMeshes.IsValidIndex(OpeningIndex) ? LeafMeshes[OpeningIndex].Get() : nullptr;
@@ -428,6 +458,9 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		return;
 	}
 
+	// The body is rebuilt every frame of a corner drag: without collision the synchronous path is used, so no body setup is
+	// allocated and no previous cook is aborted per update (the same reason the dressing and the leaves below switch paths).
+	WallProceduralMesh->bUseAsyncCooking = bCreateCollision;
 	WallProceduralMesh->ClearAllMeshSections();
 	if (DressingMesh)
 	{
@@ -437,16 +470,7 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	}
 	if (PlanSymbolMesh) PlanSymbolMesh->ClearAllMeshSections();
 
-	for (UProceduralMeshComponent* Comp : OpeningHighlightMeshes)
-	{
-		if (Comp)
-		{
-			Comp->DestroyComponent();
-		}
-	}
-	OpeningHighlightMeshes.Empty();
-
-	// Leaves exist only where something renders (a dedicated server builds the wall body and its collision only).
+	// Leaves and opening highlights exist only where something renders (a dedicated server builds the wall body and its collision only).
 	const bool bBuildVisuals = GetNetMode() != NM_DedicatedServer;
 	const int32 NumOpenings = WallData.Openings.Num();
 	LeafPoses.Reset();
@@ -456,6 +480,15 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		LeafOpenFractions.SetNumZeroed(NumOpenings);
 	}
 	SyncLeafComponents(bBuildVisuals ? NumOpenings : 0);
+	SyncOpeningHighlightComponents(bBuildVisuals ? NumOpenings : 0);
+	for (UProceduralMeshComponent* Highlight : OpeningHighlightMeshes)
+	{
+		if (!Highlight) continue;
+		// A rebuilt wall shows no highlight until the manager re-applies the selection (UpdateSelectionVisuals), and a wall that
+		// turns out too short to build a box (the early return below) must not keep the box of its previous shape.
+		Highlight->SetVisibility(false);
+		Highlight->ClearAllMeshSections();
+	}
 	for (UProceduralMeshComponent* Leaf : LeafMeshes)
 	{
 		if (!Leaf) continue;
@@ -677,18 +710,23 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 	HighlightFace = INDEX_NONE;
 	ApplyWallSectionMaterials();
 
-	// Generate 3D red translucent selection boxes with guaranteed 1-to-1 index match to WallData.Openings
-	UMaterialInterface* OpeningMat = OpeningSelectionMaterial ? OpeningSelectionMaterial.Get() : nullptr;
-	if (!OpeningMat)
+	// Selection boxes, one per entry of WallData.Openings. The pool is empty where nothing renders, which is what keeps this whole
+	// pass — material lookup included — off a dedicated server.
+	UMaterialInterface* OpeningMat = nullptr;
+	if (!OpeningHighlightMeshes.IsEmpty())
 	{
-		OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
-	}
-	if (!OpeningMat)
-	{
-		OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
+		OpeningMat = OpeningSelectionMaterial ? OpeningSelectionMaterial.Get() : nullptr;
+		if (!OpeningMat)
+		{
+			OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/RoomPlanner/Materials/M_OpeningSelection.M_OpeningSelection"));
+		}
+		if (!OpeningMat)
+		{
+			OpeningMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Constructor/Materials/M_OpeningSelection.M_OpeningSelection"));
+		}
 	}
 
-	for (int32 OpIdx = 0; OpIdx < NumOpenings; ++OpIdx)
+	for (int32 OpIdx = 0; OpIdx < OpeningHighlightMeshes.Num(); ++OpIdx)
 	{
 		const FWallOpening& Op = WallData.Openings[OpIdx];
 		// The selection box keeps showing the opening's requested extent.
@@ -713,16 +751,8 @@ void AProceduralWallActor::RebuildWallMesh(const FVector2D& StartPos, const FVec
 		const FVector2D Box_SR = H_SR + OutRight + OutStart;
 		const FVector2D Box_ER = H_ER + OutRight + OutEnd;
 
-		UProceduralMeshComponent* HighlightMesh = NewObject<UProceduralMeshComponent>(this);
-		HighlightMesh->CreationMethod = EComponentCreationMethod::Instance;
-		HighlightMesh->RegisterComponent();
-		HighlightMesh->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
-		AddInstanceComponent(HighlightMesh);
-		HighlightMesh->bRenderInMainPass = true;
-		HighlightMesh->bRenderCustomDepth = false;
-		HighlightMesh->SetVisibility(false);
-		HighlightMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		OpeningHighlightMeshes.Add(HighlightMesh);
+		UProceduralMeshComponent* HighlightMesh = OpeningHighlightMeshes[OpIdx];
+		if (!HighlightMesh) continue;
 
 		FPlannerMeshBuffers Box;
 		PlannerMeshBuilder::AddQuad(Box, V3(Box_SL, H_SillZ), V3(Box_EL, H_SillZ), V3(Box_EL, H_LintelZ), V3(Box_SL, H_LintelZ), LeftNormalVector);

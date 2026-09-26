@@ -232,6 +232,10 @@ private:
 	void SyncLeafComponents(int32 Count);
 	UProceduralMeshComponent* CreateLeafComponent();
 
+	/** The same pooling for the opening selection boxes: re-creating them destroyed and registered a component per opening per rebuild. */
+	void SyncOpeningHighlightComponents(int32 Count);
+	UProceduralMeshComponent* CreateOpeningHighlightComponent();
+
 	void ApplyLeafPose(int32 OpeningIndex);
 	void ApplyAllLeafPoses();
 

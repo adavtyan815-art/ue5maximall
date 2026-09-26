@@ -15,6 +15,7 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
 #include "JsonObjectConverter.h"
 #include "PixelStreamingInputComponent.h"
 #include "Constructor/PlannerPlacedObjectActor.h"
@@ -70,6 +71,49 @@ namespace PlannerJsonKeys
 	{
 		return FString::Printf(TEXT("%.2f м"), Cm / 100.f);
 	}
+
+	/**
+	 * Condensed, and doubles written only as long as they mean anything. The stock policy spells a double out to 17
+	 * significant digits, so one dragged corner reaches every client as "133.33000000000001" in a string that is
+	 * re-serialized on every mutation.
+	 */
+	template <class CharType>
+	struct TShortDoublePrintPolicy : public TCondensedJsonPrintPolicy<CharType>
+	{
+		static inline void WriteDouble(FArchive* Stream, double Value)
+		{
+			// A non-finite coordinate would be written as "nan" and make the whole layout unparseable for every client. Writing
+			// 0 keeps the rest of the layout readable, but it silently moves something to the origin, so it is worth saying.
+			if (!FMath::IsFinite(Value))
+			{
+				UE_LOG(LogTemp, Error, TEXT("[Planner] Non-finite value in the layout JSON, written as 0."));
+				TJsonPrintPolicy<CharType>::WriteString(Stream, FString(TEXT("0")));
+				return;
+			}
+			TJsonPrintPolicy<CharType>::WriteString(Stream, FString::SanitizeFloat(Value, 0));
+		}
+
+		/** The float path is inherited from TJsonPrintPolicy and would print %g, i.e. 6 significant digits. */
+		static inline void WriteFloat(FArchive* Stream, float Value)
+		{
+			WriteDouble(Stream, (double)Value);
+		}
+	};
+	using FLayoutJsonWriter = TJsonWriter<TCHAR, TShortDoublePrintPolicy<TCHAR>>;
+	using FLayoutJsonWriterFactory = TJsonWriterFactory<TCHAR, TShortDoublePrintPolicy<TCHAR>>;
+
+	/** A measured value carries more digits than it means; the ones past this only lengthen the string. */
+	static void SetRounded(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field, double Value, int32 Decimals)
+	{
+		const double Scale = FMath::Pow(10.0, (double)Decimals);
+		Obj->SetNumberField(Field, FMath::RoundToDouble(Value * Scale) / Scale);
+	}
+	/** Centimetres: 0.01 cm is a tenth of a millimetre, finer than the planner draws or snaps to. */
+	static void SetCm(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field, double Cm) { SetRounded(Obj, Field, Cm, 2); }
+	/** Degrees. */
+	static void SetDegrees(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field, double Degrees) { SetRounded(Obj, Field, Degrees, 3); }
+	/** Colour components and scale factors: FSurfaceFinish compares colours with a 0.001 tolerance, so 0.0001 is safe. */
+	static void SetUnit(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field, double Value) { SetRounded(Obj, Field, Value, 4); }
 }
 
 ARoomPlannerManager::ARoomPlannerManager()
@@ -199,6 +243,8 @@ void ARoomPlannerManager::Tick(float DeltaTime)
 	}
 
 	TickLocalNodeDrag();
+	TickOpeningDragEnd(); // an opening drag that stopped without a release is published and its cooking resumed here
+	EnsureLayoutCollision(); // a drag that skipped collision cooking is made good here, however it ended
 
 	// Room lights follow room changes lazily and only when they can be seen (see bRoomLightsDirty). Direct edits of
 	// RoomLightSettings (Details panel, Blueprint) are noticed through the settings hash.
@@ -496,8 +542,7 @@ int32 ARoomPlannerManager::SplitWallSegment(int32 SegmentID, const FVector2D& Sp
 		}
 	}
 
-	RebuildAllWalls();
-	RebuildRooms();
+	RebuildWallsAndRooms();
 
 	return JunctionNodeID;
 }
@@ -603,7 +648,7 @@ int32 ARoomPlannerManager::AddWallBetweenPoints(const FVector2D& StartPos, const
 	return FirstPiece;
 }
 
-int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thickness, float Height)
+int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thickness, float Height, int32 DesiredSegmentID)
 {
 	if (StartNodeID == EndNodeID || !Nodes.Contains(StartNodeID) || !Nodes.Contains(EndNodeID))
 	{
@@ -620,7 +665,11 @@ int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thi
 		}
 	}
 
-	int32 SegID = NextSegmentID++;
+	// DesiredSegmentID: the import keeps the id the layout was saved with, so a wall means the same wall on every machine.
+	const bool bKeepID = DesiredSegmentID > 0 && !WallSegments.Contains(DesiredSegmentID);
+	int32 SegID = bKeepID ? DesiredSegmentID : NextSegmentID;
+	if (SegID >= NextSegmentID) NextSegmentID = SegID + 1;
+
 	FWallSegment Segment;
 	Segment.SegmentID = SegID;
 	Segment.WallGuid = PlannerJsonKeys::NewInstanceID();
@@ -651,8 +700,7 @@ int32 ARoomPlannerManager::AddWall(int32 StartNodeID, int32 EndNodeID, float Thi
 		}
 	}
 
-	RebuildAllWalls();
-	RebuildRooms();
+	RebuildWallsAndRooms();
 
 	return SegID;
 }
@@ -666,7 +714,9 @@ bool ARoomPlannerManager::AddOpeningToWall(int32 SegmentID, EOpeningType Type, f
 	}
 
 	FWallOpening Opening;
-	Opening.OpeningID = FString::Printf(TEXT("Op_%d_%d"), SegmentID, Seg->Openings.Num() + 1);
+	// Serial numbers repeat: delete the first of two openings and the next one added is "Op_S_2" a second time. Both the leaf
+	// state and the saved layout identify an opening by this string, so it has to stay unique for good, like WallGuid.
+	Opening.OpeningID = PlannerJsonKeys::NewInstanceID();
 	Opening.Type = Type;
 	Opening.DistanceFromStart = DistFromStart;
 	Opening.Width = Width;
@@ -683,8 +733,7 @@ bool ARoomPlannerManager::AddOpeningToWall(int32 SegmentID, EOpeningType Type, f
 		}
 	}
 
-	RebuildAllWalls();
-	RebuildRooms(); // floor thresholds and baseboard gaps follow the openings
+	RebuildWallsAndRooms(); // floor thresholds and baseboard gaps follow the openings
 	return true;
 }
 
@@ -736,8 +785,7 @@ void ARoomPlannerManager::RemoveWall(int32 SegmentID)
 		WallActors.Remove(SegmentID);
 	}
 
-	RebuildAllWalls();
-	RebuildRooms();
+	RebuildWallsAndRooms();
 	ReplicatedRoomJSON = ExportLayoutToJSON();
 	OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
 	OnWallSelected.Broadcast(-1, 0.f);
@@ -821,6 +869,14 @@ void ARoomPlannerManager::ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FV
 
 void ARoomPlannerManager::ComputeAllCornerJoints()
 {
+	// Node positions and each wall's ends and thickness are the only input, and none of them changes inside one logical rebuild:
+	// the rooms pass and the interior-side pass that follows it read the joints the walls pass computed.
+	if (RebuildScopeDepth > 0 && bCornerJointsComputedInScope)
+	{
+		return;
+	}
+	bCornerJointsComputedInScope = (RebuildScopeDepth > 0);
+
 	CornerJoints.Reset();
 
 	struct FEntry
@@ -979,6 +1035,28 @@ void ARoomPlannerManager::ComputeAllCornerJoints()
 	}
 }
 
+void ARoomPlannerManager::RebuildWallsAndRooms()
+{
+	++RebuildScopeDepth;
+	ON_SCOPE_EXIT
+	{
+		if (--RebuildScopeDepth == 0)
+		{
+			bCornerJointsComputedInScope = false;
+		}
+	};
+
+	RebuildAllWalls();
+	RebuildRooms();
+
+	// Walls and slabs have just been built together. If that cooked, there is nothing left for EnsureLayoutCollision to
+	// repair — the commit that ends a drag lands here, so the frame after a release does not rebuild the layout a second time.
+	if (ShouldCookCollision() && LayoutImportDepth == 0)
+	{
+		bLayoutCollisionStale = false;
+	}
+}
+
 void ARoomPlannerManager::RebuildAllWalls()
 {
 	if (LayoutImportDepth > 0)
@@ -989,7 +1067,9 @@ void ARoomPlannerManager::RebuildAllWalls()
 	// gap with it (RebuildRooms does this itself, at its end).
 	ON_SCOPE_EXIT
 	{
-		if (!bRebuildingRooms && BaseboardDefaultMaterial && Rooms.Num() > 0)
+		// In a scope the rooms pass follows and ends with the baseboards itself, from the rooms this rebuild is about to detect;
+		// doing them here would build them from the previous rooms and throw them away a moment later.
+		if (!bRebuildingRooms && RebuildScopeDepth == 0 && BaseboardDefaultMaterial && Rooms.Num() > 0)
 		{
 			RebuildBaseboards(BaseboardDefaultMaterial);
 		}
@@ -997,6 +1077,12 @@ void ARoomPlannerManager::RebuildAllWalls()
 
 	ComputeAllCornerJoints();
 	ComputeWallFaceUVFrames();
+
+	const bool bCookCollision = ShouldCookCollision();
+	if (!bCookCollision)
+	{
+		bLayoutCollisionStale = true; // only a walls+rooms rebuild that cooks clears it again (RebuildWallsAndRooms)
+	}
 
 	for (auto& Pair : WallActors)
 	{
@@ -1053,12 +1139,49 @@ void ARoomPlannerManager::RebuildAllWalls()
 				ComputeBranchCoverOnFace(SegID, Seg->EndNodeID, -Dir, Normal, HalfThick),
 				ComputeBranchCoverOnFace(SegID, Seg->EndNodeID, -Dir, -Normal, HalfThick));
 			WallActor->SetPresentation(!b2DViewMode);
-			WallActor->RebuildWallMesh(StartPos, EndPos, SL2D, SR2D, EL2D, ER2D, bStartCap, bEndCap, true);
+			WallActor->RebuildWallMesh(StartPos, EndPos, SL2D, SR2D, EL2D, ER2D, bStartCap, bEndCap, bCookCollision);
 			ApplyLeafAnimationsToWall(WallActor);
 		}
 	}
 
 	RefreshNodeHandles();
+}
+
+void ARoomPlannerManager::TickOpeningDragEnd()
+{
+	if (!bOpeningDragActive) return;
+
+	// The drag has no release of its own here: the player controller commits on the mouse-up it sees, and this is the backstop
+	// for every other way it can stop (selection cleared, tool or view change, the UI closing, the press consumed elsewhere).
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	if (Now - LastOpeningDragSeconds < OpeningDragIdleSeconds) return;
+
+	bOpeningDragActive = false;
+	if (bOpeningDragPublishPending)
+	{
+		bOpeningDragPublishPending = false;
+		if (HasAuthority())
+		{
+			CommitStateAfterMutation(); // the authority moved the opening during the preview; the clients still hold the old one
+		}
+		else if (!ReplicatedRoomJSON.IsEmpty())
+		{
+			// A client's preview is local until the release commits it. Nothing committed this one, so drop it rather than
+			// leaving this machine showing a door the server never heard about (and ordering its openings differently).
+			ImportLayoutFromJSON(ReplicatedRoomJSON);
+		}
+	}
+}
+
+void ARoomPlannerManager::EnsureLayoutCollision()
+{
+	if (!bLayoutCollisionStale || !ShouldCookCollision() || LayoutImportDepth > 0)
+	{
+		return; // an import rebuilds everything at its end anyway, and both rebuilds below would no-op inside one
+	}
+	RebuildWallsAndRooms(); // one scope: the corner joints and the baseboards are computed once, as in any other rebuild
+	UpdateSelectionVisuals(); // the rebuild resets every highlight, and the user's selection outlives the drag
+	bLayoutCollisionStale = false;
 }
 
 void ARoomPlannerManager::ToggleCeilingVisibility()
@@ -1082,10 +1205,31 @@ void ARoomPlannerManager::RebuildRooms()
 		return; // ImportLayoutFromJSON rebuilds once when every wall and opening exists
 	}
 
+	// Its own scope when it is called alone (import, legacy finishes, tests): the interior-side pass at its end rebuilds the
+	// walls, which would compute the corner joints this pass already computed.
+	++RebuildScopeDepth;
+	ON_SCOPE_EXIT
+	{
+		if (--RebuildScopeDepth == 0)
+		{
+			bCornerJointsComputedInScope = false;
+		}
+	};
+
 	TGuardValue<bool> RebuildingRooms(bRebuildingRooms, true);
 	Rooms.Empty();
 	bRoomLightsDirty = true; // every exit below (including "no closed room") must refresh the room lights
 	bExteriorBackdropDirty = true; // the enclosure follows the layout bounds
+	// The slabs are rebuilt on every frame of a corner drag too. Without collision the synchronous cook path is used, so no body
+	// setup is allocated and no previous cook is aborted per update — the trade-off the wall dressing and the leaves already make.
+	const bool bCookCollision = ShouldCookCollision();
+	if (!bCookCollision)
+	{
+		bLayoutCollisionStale = true;
+	}
+	if (FloorProceduralMesh) FloorProceduralMesh->bUseAsyncCooking = bCookCollision;
+	if (CeilingProceduralMesh) CeilingProceduralMesh->bUseAsyncCooking = bCookCollision;
+	if (BaseboardProceduralMesh) BaseboardProceduralMesh->bUseAsyncCooking = bCookCollision;
 	if (FloorProceduralMesh) FloorProceduralMesh->ClearAllMeshSections();
 	if (CeilingProceduralMesh) CeilingProceduralMesh->ClearAllMeshSections();
 	if (BaseboardProceduralMesh) BaseboardProceduralMesh->ClearAllMeshSections();
@@ -1376,19 +1520,10 @@ void ARoomPlannerManager::RebuildRooms()
 		BaseMat = UMaterial::GetDefaultMaterial(MD_Surface);
 	}
 
-	UMaterialInstanceDynamic* CeilMatInst = UMaterialInstanceDynamic::Create(BaseMat, this);
-	if (CeilMatInst)
-	{
-		CeilMatInst->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.95f, 0.95f, 0.95f, 1.0f));
-		CeilMatInst->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(0.95f, 0.95f, 0.95f, 1.0f));
-	}
-
-	UMaterialInstanceDynamic* BbMatInst = UMaterialInstanceDynamic::Create(BaseMat, this);
-	if (BbMatInst)
-	{
-		BbMatInst->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.4f, 0.3f, 0.2f, 1.0f));
-		BbMatInst->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(0.4f, 0.3f, 0.2f, 1.0f));
-	}
+	// Through the finish cache: one instance per colour for the whole session instead of two new ones per rebuild, and the same
+	// instances SetRoomSurfaceFinish already falls back to. Nothing changes a finish material's parameters after it is created.
+	UMaterialInterface* CeilMatInst = GetFinishMaterial(MakeDefaultPaintFinish(FLinearColor(0.95f, 0.95f, 0.95f, 1.0f)));
+	UMaterialInterface* BbMatInst = GetFinishMaterial(MakeDefaultPaintFinish(FLinearColor(0.4f, 0.3f, 0.2f, 1.0f)));
 
 	auto IsPointInTriangle = [](const FVector2D& P, const FVector2D& A, const FVector2D& B, const FVector2D& C) {
 		auto Sign = [](const FVector2D& P1, const FVector2D& P2, const FVector2D& P3) {
@@ -1722,7 +1857,7 @@ void ARoomPlannerManager::RebuildRooms()
 				}
 			}
 
-			FloorProceduralMesh->CreateMeshSection(RoomIdx, Vertices, Triangles, Normals, UVs, FloorColors, TArray<FProcMeshTangent>(), true);
+			FloorProceduralMesh->CreateMeshSection(RoomIdx, Vertices, Triangles, Normals, UVs, FloorColors, TArray<FProcMeshTangent>(), bCookCollision);
 			UMaterialInterface* FloorMat = ResolveFloorMaterialForRoom(Rooms[RoomIdx + 1]);
 			FloorProceduralMesh->SetMaterial(RoomIdx, FloorMat ? FloorMat : BaseMat);
 		}
@@ -1817,7 +1952,7 @@ void ARoomPlannerManager::RebuildRooms()
 				CeilTris.Add(SIdx + 0); CeilTris.Add(SIdx + 2); CeilTris.Add(SIdx + 3);
 			}
 
-			CeilingProceduralMesh->CreateMeshSection(RoomIdx, CeilVerts, CeilTris, CeilNorms, CeilUVs, CeilColors, TArray<FProcMeshTangent>(), true);
+			CeilingProceduralMesh->CreateMeshSection(RoomIdx, CeilVerts, CeilTris, CeilNorms, CeilUVs, CeilColors, TArray<FProcMeshTangent>(), bCookCollision);
 			UMaterialInterface* CeilMat = Room.CeilingFinish.IsSet() ? GetFinishMaterial(Room.CeilingFinish) : nullptr;
 			if (!CeilMat) CeilMat = CeilMatInst ? CeilMatInst : BaseMat;
 			CeilingSectionMaterials.Add(Room.RoomID, CeilMat);
@@ -1828,7 +1963,7 @@ void ARoomPlannerManager::RebuildRooms()
 
 	// 6.3. Baseboards: along every wall face that looks into a room. Walls that close no room (partitions ending inside a room,
 	// free-standing walls) are pruned from the room outlines above, so baseboards follow the walls themselves (REQ-13).
-	BaseboardDefaultMaterial = BbMatInst ? static_cast<UMaterialInterface*>(BbMatInst) : BaseMat;
+	BaseboardDefaultMaterial = BbMatInst ? BbMatInst : BaseMat;
 	RebuildBaseboards(BaseboardDefaultMaterial);
 
 	if (FloorProceduralMesh) FloorProceduralMesh->SetVisibility(true);
@@ -1848,12 +1983,12 @@ TSharedPtr<FJsonObject> ARoomPlannerManager::FinishToJson(const FSurfaceFinish& 
 	TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
 	Obj->SetStringField(TEXT("type"), PlannerJsonKeys::FinishTypeToString(Finish.Type));
 	Obj->SetStringField(TEXT("code"), Finish.ColorCode);
-	Obj->SetNumberField(TEXT("r"), Finish.Color.R);
-	Obj->SetNumberField(TEXT("g"), Finish.Color.G);
-	Obj->SetNumberField(TEXT("b"), Finish.Color.B);
-	Obj->SetNumberField(TEXT("a"), Finish.Color.A);
+	PlannerJsonKeys::SetUnit(Obj, TEXT("r"), Finish.Color.R);
+	PlannerJsonKeys::SetUnit(Obj, TEXT("g"), Finish.Color.G);
+	PlannerJsonKeys::SetUnit(Obj, TEXT("b"), Finish.Color.B);
+	PlannerJsonKeys::SetUnit(Obj, TEXT("a"), Finish.Color.A);
 	Obj->SetStringField(TEXT("tile"), Finish.TileAssetID);
-	Obj->SetNumberField(TEXT("tileSize"), Finish.TileSizeCm);
+	PlannerJsonKeys::SetCm(Obj, TEXT("tileSize"), Finish.TileSizeCm);
 	return Obj;
 }
 
@@ -1896,8 +2031,8 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 	{
 		TSharedPtr<FJsonObject> NodeObj = MakeShareable(new FJsonObject());
 		NodeObj->SetNumberField(TEXT("id"), Pair.Key);
-		NodeObj->SetNumberField(TEXT("x"), Pair.Value.Position.X);
-		NodeObj->SetNumberField(TEXT("y"), Pair.Value.Position.Y);
+		PlannerJsonKeys::SetCm(NodeObj, TEXT("x"), Pair.Value.Position.X);
+		PlannerJsonKeys::SetCm(NodeObj, TEXT("y"), Pair.Value.Position.Y);
 		NodesArray.Add(MakeShareable(new FJsonValueObject(NodeObj)));
 	}
 	RootObject->SetArrayField(TEXT("nodes"), NodesArray);
@@ -1911,8 +2046,8 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 		WallObj->SetStringField(TEXT("guid"), Pair.Value.WallGuid);
 		WallObj->SetNumberField(TEXT("start"), Pair.Value.StartNodeID);
 		WallObj->SetNumberField(TEXT("end"), Pair.Value.EndNodeID);
-		WallObj->SetNumberField(TEXT("thickness"), Pair.Value.Thickness);
-		WallObj->SetNumberField(TEXT("height"), Pair.Value.Height);
+		PlannerJsonKeys::SetCm(WallObj, TEXT("thickness"), Pair.Value.Thickness);
+		PlannerJsonKeys::SetCm(WallObj, TEXT("height"), Pair.Value.Height);
 		WallObj->SetObjectField(TEXT("finish"), FinishToJson(Pair.Value.Finish));
 		WallObj->SetObjectField(TEXT("finishRight"), FinishToJson(Pair.Value.FinishRight));
 
@@ -1925,10 +2060,10 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 			if (Op.Type == EOpeningType::Window) TypeStr = TEXT("window");
 			else if (Op.Type == EOpeningType::Archway) TypeStr = TEXT("archway");
 			OpObj->SetStringField(TEXT("type"), TypeStr);
-			OpObj->SetNumberField(TEXT("dist"), Op.DistanceFromStart);
-			OpObj->SetNumberField(TEXT("width"), Op.Width);
-			OpObj->SetNumberField(TEXT("height"), Op.Height);
-			OpObj->SetNumberField(TEXT("sill"), Op.SillHeight);
+			PlannerJsonKeys::SetCm(OpObj, TEXT("dist"), Op.DistanceFromStart);
+			PlannerJsonKeys::SetCm(OpObj, TEXT("width"), Op.Width);
+			PlannerJsonKeys::SetCm(OpObj, TEXT("height"), Op.Height);
+			PlannerJsonKeys::SetCm(OpObj, TEXT("sill"), Op.SillHeight);
 			OpObj->SetStringField(TEXT("swingSide"), Op.SwingSide == EOpeningSwingSide::Right ? TEXT("right") : TEXT("left"));
 			OpObj->SetStringField(TEXT("swingDir"), Op.SwingDirection == EOpeningSwingDirection::Outward ? TEXT("out") : TEXT("in"));
 			if (!Op.Style.IsNone())
@@ -1952,9 +2087,9 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 	{
 		TSharedPtr<FJsonObject> RoomObj = MakeShareable(new FJsonObject());
 		RoomObj->SetNumberField(TEXT("id"), Pair.Key);
-		RoomObj->SetNumberField(TEXT("area_m2"), Pair.Value.AreaM2);
-		RoomObj->SetNumberField(TEXT("cx"), Pair.Value.Centroid.X);
-		RoomObj->SetNumberField(TEXT("cy"), Pair.Value.Centroid.Y);
+		PlannerJsonKeys::SetRounded(RoomObj, TEXT("area_m2"), Pair.Value.AreaM2, 3);
+		PlannerJsonKeys::SetCm(RoomObj, TEXT("cx"), Pair.Value.Centroid.X);
+		PlannerJsonKeys::SetCm(RoomObj, TEXT("cy"), Pair.Value.Centroid.Y);
 		RoomObj->SetObjectField(TEXT("finish"), FinishToJson(Pair.Value.FloorFinish));
 		RoomsArray.Add(MakeShareable(new FJsonValueObject(RoomObj)));
 	}
@@ -1965,8 +2100,8 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 	for (const FFloorFinishRecord& Rec : FloorFinishes)
 	{
 		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
-		Obj->SetNumberField(TEXT("x"), Rec.Anchor.X);
-		Obj->SetNumberField(TEXT("y"), Rec.Anchor.Y);
+		PlannerJsonKeys::SetCm(Obj, TEXT("x"), Rec.Anchor.X);
+		PlannerJsonKeys::SetCm(Obj, TEXT("y"), Rec.Anchor.Y);
 		Obj->SetObjectField(TEXT("finish"), FinishToJson(Rec.Finish));
 		FloorFinishArray.Add(MakeShareable(new FJsonValueObject(Obj)));
 	}
@@ -1984,15 +2119,15 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
 		Obj->SetStringField(TEXT("id"), D.InstanceID);
 		Obj->SetStringField(TEXT("asset"), D.AssetID);
-		Obj->SetNumberField(TEXT("x"), D.Location.X);
-		Obj->SetNumberField(TEXT("y"), D.Location.Y);
-		Obj->SetNumberField(TEXT("z"), D.Location.Z);
-		Obj->SetNumberField(TEXT("pitch"), D.Rotation.Pitch);
-		Obj->SetNumberField(TEXT("yaw"), D.Rotation.Yaw);
-		Obj->SetNumberField(TEXT("roll"), D.Rotation.Roll);
-		Obj->SetNumberField(TEXT("sx"), D.Scale.X);
-		Obj->SetNumberField(TEXT("sy"), D.Scale.Y);
-		Obj->SetNumberField(TEXT("sz"), D.Scale.Z);
+		PlannerJsonKeys::SetCm(Obj, TEXT("x"), D.Location.X);
+		PlannerJsonKeys::SetCm(Obj, TEXT("y"), D.Location.Y);
+		PlannerJsonKeys::SetCm(Obj, TEXT("z"), D.Location.Z);
+		PlannerJsonKeys::SetDegrees(Obj, TEXT("pitch"), D.Rotation.Pitch);
+		PlannerJsonKeys::SetDegrees(Obj, TEXT("yaw"), D.Rotation.Yaw);
+		PlannerJsonKeys::SetDegrees(Obj, TEXT("roll"), D.Rotation.Roll);
+		PlannerJsonKeys::SetUnit(Obj, TEXT("sx"), D.Scale.X);
+		PlannerJsonKeys::SetUnit(Obj, TEXT("sy"), D.Scale.Y);
+		PlannerJsonKeys::SetUnit(Obj, TEXT("sz"), D.Scale.Z);
 		Obj->SetStringField(TEXT("material"), D.CustomMaterialID);
 		Obj->SetObjectField(TEXT("finish"), FinishToJson(D.Finish));
 		if (D.WallAttachment.IsAttached())
@@ -2011,12 +2146,12 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
 		Obj->SetStringField(TEXT("id"), D.InstanceID);
 		Obj->SetStringField(TEXT("product"), D.ProductID.ToString());
-		Obj->SetNumberField(TEXT("x"), D.Location.X);
-		Obj->SetNumberField(TEXT("y"), D.Location.Y);
-		Obj->SetNumberField(TEXT("z"), D.Location.Z);
-		Obj->SetNumberField(TEXT("pitch"), D.Rotation.Pitch);
-		Obj->SetNumberField(TEXT("yaw"), D.Rotation.Yaw);
-		Obj->SetNumberField(TEXT("roll"), D.Rotation.Roll);
+		PlannerJsonKeys::SetCm(Obj, TEXT("x"), D.Location.X);
+		PlannerJsonKeys::SetCm(Obj, TEXT("y"), D.Location.Y);
+		PlannerJsonKeys::SetCm(Obj, TEXT("z"), D.Location.Z);
+		PlannerJsonKeys::SetDegrees(Obj, TEXT("pitch"), D.Rotation.Pitch);
+		PlannerJsonKeys::SetDegrees(Obj, TEXT("yaw"), D.Rotation.Yaw);
+		PlannerJsonKeys::SetDegrees(Obj, TEXT("roll"), D.Rotation.Roll);
 		if (D.WallAttachment.IsAttached())
 		{
 			Obj->SetObjectField(TEXT("wall"), AttachmentToJson(D.WallAttachment));
@@ -2026,7 +2161,7 @@ FString ARoomPlannerManager::ExportLayoutToJSON() const
 	RootObject->SetArrayField(TEXT("cabinetSets"), SetsArray);
 
 	FString OutputString;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	TSharedRef<PlannerJsonKeys::FLayoutJsonWriter> Writer = PlannerJsonKeys::FLayoutJsonWriterFactory::Create(&OutputString);
 	FJsonSerializer::Serialize(RootObject.ToSharedRef(), Writer);
 
 	return OutputString;
@@ -2044,6 +2179,9 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 
 	// Walls / nodes / rooms are rebuilt from scratch (established full-reimport model);
 	// placed objects and cabinet sets are RECONCILED by InstanceID so they do not flicker.
+	// The selection is held as an index, and the import renumbers the openings of a wall. Remember which opening it was.
+	const FString SelectedOpeningIDBeforeImport = GetOpeningID(SelectedSegmentID, SelectedOpeningIndex);
+
 	ClearWallsAndRooms();
 	++LayoutImportDepth; // walls / openings below rebuild once at the end of the import
 
@@ -2112,7 +2250,13 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 				float Thickness = WallObj->GetNumberField(TEXT("thickness"));
 				float Height = WallObj->GetNumberField(TEXT("height"));
 
-				int32 SegID = AddWall(StartID, EndID, Thickness > 0.f ? Thickness : 20.f, Height > 0.f ? Height : 280.f);
+				// Keep the wall's own id, as the nodes above keep theirs: every command a client sends names a wall by this
+				// number, and renumbering the walls here (a layout with a deleted wall has gaps) would make the client talk
+				// about one wall while the server hears another.
+				double SavedSegID = 0.0;
+				WallObj->TryGetNumberField(TEXT("id"), SavedSegID);
+				int32 SegID = AddWall(StartID, EndID, Thickness > 0.f ? Thickness : 20.f, Height > 0.f ? Height : 280.f,
+					SavedSegID > 0.0 ? (int32)SavedSegID : -1);
 
 				if (SegID != -1)
 				{
@@ -2151,7 +2295,15 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 									if (Seg->Openings.Num() > 0)
 									{
 										FWallOpening& NewOp = Seg->Openings.Last();
-										FString SideStr, DirStr, StyleStr;
+										FString SideStr, DirStr, StyleStr, OpIDStr;
+										// Every replicated edit re-imports the whole layout, so an opening that does not carry its own id across
+										// is a different opening each time and loses its leaf. A layout written by the old, repeatable scheme can
+										// hold the same id twice on one wall: such a duplicate keeps the freshly generated one.
+										if (OpObj->TryGetStringField(TEXT("id"), OpIDStr) && !OpIDStr.IsEmpty()
+											&& !Seg->Openings.ContainsByPredicate([&OpIDStr](const FWallOpening& O) { return O.OpeningID == OpIDStr; }))
+										{
+											NewOp.OpeningID = OpIDStr;
+										}
 										if (OpObj->TryGetStringField(TEXT("style"), StyleStr) && !StyleStr.IsEmpty())
 										{
 											NewOp.Style = FName(*StyleStr); // unknown IDs fall back to the type's default style when drawn
@@ -2256,30 +2408,13 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 	RebuildPlacedObjectActors();
 	ReconcileCabinetSetActors();
 
-	if (SelectedSegmentID != -1 && !WallSegments.Contains(SelectedSegmentID))
+	if (!SelectedOpeningIDBeforeImport.IsEmpty())
 	{
-		SelectedSegmentID = -1;
-		SelectedOpeningIndex = -1;
+		// Point at the same opening again; -1 when it is gone, which DropSelectionOfVanishedItems would have done anyway.
+		SelectedOpeningIndex = FindOpeningIndexByID(SelectedSegmentID, SelectedOpeningIDBeforeImport);
 	}
-	else if (SelectedSegmentID != -1 && SelectedOpeningIndex != -1)
-	{
-		if (!WallSegments[SelectedSegmentID].Openings.IsValidIndex(SelectedOpeningIndex))
-		{
-			SelectedOpeningIndex = -1;
-		}
-	}
-	if (SelectedRoomID != -1 && !Rooms.Contains(SelectedRoomID))
-	{
-		SelectedRoomID = -1;
-	}
-	if (!SelectedObjectID.IsEmpty() && !PlacedObjects.Contains(SelectedObjectID))
-	{
-		SelectedObjectID.Empty();
-	}
-	if (!SelectedCabinetSetID.IsEmpty() && !CabinetSets.Contains(SelectedCabinetSetID))
-	{
-		SelectedCabinetSetID.Empty();
-	}
+	DropSelectionOfVanishedItems();
+	PruneLeafAnimations();
 
 	UpdateSelectionVisuals();
 	RefreshNodeHandles();
@@ -2695,6 +2830,12 @@ void ARoomPlannerManager::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 
 void ARoomPlannerManager::OnRep_ReplicatedRoomJSON()
 {
+	bOpeningDragPublishPending = false; // the authority has spoken; a local drag preview is settled either way
+
+	// Clients only. The server edited this layout in place and published it; re-importing here would clear the walls and
+	// rooms it has just built and respawn every wall actor from its own JSON.
+	if (HasAuthority()) return;
+
 	ImportLayoutFromJSON(ReplicatedRoomJSON);
 }
 
@@ -2728,6 +2869,9 @@ void ARoomPlannerManager::TickLocalNodeDrag()
 {
 	if (!b2DViewMode || ActiveToolMode != EPlannerToolMode::Select || !bPlannerUIOpen || !GetWorld())
 	{
+		// The drag is over whatever the reason. Leaving the id set would keep ShouldCookCollision false for good, and with it
+		// a layout that no trace can hit.
+		DraggingNodeID = -1;
 		bPrevLMBDownForNodeDrag = false;
 		return;
 	}
@@ -2743,6 +2887,7 @@ void ARoomPlannerManager::TickLocalNodeDrag()
 	}
 	if (!LocalPC)
 	{
+		DraggingNodeID = -1; // nobody is driving the drag any more (see above)
 		bPrevLMBDownForNodeDrag = false;
 		return;
 	}
@@ -3143,8 +3288,7 @@ bool ARoomPlannerManager::SetWallDimensions(int32 SegmentID, float HeightCm, flo
 	Seg->Height = HeightCm;
 	Seg->Thickness = ThicknessCm;
 
-	RebuildAllWalls();   // recomputes bisector corner joints with the new thickness
-	RebuildRooms();      // ceiling follows the room's wall height
+	RebuildWallsAndRooms(); // the corner joints follow the new thickness, the ceiling the new height
 	CommitStateAfterMutation();
 	UpdateSelectionVisuals();
 	return true;
@@ -3318,10 +3462,10 @@ bool ARoomPlannerManager::GetOpeningDetails(int32 SegmentID, int32 OpeningIndex,
 	if (WallSegments.Contains(SegmentID))
 	{
 		const FWallSegment& Seg = WallSegments[SegmentID];
-		int32 OpIdx = (OpeningIndex == -1) ? 0 : OpeningIndex;
-		if (Seg.Openings.IsValidIndex(OpIdx))
+		// No fallback to opening 0: an index of -1 is a selection that is not there, or a FindOpeningIndexByID that failed.
+		if (Seg.Openings.IsValidIndex(OpeningIndex))
 		{
-			const FWallOpening& Op = Seg.Openings[OpIdx];
+			const FWallOpening& Op = Seg.Openings[OpeningIndex];
 			OutWidthMeters = Op.Width / 100.f;
 			OutHeightMeters = Op.Height / 100.f;
 			OutSillHeightMeters = Op.SillHeight / 100.f;
@@ -3336,17 +3480,29 @@ bool ARoomPlannerManager::GetOpeningDistance(int32 SegmentID, int32 OpeningIndex
 	if (WallSegments.Contains(SegmentID))
 	{
 		const FWallSegment& Seg = WallSegments[SegmentID];
-		int32 OpIdx = (OpeningIndex == -1) ? 0 : OpeningIndex;
-		if (Seg.Openings.IsValidIndex(OpIdx))
+		if (Seg.Openings.IsValidIndex(OpeningIndex))
 		{
-			OutDistFromStartCm = Seg.Openings[OpIdx].DistanceFromStart;
+			OutDistFromStartCm = Seg.Openings[OpeningIndex].DistanceFromStart;
 			return true;
 		}
 	}
 	return false;
 }
 
-bool ARoomPlannerManager::UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm)
+FString ARoomPlannerManager::GetOpeningID(int32 SegmentID, int32 OpeningIndex) const
+{
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	return (Seg && Seg->Openings.IsValidIndex(OpeningIndex)) ? Seg->Openings[OpeningIndex].OpeningID : FString();
+}
+
+int32 ARoomPlannerManager::FindOpeningIndexByID(int32 SegmentID, const FString& OpeningID) const
+{
+	const FWallSegment* Seg = WallSegments.Find(SegmentID);
+	if (!Seg || OpeningID.IsEmpty()) return INDEX_NONE;
+	return Seg->Openings.IndexOfByPredicate([&OpeningID](const FWallOpening& Opening) { return Opening.OpeningID == OpeningID; });
+}
+
+bool ARoomPlannerManager::UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm, bool bLocalPreviewOnly)
 {
 	if (!WallSegments.Contains(SegmentID)) return false;
 
@@ -3371,27 +3527,55 @@ bool ARoomPlannerManager::UpdateOpeningPosition(int32 SegmentID, int32 OpeningIn
 			float CandidateDist = FMath::Clamp(NewDistFromStartCm, WallMinDist, WallMaxDist);
 			FString DraggedOpID = Seg.Openings[OpeningIndex].OpeningID;
 
-			// Handle snap-through collision against other openings to allow swapping sides
-			for (int32 i = 0; i < Seg.Openings.Num(); ++i)
+			// Push clear of the openings it would overlap, so a drag can pass one. One pass only resolves one neighbour: the
+			// push can land on top of the next one, and which one wins would depend on the array order — and that order
+			// differs between the machine that drags and the machine that commits.
+			for (int32 Pass = 0; Pass < Seg.Openings.Num(); ++Pass)
 			{
-				if (i == OpeningIndex) continue;
-				const FWallOpening& Other = Seg.Openings[i];
-				float OtherHalfW = Other.Width * 0.5f;
-				float MinClearance = HalfW + OtherHalfW + 5.f;
-
-				if (FMath::Abs(CandidateDist - Other.DistanceFromStart) < MinClearance)
+				bool bMovedThisPass = false;
+				for (int32 i = 0; i < Seg.Openings.Num(); ++i)
 				{
-					if (CandidateDist >= Other.DistanceFromStart)
+					if (i == OpeningIndex) continue;
+					const FWallOpening& Other = Seg.Openings[i];
+					float OtherHalfW = Other.Width * 0.5f;
+					float MinClearance = HalfW + OtherHalfW + 5.f;
+
+					if (FMath::Abs(CandidateDist - Other.DistanceFromStart) < MinClearance)
 					{
-						// Snap to the right side of Other
-						CandidateDist = FMath::Min(WallMaxDist, Other.DistanceFromStart + MinClearance);
-					}
-					else
-					{
-						// Snap to the left side of Other
-						CandidateDist = FMath::Max(WallMinDist, Other.DistanceFromStart - MinClearance);
+						const float Pushed = CandidateDist >= Other.DistanceFromStart
+							? FMath::Min(WallMaxDist, Other.DistanceFromStart + MinClearance)  // clear of its far side
+							: FMath::Max(WallMinDist, Other.DistanceFromStart - MinClearance); // clear of its near side
+						bMovedThisPass |= !FMath::IsNearlyEqual(Pushed, CandidateDist, 0.01f);
+						CandidateDist = Pushed;
 					}
 				}
+				if (!bMovedThisPass) break;
+			}
+
+			// Nowhere on this wall clears every neighbour (a crowded wall): keep the opening where it is rather than writing
+			// an overlap, which the wall builder answers by dropping one of the two holes.
+			{
+				FWallOpening Candidate = Seg.Openings[OpeningIndex];
+				Candidate.DistanceFromStart = CandidateDist;
+				FString Reason;
+				if (!ValidateOpeningFits(Seg, WallLen, Candidate, OpeningIndex, Reason))
+				{
+					if (!bLocalPreviewOnly) BroadcastRejected(Reason);
+					return false;
+				}
+			}
+
+			// A drag frame that clamps and snaps back to the distance the opening already has changes nothing: rebuilding every
+			// wall and every room for it is pure cost. A commit still has to publish — on a listen server it repeats the distance
+			// its own preview already applied, and returning silently there would strand the layout in the last exported state.
+			if (FMath::IsNearlyEqual(Seg.Openings[OpeningIndex].DistanceFromStart, CandidateDist, 0.01f))
+			{
+				if (!bLocalPreviewOnly)
+				{
+					ReplicatedRoomJSON = ExportLayoutToJSON();
+					OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+				}
+				return true;
 			}
 
 			Seg.Openings[OpeningIndex].DistanceFromStart = CandidateDist;
@@ -3419,11 +3603,15 @@ bool ARoomPlannerManager::UpdateOpeningPosition(int32 SegmentID, int32 OpeningIn
 				}
 			}
 
-			RebuildAllWalls();
-			RebuildRooms(); // floor thresholds and baseboard gaps follow the opening (also in a client's local drag preview)
-			ReplicatedRoomJSON = ExportLayoutToJSON();
+			RebuildWallsAndRooms(); // floor thresholds and baseboard gaps follow the opening (also in a client's local drag preview)
 			UpdateSelectionVisuals();
-			OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+			if (!bLocalPreviewOnly)
+			{
+				// Serialising the whole layout and waking every listener is the commit's job; a drag frame only has to look right.
+				bOpeningDragPublishPending = false; // committed: the Tick backstop has nothing left to rescue
+				ReplicatedRoomJSON = ExportLayoutToJSON();
+				OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+			}
 			return true;
 		}
 	}
@@ -3444,7 +3632,13 @@ bool ARoomPlannerManager::DragSelectedOpeningToWorldPos(const FVector& WorldPos)
 		FVector2D P2 = Nodes[Seg.EndNodeID].Position;
 		FVector2D Dir = (P2 - P1).GetSafeNormal();
 		float NewDistCm = FVector2D::DotProduct(FVector2D(WorldPos.X, WorldPos.Y) - P1, Dir);
-		return UpdateOpeningPosition(SelectedSegmentID, SelectedOpeningIndex, NewDistCm);
+		// Drag frame: the release commits it (AAwsTutorial_PlayerController::Server_UpdateOpeningPosition). Tick watches the
+		// two flags below, so a drag that never reaches that release still stops skipping collision and still gets published.
+		bOpeningDragActive = true;
+		LastOpeningDragSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+		const bool bMoved = UpdateOpeningPosition(SelectedSegmentID, SelectedOpeningIndex, NewDistCm, true);
+		bOpeningDragPublishPending |= bMoved;
+		return bMoved;
 	}
 	return false;
 }
@@ -3480,8 +3674,7 @@ bool ARoomPlannerManager::UpdateOpeningDimensions(int32 SegmentID, int32 Opening
 
 		Seg.Openings[OpeningIndex] = Candidate;
 
-		RebuildAllWalls();
-		RebuildRooms(); // floor thresholds and baseboard gaps follow the opening
+		RebuildWallsAndRooms(); // floor thresholds and baseboard gaps follow the opening
 		CommitStateAfterMutation();
 		UpdateSelectionVisuals();
 		return true;
@@ -3506,8 +3699,7 @@ bool ARoomPlannerManager::DeleteOpening(int32 SegmentID, int32 OpeningIndex)
 	if (!WallSegments[SegmentID].Openings.IsValidIndex(OpeningIndex)) return false;
 
 	WallSegments[SegmentID].Openings.RemoveAt(OpeningIndex);
-	RebuildAllWalls();
-	RebuildRooms(); // the floor threshold and baseboard gap go with the opening
+	RebuildWallsAndRooms(); // the floor threshold and baseboard gap go with the opening
 	if (SelectedSegmentID == SegmentID && SelectedOpeningIndex == OpeningIndex)
 	{
 		SelectedOpeningIndex = -1;
@@ -3540,8 +3732,74 @@ void ARoomPlannerManager::CommitStateAfterMutation()
 	{
 		RefreshWallAttachedPlacements();
 	}
+	// A mutation can dissolve the room or delete the wall the user had selected. On a client that is noticed when the layout
+	// re-imports; the authority never re-imports its own layout, so it has to notice here.
+	DropSelectionOfVanishedItems();
+	PruneLeafAnimations();
 	ReplicatedRoomJSON = ExportLayoutToJSON();
 	OnRoomPlannerUpdated.Broadcast(ReplicatedRoomJSON);
+}
+
+void ARoomPlannerManager::DropSelectionOfVanishedItems()
+{
+	const int32 PrevSegment = SelectedSegmentID;
+	const int32 PrevOpening = SelectedOpeningIndex;
+	const int32 PrevRoom = SelectedRoomID;
+	const FString PrevObject = SelectedObjectID;
+	const FString PrevCabinetSet = SelectedCabinetSetID;
+
+	if (SelectedSegmentID != -1 && !WallSegments.Contains(SelectedSegmentID))
+	{
+		SelectedSegmentID = -1;
+		SelectedOpeningIndex = -1;
+	}
+	else if (SelectedSegmentID != -1 && SelectedOpeningIndex != -1)
+	{
+		if (!WallSegments[SelectedSegmentID].Openings.IsValidIndex(SelectedOpeningIndex))
+		{
+			SelectedOpeningIndex = -1;
+		}
+	}
+	if (SelectedRoomID != -1 && !Rooms.Contains(SelectedRoomID))
+	{
+		SelectedRoomID = -1;
+	}
+	if (!SelectedObjectID.IsEmpty() && !PlacedObjects.Contains(SelectedObjectID))
+	{
+		SelectedObjectID.Empty();
+	}
+	if (!SelectedCabinetSetID.IsEmpty() && !CabinetSets.Contains(SelectedCabinetSetID))
+	{
+		SelectedCabinetSetID.Empty();
+	}
+
+	if (PrevSegment != SelectedSegmentID || PrevOpening != SelectedOpeningIndex || PrevRoom != SelectedRoomID
+		|| PrevObject != SelectedObjectID || PrevCabinetSet != SelectedCabinetSetID)
+	{
+		NotifySelectionChanged(); // the panel is showing properties of something that is no longer there
+	}
+}
+
+void ARoomPlannerManager::PruneLeafAnimations()
+{
+	if (LeafAnimations.IsEmpty()) return;
+
+	// The key names an opening (wall guid + opening id) and nothing else drops entries now that the old index fingerprint is
+	// gone, so a deleted door would keep its open state for the session — and hand it back to a door restored from a save.
+	TSet<FString> Live;
+	for (const auto& Pair : WallActors)
+	{
+		const AProceduralWallActor* Wall = Pair.Value;
+		if (!Wall) continue;
+		for (int32 OpeningIndex = 0; OpeningIndex < Wall->WallData.Openings.Num(); ++OpeningIndex)
+		{
+			Live.Add(MakeLeafKey(Wall, OpeningIndex));
+		}
+	}
+	for (auto It = LeafAnimations.CreateIterator(); It; ++It)
+	{
+		if (!Live.Contains(It.Key())) It.RemoveCurrent();
+	}
 }
 
 void ARoomPlannerManager::NotifyOperationRejected(const FString& Reason)
@@ -3985,10 +4243,10 @@ TSharedPtr<FJsonObject> ARoomPlannerManager::AttachmentToJson(const FWallAttachm
 {
 	TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
 	Obj->SetStringField(TEXT("guid"), Attachment.WallGuid);
-	Obj->SetNumberField(TEXT("dist"), Attachment.DistanceAlongWallCm);
+	PlannerJsonKeys::SetCm(Obj, TEXT("dist"), Attachment.DistanceAlongWallCm);
 	Obj->SetBoolField(TEXT("left"), Attachment.bLeftSide);
-	Obj->SetNumberField(TEXT("z"), Attachment.HeightCm);
-	Obj->SetNumberField(TEXT("depth"), Attachment.DepthOffsetCm);
+	PlannerJsonKeys::SetCm(Obj, TEXT("z"), Attachment.HeightCm);
+	PlannerJsonKeys::SetCm(Obj, TEXT("depth"), Attachment.DepthOffsetCm);
 	return Obj;
 }
 
@@ -4316,8 +4574,7 @@ bool ARoomPlannerManager::ApplyNodeMove(int32 NodeID, const FVector2D& NewPositi
 	}
 	Node.Position = NewPosition;
 
-	RebuildAllWalls();
-	RebuildRooms();
+	RebuildWallsAndRooms();
 	if (!bLocalPreviewOnly)
 	{
 		CommitStateAfterMutation();
@@ -4414,8 +4671,7 @@ bool ARoomPlannerManager::TryConnectMovedNode(int32 NodeID)
 	if (TargetNodeID != -1)
 	{
 		if (!MergeNodeInto(NodeID, TargetNodeID)) return false;
-		RebuildAllWalls();
-		RebuildRooms();
+		RebuildWallsAndRooms();
 		CommitStateAfterMutation();
 		UpdateSelectionVisuals();
 		return true;
@@ -4451,8 +4707,7 @@ bool ARoomPlannerManager::TryConnectMovedNode(int32 NodeID)
 		const int32 JunctionID = SplitWallSegment(TargetSegID, SplitPoint);
 		if (JunctionID == INDEX_NONE || !Nodes.Contains(NodeID)) return false;
 		if (!MergeNodeInto(NodeID, JunctionID)) return false;
-		RebuildAllWalls();
-		RebuildRooms();
+		RebuildWallsAndRooms();
 		CommitStateAfterMutation();
 		UpdateSelectionVisuals();
 		return true;
@@ -4925,24 +5180,24 @@ namespace
 	}
 }
 
-FString ARoomPlannerManager::MakeLeafKey(const FString& WallGuid, int32 OpeningIndex)
+FString ARoomPlannerManager::MakeLeafKey(const AProceduralWallActor* Wall, int32 OpeningIndex)
 {
-	return FString::Printf(TEXT("%s#%d"), *WallGuid, OpeningIndex);
+	// Keyed by the opening itself, not by its place in the array: UpdateOpeningPosition re-sorts the openings by distance,
+	// so an index names a different opening from one drag frame to the next.
+	if (!Wall || !Wall->WallData.Openings.IsValidIndex(OpeningIndex)) return FString();
+	// An opening built by hand (tests, Blueprint) can carry no ID; two of them on one wall would otherwise share one key.
+	const FString& OpeningID = Wall->WallData.Openings[OpeningIndex].OpeningID;
+	return OpeningID.IsEmpty()
+		? FString::Printf(TEXT("%s#i%d"), *Wall->WallData.WallGuid, OpeningIndex)
+		: FString::Printf(TEXT("%s#%s"), *Wall->WallData.WallGuid, *OpeningID);
 }
 
 ARoomPlannerManager::FLeafAnimation* ARoomPlannerManager::FindLeafAnimation(AProceduralWallActor* Wall, int32 OpeningIndex)
 {
 	if (!Wall || !Wall->WallData.Openings.IsValidIndex(OpeningIndex)) return nullptr;
-	const FString Key = MakeLeafKey(Wall->WallData.WallGuid, OpeningIndex);
-	FLeafAnimation* Anim = LeafAnimations.Find(Key);
-	if (!Anim) return nullptr;
-	const FWallOpening& Opening = Wall->WallData.Openings[OpeningIndex];
-	if (Anim->Type != Opening.Type || Anim->DistanceKey != FMath::RoundToInt(Opening.DistanceFromStart))
-	{
-		LeafAnimations.Remove(Key); // another opening now sits at this index (delete, drag, split): start from the default
-		return nullptr;
-	}
-	return Anim;
+	// The key names the opening, so whatever is stored under it belongs to it: the type + distance fingerprint that stood in
+	// for an identity is gone, and with it the reset it forced on every drag, resize and delete.
+	return LeafAnimations.Find(MakeLeafKey(Wall, OpeningIndex));
 }
 
 float ARoomPlannerManager::ComputeBranchCoverOnFace(int32 SegmentID, int32 NodeID, const FVector2D& AwayDir, const FVector2D& FaceNormal, float HalfThickness) const
@@ -4984,14 +5239,12 @@ void ARoomPlannerManager::StartLeafAnimation(AProceduralWallActor* Wall, int32 O
 {
 	if (!Wall || !Wall->HasLeaf(OpeningIndex)) return;
 
-	const FString Key = MakeLeafKey(Wall->WallData.WallGuid, OpeningIndex);
-	const bool bNew = FindLeafAnimation(Wall, OpeningIndex) == nullptr; // also discards state of an opening that moved away
+	const FString Key = MakeLeafKey(Wall, OpeningIndex);
+	const bool bNew = LeafAnimations.Find(Key) == nullptr;
 	FLeafAnimation& Anim = LeafAnimations.FindOrAdd(Key);
 	if (bNew)
 	{
 		Anim.Current = Anim.Target = InitialFraction;
-		Anim.Type = Wall->WallData.Openings[OpeningIndex].Type;
-		Anim.DistanceKey = FMath::RoundToInt(Wall->WallData.Openings[OpeningIndex].DistanceFromStart);
 	}
 	Anim.From = Anim.Current;
 	Anim.Target = Target;
@@ -5028,7 +5281,7 @@ bool ARoomPlannerManager::TryToggleOpeningLeafFromHit(const FHitResult& Hit)
 	if (Index == INDEX_NONE) return false;
 
 	// One press can arrive here twice (the planner widget's 3D pick and PlayerTick's pick): toggle it once.
-	const FString Key = MakeLeafKey(Wall->WallData.WallGuid, Index);
+	const FString Key = MakeLeafKey(Wall, Index);
 	const double Now = FPlatformTime::Seconds();
 	if (Key == LastLeafToggleKey && Now - LastLeafToggleTime < 0.2)
 	{
@@ -5056,11 +5309,9 @@ void ARoomPlannerManager::SetAllOpeningLeavesOpen(bool bOpen)
 			if (b2DViewMode)
 			{
 				// Not visible in 2D: jump straight to the new state for the next 3D view.
-				FLeafAnimation& Anim = LeafAnimations.FindOrAdd(MakeLeafKey(Wall->WallData.WallGuid, i));
+				FLeafAnimation& Anim = LeafAnimations.FindOrAdd(MakeLeafKey(Wall, i));
 				Anim.Current = Anim.From = Anim.Target = Target;
 				Anim.bAnimating = false;
-				Anim.Type = Wall->WallData.Openings[i].Type;
-				Anim.DistanceKey = FMath::RoundToInt(Wall->WallData.Openings[i].DistanceFromStart);
 				Wall->SetLeafOpenFraction(i, Target);
 			}
 			else
@@ -5114,6 +5365,15 @@ void ARoomPlannerManager::ApplyLeafAnimationsToWall(AProceduralWallActor* Wall)
 			bAnyLeafAnimating = true;
 		}
 	}
+}
+
+float ARoomPlannerManager::GetLeafOpenTargetForDebug(int32 SegmentID, int32 OpeningIndex) const
+{
+	// Target, not Current: the ease runs on Tick, which a test world never reaches.
+	const TObjectPtr<AProceduralWallActor>* WallPtr = WallActors.Find(SegmentID);
+	const AProceduralWallActor* Wall = WallPtr ? WallPtr->Get() : nullptr;
+	const FLeafAnimation* Anim = Wall ? LeafAnimations.Find(MakeLeafKey(Wall, OpeningIndex)) : nullptr;
+	return Anim ? Anim->Target : (bDefaultLeavesOpen ? 1.f : 0.f);
 }
 
 bool ARoomPlannerManager::GetOpeningSwing(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide& OutSide, EOpeningSwingDirection& OutDirection) const
@@ -5584,6 +5844,15 @@ TArray<FPlannerDimensionLine> ARoomPlannerManager::GetSelectionDimensionLines() 
 {
 	using namespace PlannerDimensionPlacement;
 	TArray<FPlannerDimensionLine> Lines;
+
+	// Only a dragged corner and these four kinds are measured below; for anything else (a floor, a ceiling, a baseboard,
+	// nothing at all) the wall walk that follows would run every frame just to fall through the switch.
+	const EPlannerSelectionKind Kind = GetSelectionKind();
+	if (DraggingNodeID == -1 && Kind != EPlannerSelectionKind::Wall && Kind != EPlannerSelectionKind::Opening
+		&& Kind != EPlannerSelectionKind::Object && Kind != EPlannerSelectionKind::CabinetSet)
+	{
+		return Lines;
+	}
 
 	// Faces, corners and visible face extents of every wall, as the wall meshes use them (current while a corner is dragged too:
 	// every drag step rebuilds the walls and their corner joints).
@@ -6092,6 +6361,14 @@ UMaterialInstanceDynamic* ARoomPlannerManager::CreateFinishMaterialInstance(cons
 	return MID;
 }
 
+FSurfaceFinish ARoomPlannerManager::MakeDefaultPaintFinish(const FLinearColor& Color)
+{
+	FSurfaceFinish Finish;
+	Finish.Type = ESurfaceFinishType::Paint;
+	Finish.Color = Color;
+	return Finish;
+}
+
 UMaterialInterface* ARoomPlannerManager::GetFinishMaterial(const FSurfaceFinish& Finish)
 {
 	if (!Finish.IsSet()) return nullptr;
@@ -6188,6 +6465,14 @@ void ARoomPlannerManager::RebuildBaseboards(UMaterialInterface* DefaultMaterial)
 {
 	if (!BaseboardProceduralMesh) return;
 
+	// Also reached from RebuildAllWalls's ON_SCOPE_EXIT (a moved opening moves its gap), which a corner drag runs every frame.
+	const bool bCookCollision = ShouldCookCollision();
+	if (!bCookCollision)
+	{
+		bLayoutCollisionStale = true; // its own caller may not be one of the two rebuilds that already say so
+	}
+	BaseboardProceduralMesh->bUseAsyncCooking = bCookCollision;
+
 	TArray<int32> SegIDs;
 	WallSegments.GetKeys(SegIDs);
 	SegIDs.Sort();
@@ -6231,7 +6516,7 @@ void ARoomPlannerManager::RebuildBaseboards(UMaterialInterface* DefaultMaterial)
 		}
 		const int32 Section = Pair.Key - 1;
 		BaseboardProceduralMesh->CreateMeshSection(Section, Buffers->Vertices, Buffers->Triangles, Buffers->Normals, Buffers->UVs,
-			TArray<FColor>(), Buffers->Tangents, true);
+			TArray<FColor>(), Buffers->Tangents, bCookCollision);
 		UMaterialInterface* Material = Pair.Value.BaseboardFinish.IsSet() ? GetFinishMaterial(Pair.Value.BaseboardFinish) : nullptr;
 		if (!Material)
 		{
@@ -6347,8 +6632,8 @@ TArray<TSharedPtr<FJsonValue>> ARoomPlannerManager::RoomFinishRecordsToJson(cons
 	for (const FFloorFinishRecord& Rec : Records)
 	{
 		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject());
-		Obj->SetNumberField(TEXT("x"), Rec.Anchor.X);
-		Obj->SetNumberField(TEXT("y"), Rec.Anchor.Y);
+		PlannerJsonKeys::SetCm(Obj, TEXT("x"), Rec.Anchor.X);
+		PlannerJsonKeys::SetCm(Obj, TEXT("y"), Rec.Anchor.Y);
 		Obj->SetObjectField(TEXT("finish"), FinishToJson(Rec.Finish));
 		Array.Add(MakeShareable(new FJsonValueObject(Obj)));
 	}
@@ -6384,22 +6669,11 @@ void ARoomPlannerManager::RoomFinishRecordsFromJson(const TSharedPtr<FJsonObject
 
 UMaterialInterface* ARoomPlannerManager::ResolveFloorMaterialForRoom(const FRoomData& Room)
 {
-	UMaterialInterface* Mat = nullptr;
-	if (Room.FloorFinish.IsSet())
-	{
-		Mat = CreateFinishMaterialInstance(Room.FloorFinish, this);
-	}
+	// Rooms sharing a finish (and every room without one) share one instance: a floor material is never changed per room.
+	UMaterialInterface* Mat = GetFinishMaterial(Room.FloorFinish);
 	if (!Mat)
 	{
-		if (UMaterialInterface* Base = ResolvePaintBaseMaterial())
-		{
-			if (UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Base, this))
-			{
-				MID->SetVectorParameterValue(FName("BaseColor"), FLinearColor(0.92f, 0.92f, 0.92f, 1.f));
-				MID->SetVectorParameterValue(FName("Color"), FLinearColor(0.92f, 0.92f, 0.92f, 1.f));
-				Mat = MID;
-			}
-		}
+		Mat = GetFinishMaterial(MakeDefaultPaintFinish(FLinearColor(0.92f, 0.92f, 0.92f, 1.f)));
 	}
 	FloorSectionMaterials.Add(Room.RoomID, Mat);
 	return Mat;
@@ -7508,7 +7782,7 @@ bool ARoomPlannerManager::ImportProjectFromSaveJSON(const FString& SaveRecordJSO
 	if (Root->TryGetObjectField(TEXT("planner"), PlannerObj) && PlannerObj && PlannerObj->IsValid())
 	{
 		FString PlannerString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&PlannerString);
+		TSharedRef<PlannerJsonKeys::FLayoutJsonWriter> Writer = PlannerJsonKeys::FLayoutJsonWriterFactory::Create(&PlannerString);
 		FJsonSerializer::Serialize(PlannerObj->ToSharedRef(), Writer);
 		ClearLayout();
 		ImportLayoutFromJSON(PlannerString);

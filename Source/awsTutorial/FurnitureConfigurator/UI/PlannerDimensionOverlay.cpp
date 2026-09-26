@@ -278,9 +278,9 @@ UPlannerDimensionOverlay::UPlannerDimensionOverlay()
 
 void UPlannerDimensionOverlay::SetDimensions(const TArray<FPlannerScreenDimension>& InDimensions)
 {
-	if (InDimensions.Num() == 0 && Dimensions.Num() == 0)
+	if (InDimensions == Dimensions)
 	{
-		return; // nothing selected, frame after frame: nothing to repaint
+		return; // the same values in the same places, frame after frame: nothing to repaint
 	}
 	Dimensions = InDimensions;
 	if (MyOverlay.IsValid())

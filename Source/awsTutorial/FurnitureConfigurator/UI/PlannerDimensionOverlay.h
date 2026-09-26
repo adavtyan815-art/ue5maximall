@@ -27,6 +27,14 @@ struct AWSTUTORIAL_API FPlannerScreenDimension
 	 * from the measured points (at the midpoint when they coincide with it).
 	 */
 	bool bTextOnly = false;
+
+	/** Same content in the same places: the overlay has nothing new to paint. */
+	bool operator==(const FPlannerScreenDimension& Other) const
+	{
+		return Start == Other.Start && End == Other.End && StartRef == Other.StartRef
+			&& EndRef == Other.EndRef && bTextOnly == Other.bTextOnly && Text == Other.Text;
+	}
+	bool operator!=(const FPlannerScreenDimension& Other) const { return !(*this == Other); }
 };
 
 /** Where the parts of one dimension go (pure geometry, so it can be tested without drawing). */

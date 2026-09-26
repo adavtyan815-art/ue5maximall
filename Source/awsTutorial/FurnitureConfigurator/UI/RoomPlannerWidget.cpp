@@ -1460,7 +1460,8 @@ void URoomPlannerWidget::OnApplyPropertiesClicked()
 				S = FCString::Atof(*EditableTxtProp3->GetText().ToString());
 			}
 
-			PC->Server_UpdateOpeningDimensions(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, W / 100.f, H / 100.f, S / 100.f);
+			PC->Server_UpdateOpeningDimensions(PlannerManager->SelectedSegmentID,
+				PlannerManager->GetOpeningID(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex), W / 100.f, H / 100.f, S / 100.f);
 		}
 	}
 	else
@@ -1540,8 +1541,9 @@ void URoomPlannerWidget::OnOpeningWidthCommitted(const FText& Text, ETextCommit:
 	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager && PlannerManager->SelectedSegmentID != -1)
 	{
 		int32 SegID = PlannerManager->SelectedSegmentID;
-		int32 OpIdx = PlannerManager->SelectedOpeningIndex;
-		if (OpIdx == -1) OpIdx = 0;
+		// No fallback to the wall's first opening: a value typed with no opening selected must not resize an arbitrary door.
+		const int32 OpIdx = PlannerManager->SelectedOpeningIndex;
+		if (OpIdx == -1) return;
 
 		float CurWidthM = 0.9f, CurHeightM = 2.1f, CurSillM = 0.f;
 		PlannerManager->GetOpeningDetails(SegID, OpIdx, CurWidthM, CurHeightM, CurSillM);
@@ -1551,7 +1553,7 @@ void URoomPlannerWidget::OnOpeningWidthCommitted(const FText& Text, ETextCommit:
 		{
 			if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 			{
-				PC->Server_UpdateOpeningDimensions(SegID, OpIdx, NewWidthMeters, CurHeightM, CurSillM);
+				PC->Server_UpdateOpeningDimensions(SegID, PlannerManager->GetOpeningID(SegID, OpIdx), NewWidthMeters, CurHeightM, CurSillM);
 			}
 		}
 	}
@@ -1562,8 +1564,9 @@ void URoomPlannerWidget::OnOpeningHeightCommitted(const FText& Text, ETextCommit
 	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager && PlannerManager->SelectedSegmentID != -1)
 	{
 		int32 SegID = PlannerManager->SelectedSegmentID;
-		int32 OpIdx = PlannerManager->SelectedOpeningIndex;
-		if (OpIdx == -1) OpIdx = 0;
+		// No fallback to the wall's first opening: a value typed with no opening selected must not resize an arbitrary door.
+		const int32 OpIdx = PlannerManager->SelectedOpeningIndex;
+		if (OpIdx == -1) return;
 
 		float CurWidthM = 0.9f, CurHeightM = 2.1f, CurSillM = 0.f;
 		PlannerManager->GetOpeningDetails(SegID, OpIdx, CurWidthM, CurHeightM, CurSillM);
@@ -1573,7 +1576,7 @@ void URoomPlannerWidget::OnOpeningHeightCommitted(const FText& Text, ETextCommit
 		{
 			if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 			{
-				PC->Server_UpdateOpeningDimensions(SegID, OpIdx, CurWidthM, NewHeightMeters, CurSillM);
+				PC->Server_UpdateOpeningDimensions(SegID, PlannerManager->GetOpeningID(SegID, OpIdx), CurWidthM, NewHeightMeters, CurSillM);
 			}
 		}
 	}
@@ -1584,8 +1587,9 @@ void URoomPlannerWidget::OnOpeningSillHeightCommitted(const FText& Text, ETextCo
 	if ((CommitMethod == ETextCommit::OnEnter || CommitMethod != ETextCommit::Default) && PlannerManager && PlannerManager->SelectedSegmentID != -1)
 	{
 		int32 SegID = PlannerManager->SelectedSegmentID;
-		int32 OpIdx = PlannerManager->SelectedOpeningIndex;
-		if (OpIdx == -1) OpIdx = 0;
+		// No fallback to the wall's first opening: a value typed with no opening selected must not resize an arbitrary door.
+		const int32 OpIdx = PlannerManager->SelectedOpeningIndex;
+		if (OpIdx == -1) return;
 
 		float CurWidthM = 0.9f, CurHeightM = 2.1f, CurSillM = 0.f;
 		PlannerManager->GetOpeningDetails(SegID, OpIdx, CurWidthM, CurHeightM, CurSillM);
@@ -1593,7 +1597,7 @@ void URoomPlannerWidget::OnOpeningSillHeightCommitted(const FText& Text, ETextCo
 		float NewSillMeters = ParseLengthDimensionInput(Text.ToString(), CurSillM);
 		if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 		{
-			PC->Server_UpdateOpeningDimensions(SegID, OpIdx, CurWidthM, CurHeightM, NewSillMeters);
+			PC->Server_UpdateOpeningDimensions(SegID, PlannerManager->GetOpeningID(SegID, OpIdx), CurWidthM, CurHeightM, NewSillMeters);
 		}
 	}
 }
@@ -1946,10 +1950,18 @@ TArray<FPlannerDimensionLabel> URoomPlannerWidget::GetSelectionLabels() const
 
 void URoomPlannerWidget::UpdateSelectionLabelsUI()
 {
-	UpdateDimensionOverlay();
+	// Runs every frame: with nothing selected the overlay only has to be emptied once, not rebuilt from screen projections.
+	const bool bActive = PlannerManager && (PlannerManager->IsNodeDragActive() || PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None);
+	if (bActive)
+	{
+		UpdateDimensionOverlay();
+	}
+	else if (DimensionOverlay)
+	{
+		DimensionOverlay->SetDimensions(TArray<FPlannerScreenDimension>());
+	}
 	if (!PlannerManager) return;
 
-	const bool bActive = PlannerManager->IsNodeDragActive() || PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None;
 	if (!bActive)
 	{
 		if (SelectionLabelPanel && SelectionLabelPanel->GetVisibility() != ESlateVisibility::Collapsed)
@@ -2056,7 +2068,8 @@ void URoomPlannerWidget::SetSelectedOpeningSwing(EOpeningSwingSide Side, EOpenin
 	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // editing openings is a 2D workflow
 	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 	{
-		PC->Server_SetOpeningSwing(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, Side, Direction);
+		PC->Server_SetOpeningSwing(PlannerManager->SelectedSegmentID,
+			PlannerManager->GetOpeningID(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex), Side, Direction);
 	}
 }
 
@@ -2155,7 +2168,8 @@ void URoomPlannerWidget::SetSelectedOpeningStyle(FName StyleID)
 	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // editing openings is a 2D workflow
 	if (AAwsTutorial_PlayerController* PC = GetPreviewController())
 	{
-		PC->Server_SetOpeningStyle(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, StyleID);
+		PC->Server_SetOpeningStyle(PlannerManager->SelectedSegmentID,
+			PlannerManager->GetOpeningID(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex), StyleID);
 	}
 }
 
@@ -2304,7 +2318,8 @@ bool URoomPlannerWidget::ApplyFinishToSelection(const FSurfaceFinish& Finish)
 			HandleOperationRejected(TEXT("Плитку можно назначить только стене, полу, потолку или плинтусу"));
 			return false;
 		}
-		PC->Server_SetOpeningTrimFinish(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, Finish);
+		PC->Server_SetOpeningTrimFinish(PlannerManager->SelectedSegmentID,
+			PlannerManager->GetOpeningID(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex), Finish);
 		return true;
 	case EPlannerSelectionKind::Floor:
 		PC->Server_SetFloorFinish(PlannerManager->SelectedRoomID, Finish);
@@ -3020,7 +3035,8 @@ void URoomPlannerWidget::DeleteSelected()
 	switch (PlannerManager->GetSelectionKind())
 	{
 	case EPlannerSelectionKind::Opening:
-		PC->Server_DeleteOpening(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex);
+		PC->Server_DeleteOpening(PlannerManager->SelectedSegmentID,
+			PlannerManager->GetOpeningID(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex));
 		break;
 	case EPlannerSelectionKind::Wall:
 		PC->Server_DeleteWall(PlannerManager->SelectedSegmentID);

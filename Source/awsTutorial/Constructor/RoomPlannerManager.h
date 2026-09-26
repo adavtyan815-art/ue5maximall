@@ -178,6 +178,11 @@ public:
 	/** Read-only view of the detected rooms (debug / console reporting). */
 	const TMap<int32, FRoomData>& GetRoomsForDebug() const { return Rooms; }
 
+	const TMap<int32, FWallSegment>& GetWallSegmentsForDebug() const { return WallSegments; }
+
+	/** Open target of one leaf (0 closed, 1 open), the default when it has none: which opening owns which leaf state. */
+	float GetLeafOpenTargetForDebug(int32 SegmentID, int32 OpeningIndex) const;
+
 	// ── Planner exposure ───────────────────────────────────────────────────────
 	// Lighting is tuned against a deliberate exposure: while the planner UI is open in 3D, an unbound
 	// post-process (priority 10) owns the exposure in physical EV100. The planner sets the light level itself
@@ -380,7 +385,8 @@ public:
 	int32 AddNode(const FVector2D& Position);
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
-	int32 AddWall(int32 StartNodeID, int32 EndNodeID, float Thickness = 20.f, float Height = 280.f);
+	/** DesiredSegmentID: keep this id if it is free (the layout import does, so a wall is the same wall on every machine). */
+	int32 AddWall(int32 StartNodeID, int32 EndNodeID, float Thickness = 20.f, float Height = 280.f, int32 DesiredSegmentID = -1);
 
 	/**
 	 * A wall drawn from StartPos to EndPos (the plan's wall tool). Its ends join nearby corners and walls as AddNode does, and it is
@@ -406,6 +412,19 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void RebuildRooms();
+
+	/**
+	 * Whether this rebuild cooks collision. A corner drag rebuilds every wall, floor, ceiling and baseboard per frame and
+	 * UProceduralMeshComponent re-cooks a body setup for each section it is handed; 2D picking and drops never trace (they are
+	 * analytic: SelectAtWorldPos2D, ResolveDropFromCursorRay2D), so those frames go without it.
+	 */
+	bool ShouldCookCollision() const { return DraggingNodeID == -1 && !bOpeningDragActive; }
+
+	/**
+	 * Rebuilds the layout with collision when the last build skipped it. Driven from Tick, so it does not matter how the drag
+	 * ended: release, tool change, view change, or the node removed under it.
+	 */
+	void EnsureLayoutCollision();
 
 	/** Full planner state (walls, openings, finishes, objects, cabinet sets) as JSON. Also the replication payload. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
@@ -546,8 +565,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool GetOpeningDistance(int32 SegmentID, int32 OpeningIndex, float& OutDistFromStartCm) const;
 
+	/**
+	 * The opening's stable id ("" if there is none there). A wall keeps its openings sorted by distance, so moving one past
+	 * another renumbers them: an index is only good on the machine that read it, and anything crossing the wire uses this.
+	 */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner")
+	FString GetOpeningID(int32 SegmentID, int32 OpeningIndex) const;
+
+	/** Index of the opening with this id on that wall, or INDEX_NONE. @see GetOpeningID */
+	UFUNCTION(BlueprintPure, Category = "RoomPlanner")
+	int32 FindOpeningIndexByID(int32 SegmentID, const FString& OpeningID) const;
+
+	/** bLocalPreviewOnly: one frame of a drag. The walls and rooms follow the opening, but the layout is not published —
+	 *  the release publishes once, exactly as a corner drag does (ApplyNodeMove / EndNodeDrag). */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
-	bool UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm);
+	bool UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm, bool bLocalPreviewOnly = false);
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	bool DragSelectedOpeningToWorldPos(const FVector& WorldPos);
@@ -945,6 +977,15 @@ public:
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
+	/** Publishes the layout the server has just edited; server RPCs call this instead of re-importing their own JSON. */
+	void CommitStateAfterMutation();
+
+	/** Clears a selection whose wall, opening, room, object or cabinet set no longer exists (and says so if it cleared one). */
+	void DropSelectionOfVanishedItems();
+
+	/** Drops the open/closed state of openings that no longer exist; the key survives a save, so a stale one would come back. */
+	void PruneLeafAnimations();
+
 	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedRoomJSON)
 	FString ReplicatedRoomJSON;
 
@@ -1015,7 +1056,18 @@ private:
 	 */
 	int32 LayoutImportDepth = 0;
 
-	/** Open fraction of one leaf (0 closed, 1 open) and its running animation, keyed by "WallGuid#OpeningIndex". */
+	/**
+	 * > 0 inside one logical rebuild (walls, then rooms). Both passes compute the corner joints and both rebuild the baseboards,
+	 * and nothing between them moves a node or changes a wall, so the later passes redo identical work — on every frame of a node
+	 * drag. Inside the scope the joints are computed by the first pass and the baseboards by the rooms pass that ends it.
+	 */
+	int32 RebuildScopeDepth = 0;
+	bool bCornerJointsComputedInScope = false;
+
+	/** Walls and rooms as one logical rebuild: every layout change needs both, walls first. */
+	void RebuildWallsAndRooms();
+
+	/** Open fraction of one leaf (0 closed, 1 open) and its running animation, keyed by "WallGuid#OpeningID". */
 	struct FLeafAnimation
 	{
 		float Current = 0.f;
@@ -1024,10 +1076,6 @@ private:
 		float Elapsed = 0.f;
 		float Duration = 0.f;
 		bool bAnimating = false;
-		/** Fingerprint of the opening the state was created for (type + distance, cm): the key uses the opening's index,
-		 *  which a delete, drag or split can hand to a different opening. */
-		EOpeningType Type = EOpeningType::Door;
-		int32 DistanceKey = 0;
 	};
 	TMap<FString, FLeafAnimation> LeafAnimations;
 	bool bDefaultLeavesOpen = false;
@@ -1043,8 +1091,9 @@ private:
 	/** Length of a wall face covered by other walls meeting at NodeID (AwayDir: this wall's direction away from the node). */
 	float ComputeBranchCoverOnFace(int32 SegmentID, int32 NodeID, const FVector2D& AwayDir, const FVector2D& FaceNormal, float HalfThickness) const;
 
-	static FString MakeLeafKey(const FString& WallGuid, int32 OpeningIndex);
-	/** State of a leaf, or null; state that belongs to a different opening (moved to this index) is discarded. */
+	/** Identity of one leaf's state, "WallGuid#OpeningID"; empty when the index is not a live opening. */
+	static FString MakeLeafKey(const AProceduralWallActor* Wall, int32 OpeningIndex);
+	/** State of a leaf, or null when it has none yet. */
 	FLeafAnimation* FindLeafAnimation(AProceduralWallActor* Wall, int32 OpeningIndex);
 	/** Starts easing a leaf toward Target; a leaf without state starts from InitialFraction. */
 	void StartLeafAnimation(AProceduralWallActor* Wall, int32 OpeningIndex, float Target, float InitialFraction);
@@ -1058,7 +1107,11 @@ private:
 
 	TMap<int32, FWallNode> Nodes;
 	TMap<int32, FWallSegment> WallSegments;
+
+	/** Wall actors by SegmentID. Reflected like every other actor container here: a destroyed wall must leave a null, not a stale pointer. */
+	UPROPERTY(Transient)
 	TMap<int32, TObjectPtr<AProceduralWallActor>> WallActors;
+
 	TMap<int32, FRoomData> Rooms;
 	TWeakObjectPtr<UObject> BoundPSInput;
 
@@ -1109,6 +1162,18 @@ private:
 
 	int32 DraggingNodeID = -1;
 	FVector2D NodeDragOriginalPos = FVector2D::ZeroVector;
+
+	/** Set by any rebuild that skipped collision cooking (see ShouldCookCollision); cleared by a walls+rooms rebuild that cooks. */
+	bool bLayoutCollisionStale = false;
+
+	/** An opening is being dragged (DragSelectedOpeningToWorldPos); Tick ends it when no frame has asked for a while. */
+	bool bOpeningDragActive = false;
+	bool bOpeningDragPublishPending = false;
+	float LastOpeningDragSeconds = 0.f;
+	static constexpr float OpeningDragIdleSeconds = 0.25f;
+
+	/** Ends an opening drag that stopped without the controller's mouse-up: publishes it and lets collision cook again. */
+	void TickOpeningDragEnd();
 	float LastRejectBroadcastTime = -100.f;
 
 	/** Previous-frame LMB state (Slate pressed-button set) for the manager-driven corner drag. */
@@ -1228,7 +1293,6 @@ private:
 	void ComputeWallInteriorSides(const TArray<TArray<FVector2D>>& RoomPolygons);
 	FVector2D SnapNodeDragPosition(int32 NodeID, const FVector2D& RawPos) const;
 	void NotifySelectionChanged();
-	void CommitStateAfterMutation();
 
 	// Finish materials
 	UPROPERTY(Transient)
@@ -1239,6 +1303,8 @@ private:
 
 	UMaterialInterface* ResolvePaintBaseMaterial();
 	UMaterialInterface* ResolveTileBaseMaterial(const FSurfaceFinish& Finish);
+	/** The paint finish a surface without one of its own is drawn with, so that default also comes from the shared finish cache. */
+	static FSurfaceFinish MakeDefaultPaintFinish(const FLinearColor& Color);
 	UMaterialInstanceDynamic* CreateFinishMaterialInstance(const FSurfaceFinish& Finish, UObject* Outer);
 	UMaterialInterface* ResolveFloorMaterialForRoom(const FRoomData& Room);
 	void ApplyWallFinishMaterials();

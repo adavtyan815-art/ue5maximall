@@ -434,7 +434,8 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                             float OpeningDist = 0.f;
                             if (PlannerManager->GetOpeningDistance(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, OpeningDist))
                             {
-                                Server_UpdateOpeningPosition(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex, OpeningDist);
+                                Server_UpdateOpeningPosition(PlannerManager->SelectedSegmentID,
+								PlannerManager->GetOpeningID(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex), OpeningDist);
                             }
                         }
                     }
@@ -465,7 +466,8 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                     {
                         if (PlannerManager->SelectedOpeningIndex != -1)
                         {
-                            Server_DeleteOpening(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex);
+                            Server_DeleteOpening(PlannerManager->SelectedSegmentID,
+							PlannerManager->GetOpeningID(PlannerManager->SelectedSegmentID, PlannerManager->SelectedOpeningIndex));
                         }
                         else
                         {
@@ -2220,8 +2222,7 @@ void AAwsTutorial_PlayerController::Server_CommitWall_Implementation(FVector2D S
 	{
 		// Joined to every wall it crosses or touches, so a partition divides the room it is drawn across.
 		Manager->AddWallBetweenPoints(StartPos, EndPos, Thickness, Height);
-		Manager->ReplicatedRoomJSON = Manager->ExportLayoutToJSON();
-		Manager->OnRep_ReplicatedRoomJSON();
+		Manager->CommitStateAfterMutation();
 	}
 }
 
@@ -2235,8 +2236,7 @@ void AAwsTutorial_PlayerController::Server_ClearLayout_Implementation()
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->ClearLayout();
-		Manager->ReplicatedRoomJSON = Manager->ExportLayoutToJSON();
-		Manager->OnRep_ReplicatedRoomJSON();
+		Manager->CommitStateAfterMutation();
 	}
 }
 
@@ -2258,7 +2258,6 @@ void AAwsTutorial_PlayerController::Server_BuildPreset4x4mRoom_Implementation()
 			CenterCm = FVector2D(PawnLoc.X, PawnLoc.Y);
 		}
 		Manager->BuildPreset4x4mRoom(CenterCm);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 
@@ -2271,8 +2270,11 @@ void AAwsTutorial_PlayerController::Server_SetWallLength_Implementation(int32 Se
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->SetWallLength(SegmentID, NewLengthMeters);
-		Manager->OnRep_ReplicatedRoomJSON();
+		if (!Manager->SetWallLength(SegmentID, NewLengthMeters))
+		{
+			// Refused: re-publish the authoritative state so the client's edit snaps back (as Server_MoveNode does).
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
 
@@ -2286,7 +2288,6 @@ void AAwsTutorial_PlayerController::Server_DeleteWall_Implementation(int32 Segme
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->RemoveWall(SegmentID);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 
@@ -2295,16 +2296,20 @@ bool AAwsTutorial_PlayerController::Server_DeleteWall_Validate(int32 SegmentID)
 	return true;
 }
 
-void AAwsTutorial_PlayerController::Server_DeleteOpening_Implementation(int32 SegmentID, int32 OpeningIndex)
+void AAwsTutorial_PlayerController::Server_DeleteOpening_Implementation(int32 SegmentID, const FString& OpeningID)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->DeleteOpening(SegmentID, OpeningIndex);
-		Manager->OnRep_ReplicatedRoomJSON();
+		if (!Manager->DeleteOpening(SegmentID, Manager->FindOpeningIndexByID(SegmentID, OpeningID)))
+		{
+			// The opening is not there any more (deleted by someone else, or a client that is behind): re-publish so the
+			// sender stops showing something the layout does not have.
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
 
-bool AAwsTutorial_PlayerController::Server_DeleteOpening_Validate(int32 SegmentID, int32 OpeningIndex)
+bool AAwsTutorial_PlayerController::Server_DeleteOpening_Validate(int32 SegmentID, const FString& OpeningID)
 {
 	return true;
 }
@@ -2313,8 +2318,11 @@ void AAwsTutorial_PlayerController::Server_AddDoor_Implementation(int32 SegmentI
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->AddDoorToWall(SegmentID, WidthMeters, HeightMeters, DistFromStartCm);
-		Manager->OnRep_ReplicatedRoomJSON();
+		if (!Manager->AddDoorToWall(SegmentID, WidthMeters, HeightMeters, DistFromStartCm))
+		{
+			// Refused: re-publish the authoritative state so the client's edit snaps back (as Server_MoveNode does).
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
 
@@ -2327,8 +2335,11 @@ void AAwsTutorial_PlayerController::Server_AddWindow_Implementation(int32 Segmen
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->AddWindowToWall(SegmentID, WidthMeters, HeightMeters, SillHeightMeters, DistFromStartCm);
-		Manager->OnRep_ReplicatedRoomJSON();
+		if (!Manager->AddWindowToWall(SegmentID, WidthMeters, HeightMeters, SillHeightMeters, DistFromStartCm))
+		{
+			// Refused: re-publish the authoritative state so the client's edit snaps back (as Server_MoveNode does).
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
 
@@ -2337,46 +2348,55 @@ bool AAwsTutorial_PlayerController::Server_AddWindow_Validate(int32 SegmentID, f
 	return true;
 }
 
-void AAwsTutorial_PlayerController::Server_UpdateOpeningDimensions_Implementation(int32 SegmentID, int32 OpeningIndex, float WidthMeters, float HeightMeters, float SillHeightMeters)
+void AAwsTutorial_PlayerController::Server_UpdateOpeningDimensions_Implementation(int32 SegmentID, const FString& OpeningID, float WidthMeters, float HeightMeters, float SillHeightMeters)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->UpdateOpeningDimensions(SegmentID, OpeningIndex, WidthMeters, HeightMeters, SillHeightMeters);
-		Manager->OnRep_ReplicatedRoomJSON();
+		if (!Manager->UpdateOpeningDimensions(SegmentID, Manager->FindOpeningIndexByID(SegmentID, OpeningID), WidthMeters, HeightMeters, SillHeightMeters))
+		{
+			// Refused: re-publish the authoritative state so the client's edit snaps back (as Server_MoveNode does).
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
 
-bool AAwsTutorial_PlayerController::Server_UpdateOpeningDimensions_Validate(int32 SegmentID, int32 OpeningIndex, float WidthMeters, float HeightMeters, float SillHeightMeters)
+bool AAwsTutorial_PlayerController::Server_UpdateOpeningDimensions_Validate(int32 SegmentID, const FString& OpeningID, float WidthMeters, float HeightMeters, float SillHeightMeters)
 {
 	return true;
 }
 
-void AAwsTutorial_PlayerController::Server_UpdateOpeningPosition_Implementation(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm)
+void AAwsTutorial_PlayerController::Server_UpdateOpeningPosition_Implementation(int32 SegmentID, const FString& OpeningID, float NewDistFromStartCm)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->UpdateOpeningPosition(SegmentID, OpeningIndex, NewDistFromStartCm);
-		Manager->OnRep_ReplicatedRoomJSON();
+		if (!Manager->UpdateOpeningPosition(SegmentID, Manager->FindOpeningIndexByID(SegmentID, OpeningID), NewDistFromStartCm))
+		{
+			// Refused: re-publish the authoritative state so the client's edit snaps back (as Server_MoveNode does).
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
 
-bool AAwsTutorial_PlayerController::Server_UpdateOpeningPosition_Validate(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm)
+bool AAwsTutorial_PlayerController::Server_UpdateOpeningPosition_Validate(int32 SegmentID, const FString& OpeningID, float NewDistFromStartCm)
 {
 	return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Room Planner — REQ-02 / 07 / 13 / 16 / 17 / 18 server RPCs
-// Every mutation ends with OnRep_ReplicatedRoomJSON() so the server rebuilds from the
-// same JSON the clients receive (established replication model, REQ-15).
+// Every mutation is published by the manager itself (CommitStateAfterMutation): the server keeps the layout it has just
+// edited and replicates the JSON, instead of tearing its own walls down and rebuilding them from it (REQ-15).
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AAwsTutorial_PlayerController::Server_SetWallDimensions_Implementation(int32 SegmentID, float HeightCm, float ThicknessCm)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->SetWallDimensions(SegmentID, HeightCm, ThicknessCm);
-		Manager->OnRep_ReplicatedRoomJSON();
+		if (!Manager->SetWallDimensions(SegmentID, HeightCm, ThicknessCm))
+		{
+			// Refused: re-publish the authoritative state so the client's edit snaps back (as Server_MoveNode does).
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
 bool AAwsTutorial_PlayerController::Server_SetWallDimensions_Validate(int32 SegmentID, float HeightCm, float ThicknessCm) { return true; }
@@ -2385,47 +2405,50 @@ void AAwsTutorial_PlayerController::Server_MoveNode_Implementation(int32 NodeID,
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		if (Manager->MoveNode(NodeID, NewPosition))
+		if (!Manager->MoveNode(NodeID, NewPosition))
 		{
-			Manager->OnRep_ReplicatedRoomJSON();
-		}
-		else
-		{
-			// Refused (REQ-09): re-broadcast the authoritative state so a client-side preview snaps back.
-			Manager->ReplicatedRoomJSON = Manager->ExportLayoutToJSON();
-			Manager->OnRep_ReplicatedRoomJSON();
+			// Refused (REQ-09): re-publish the authoritative state so a client-side preview snaps back.
+			Manager->CommitStateAfterMutation();
 		}
 	}
 }
 bool AAwsTutorial_PlayerController::Server_MoveNode_Validate(int32 NodeID, FVector2D NewPosition) { return true; }
 
-void AAwsTutorial_PlayerController::Server_SetOpeningSwing_Implementation(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide Side, EOpeningSwingDirection Direction)
+void AAwsTutorial_PlayerController::Server_SetOpeningSwing_Implementation(int32 SegmentID, const FString& OpeningID, EOpeningSwingSide Side, EOpeningSwingDirection Direction)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->SetOpeningSwing(SegmentID, OpeningIndex, Side, Direction);
-		Manager->OnRep_ReplicatedRoomJSON();
+		if (!Manager->SetOpeningSwing(SegmentID, Manager->FindOpeningIndexByID(SegmentID, OpeningID), Side, Direction))
+		{
+			// The opening is not there any more (deleted by someone else, or a client that is behind): re-publish so the
+			// sender stops showing something the layout does not have.
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
-bool AAwsTutorial_PlayerController::Server_SetOpeningSwing_Validate(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide Side, EOpeningSwingDirection Direction) { return true; }
+bool AAwsTutorial_PlayerController::Server_SetOpeningSwing_Validate(int32 SegmentID, const FString& OpeningID, EOpeningSwingSide Side, EOpeningSwingDirection Direction) { return true; }
 
-void AAwsTutorial_PlayerController::Server_SetOpeningStyle_Implementation(int32 SegmentID, int32 OpeningIndex, FName StyleID)
+void AAwsTutorial_PlayerController::Server_SetOpeningStyle_Implementation(int32 SegmentID, const FString& OpeningID, FName StyleID)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->SetOpeningStyle(SegmentID, OpeningIndex, StyleID);
+		if (!Manager->SetOpeningStyle(SegmentID, Manager->FindOpeningIndexByID(SegmentID, OpeningID), StyleID))
+		{
+			// The opening is not there any more (deleted by someone else, or a client that is behind): re-publish so the
+			// sender stops showing something the layout does not have.
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
 
 // Always accepted: an unknown style (e.g. from an older client) is refused by the manager instead of disconnecting the player.
-bool AAwsTutorial_PlayerController::Server_SetOpeningStyle_Validate(int32 SegmentID, int32 OpeningIndex, FName StyleID) { return true; }
+bool AAwsTutorial_PlayerController::Server_SetOpeningStyle_Validate(int32 SegmentID, const FString& OpeningID, FName StyleID) { return true; }
 
 void AAwsTutorial_PlayerController::Server_SetWallFinish_Implementation(int32 SegmentID, FSurfaceFinish Finish)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->SetWallFinish(SegmentID, Finish);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_SetWallFinish_Validate(int32 SegmentID, FSurfaceFinish Finish) { return true; }
@@ -2435,7 +2458,6 @@ void AAwsTutorial_PlayerController::Server_SetFloorFinish_Implementation(int32 R
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->SetFloorFinish(RoomID, Finish);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_SetFloorFinish_Validate(int32 RoomID, FSurfaceFinish Finish) { return true; }
@@ -2445,7 +2467,6 @@ void AAwsTutorial_PlayerController::Server_SetWallFaceFinish_Implementation(int3
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->SetWallFaceFinish(SegmentID, bLeftFace, Finish);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_SetWallFaceFinish_Validate(int32 SegmentID, bool bLeftFace, FSurfaceFinish Finish) { return true; }
@@ -2455,7 +2476,6 @@ void AAwsTutorial_PlayerController::Server_SetCeilingFinish_Implementation(int32
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->SetCeilingFinish(RoomID, Finish);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_SetCeilingFinish_Validate(int32 RoomID, FSurfaceFinish Finish) { return true; }
@@ -2465,27 +2485,29 @@ void AAwsTutorial_PlayerController::Server_SetBaseboardFinish_Implementation(int
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->SetBaseboardFinish(RoomID, Finish);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_SetBaseboardFinish_Validate(int32 RoomID, FSurfaceFinish Finish) { return true; }
 
-void AAwsTutorial_PlayerController::Server_SetOpeningTrimFinish_Implementation(int32 SegmentID, int32 OpeningIndex, FSurfaceFinish Finish)
+void AAwsTutorial_PlayerController::Server_SetOpeningTrimFinish_Implementation(int32 SegmentID, const FString& OpeningID, FSurfaceFinish Finish)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
-		Manager->SetOpeningTrimFinish(SegmentID, OpeningIndex, Finish);
-		Manager->OnRep_ReplicatedRoomJSON();
+		if (!Manager->SetOpeningTrimFinish(SegmentID, Manager->FindOpeningIndexByID(SegmentID, OpeningID), Finish))
+		{
+			// The opening is not there any more (deleted by someone else, or a client that is behind): re-publish so the
+			// sender stops showing something the layout does not have.
+			Manager->CommitStateAfterMutation();
+		}
 	}
 }
-bool AAwsTutorial_PlayerController::Server_SetOpeningTrimFinish_Validate(int32 SegmentID, int32 OpeningIndex, FSurfaceFinish Finish) { return true; }
+bool AAwsTutorial_PlayerController::Server_SetOpeningTrimFinish_Validate(int32 SegmentID, const FString& OpeningID, FSurfaceFinish Finish) { return true; }
 
 void AAwsTutorial_PlayerController::Server_AddPlacedObject_Implementation(const FString& AssetID, FVector Location, FRotator Rotation, FVector Scale)
 {
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->AddPlacedObject(AssetID, Location, Rotation, Scale);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_AddPlacedObject_Validate(const FString& AssetID, FVector Location, FRotator Rotation, FVector Scale) { return true; }
@@ -2495,7 +2517,6 @@ void AAwsTutorial_PlayerController::Server_MovePlacedObject_Implementation(const
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->MovePlacedObject(InstanceID, Location, Rotation, Scale);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_MovePlacedObject_Validate(const FString& InstanceID, FVector Location, FRotator Rotation, FVector Scale) { return true; }
@@ -2505,7 +2526,6 @@ void AAwsTutorial_PlayerController::Server_RemovePlacedObject_Implementation(con
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->RemovePlacedObject(InstanceID);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_RemovePlacedObject_Validate(const FString& InstanceID) { return true; }
@@ -2515,7 +2535,6 @@ void AAwsTutorial_PlayerController::Server_SetPlacedObjectFinish_Implementation(
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->SetPlacedObjectFinish(InstanceID, Finish);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_SetPlacedObjectFinish_Validate(const FString& InstanceID, FSurfaceFinish Finish) { return true; }
@@ -2529,7 +2548,6 @@ void AAwsTutorial_PlayerController::Server_AddCabinetSet_Implementation(FName Pr
 		if (Drop.Target == EPlannerDropTarget::Wall)
 		{
 			Manager->AddCabinetSetOnWall(ProductID, Drop.SegmentID, Drop.DistanceAlongWallCm, Drop.bLeftSide);
-			Manager->OnRep_ReplicatedRoomJSON();
 		}
 	}
 }
@@ -2561,11 +2579,6 @@ void AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Implementation(EPlan
 
 	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Server_PlaceCatalogItem result: %s (objects=%d, cabinetSets=%d)"),
 		bPlaced ? TEXT("PLACED") : TEXT("NOT PLACED"), Manager->GetPlacedObjects().Num(), Manager->GetCabinetSets().Num());
-
-	if (bPlaced)
-	{
-		Manager->OnRep_ReplicatedRoomJSON();
-	}
 }
 bool AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Validate(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation) { return true; }
 
@@ -2674,7 +2687,6 @@ void AAwsTutorial_PlayerController::Server_MoveCabinetSet_Implementation(const F
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->MoveCabinetSet(InstanceID, Location, Rotation);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_MoveCabinetSet_Validate(const FString& InstanceID, FVector Location, FRotator Rotation) { return true; }
@@ -2684,7 +2696,6 @@ void AAwsTutorial_PlayerController::Server_RemoveCabinetSet_Implementation(const
 	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld()))
 	{
 		Manager->RemoveCabinetSet(InstanceID);
-		Manager->OnRep_ReplicatedRoomJSON();
 	}
 }
 bool AAwsTutorial_PlayerController::Server_RemoveCabinetSet_Validate(const FString& InstanceID) { return true; }

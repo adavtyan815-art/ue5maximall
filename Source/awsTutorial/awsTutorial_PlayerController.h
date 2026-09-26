@@ -108,7 +108,7 @@ public:
 	void Server_DeleteWall(int32 SegmentID);
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
-	void Server_DeleteOpening(int32 SegmentID, int32 OpeningIndex);
+	void Server_DeleteOpening(int32 SegmentID, const FString& OpeningID);
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_AddDoor(int32 SegmentID, float WidthMeters = 0.9f, float HeightMeters = 2.1f, float DistFromStartCm = -1.f);
@@ -117,10 +117,10 @@ public:
 	void Server_AddWindow(int32 SegmentID, float WidthMeters = 1.2f, float HeightMeters = 1.2f, float SillHeightMeters = 0.9f, float DistFromStartCm = -1.f);
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
-	void Server_UpdateOpeningDimensions(int32 SegmentID, int32 OpeningIndex, float WidthMeters, float HeightMeters, float SillHeightMeters);
+	void Server_UpdateOpeningDimensions(int32 SegmentID, const FString& OpeningID, float WidthMeters, float HeightMeters, float SillHeightMeters);
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
-	void Server_UpdateOpeningPosition(int32 SegmentID, int32 OpeningIndex, float NewDistFromStartCm);
+	void Server_UpdateOpeningPosition(int32 SegmentID, const FString& OpeningID, float NewDistFromStartCm);
 
 	// ── Room Planner: control points, swing, finishing, objects, cabinet sets, project (REQ-02..18) ──
 
@@ -133,11 +133,11 @@ public:
 	void Server_MoveNode(int32 NodeID, FVector2D NewPosition);
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
-	void Server_SetOpeningSwing(int32 SegmentID, int32 OpeningIndex, EOpeningSwingSide Side, EOpeningSwingDirection Direction);
+	void Server_SetOpeningSwing(int32 SegmentID, const FString& OpeningID, EOpeningSwingSide Side, EOpeningSwingDirection Direction);
 
 	/** Sets the look of a door / window / archway (built-in style ID); the manager rejects unknown or mismatched styles. */
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
-	void Server_SetOpeningStyle(int32 SegmentID, int32 OpeningIndex, FName StyleID);
+	void Server_SetOpeningStyle(int32 SegmentID, const FString& OpeningID, FName StyleID);
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_SetWallFinish(int32 SegmentID, FSurfaceFinish Finish);
@@ -157,7 +157,7 @@ public:
 
 	/** REQ-13: finish of a door / window / archway trim. */
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
-	void Server_SetOpeningTrimFinish(int32 SegmentID, int32 OpeningIndex, FSurfaceFinish Finish);
+	void Server_SetOpeningTrimFinish(int32 SegmentID, const FString& OpeningID, FSurfaceFinish Finish);
 
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
 	void Server_AddPlacedObject(const FString& AssetID, FVector Location, FRotator Rotation, FVector Scale);
