@@ -348,7 +348,7 @@ struct FWallAttachment
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	bool bLeftSide = true;
 
-	/** Pivot height above the floor (0 = floor-standing). */
+	/** Pivot height above the floor (0 = floor-standing). A planner object's pivot is the bottom of its mesh bounds (APlannerPlacedObjectActor). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	float HeightCm = 0.f;
 
@@ -406,6 +406,7 @@ struct FPlacedFurnitureData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	FString AssetID;
 
+	/** The object's footprint centre on its base (floor: Z = 0), whatever pivot its mesh was authored with (APlannerPlacedObjectActor). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner")
 	FVector Location = FVector::ZeroVector;
 
@@ -619,6 +620,20 @@ struct FPlannerObjectRow : public FTableRowBase
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Object")
 	TArray<FPlannerMaterialOverride> MaterialOverrides;
+
+	/**
+	 * Not offered in the «Интерьер» catalog (ARoomPlannerManager::GetAvailableObjects skips the row). The row still resolves
+	 * everywhere else: objects of it placed in saved layouts keep their mesh and materials, and it can still be placed by its AssetID.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Object")
+	bool bHideInCatalog = false;
+
+	/**
+	 * Which way the mesh's front points in its own frame, in degrees about Z: 0 = +X, 90 = +Y, 180 = -X, -90 = -Y.
+	 * An object dropped on a wall is turned so its front faces the room (its back against the wall).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Object", meta = (ClampMin = "-180", ClampMax = "180", Units = "Degrees"))
+	float FrontYawDeg = 0.f;
 };
 
 /** One static-mesh part of a cabinet set: mesh + relative transform to its parent component (see FCabinetSetLayoutRow). */
@@ -764,11 +779,21 @@ struct FPlannerRoomLightSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0"))
 	float PolygonInsetCm = 45.f;
 
-	/** Distance of the luminous face below the room's ceiling (cm); the light sits 1 cm under it. */
+	/**
+	 * Distance of the luminous face below the room's ceiling (cm); the light sits 1 cm under it. The light is one-sided
+	 * and faces down, so nothing above it (the ceiling, and the strip of wall between the ceiling and the light) gets
+	 * direct light: 0.5 keeps that strip at 1.5 cm, a luminaire flush with the ceiling. With the former 4 cm (light 5 cm
+	 * down) the top of every wall fell off steeply right under the ceiling, the dark band of the upper corners
+	 * (MaxiMall.Planner.Render.CeilingCorner: wall 4–8 cm under the ceiling 0.63 → 0.72 of mid-wall, same flux and exposure).
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0.5"))
-	float CeilingOffsetCm = 4.f;
+	float CeilingOffsetCm = 0.5f;
 
-	/** Panel slab thickness (cm). */
+	/**
+	 * Panel slab thickness (cm). The slab never enters the ceiling (its top stays 0.5 cm under it), so the rim is
+	 * Min(SurfaceThicknessCm, CeilingOffsetCm - 0.5) tall: the full thickness only when CeilingOffsetCm >= SurfaceThicknessCm
+	 * + 0.5. Below a 0.1 cm rim (CeilingOffsetCm < 0.6, e.g. the default 0.5) the panel is its flat luminous face alone.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Panel", meta = (ClampMin = "0.5", EditCondition = "bShowSurface"))
 	float SurfaceThicknessCm = 3.f;
 

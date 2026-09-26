@@ -12,6 +12,7 @@
 #include "Engine/StaticMesh.h"
 #include "Constructor/RoomPlannerManager.h"
 #include "FurnitureConfigurator/UI/RoomPlannerWidget.h"
+#include "FurnitureConfigurator/UI/PlannerCatalogItemWidget.h"
 #include "FurnitureConfigurator/UI/PlannerDimensionOverlay.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
@@ -508,6 +509,28 @@ bool FPlannerPanelInputBoundaryTest::RunTest(const FString& Parameters)
 	// The hint is centred over the free plan area beside the panel, not over the viewport's centre.
 	const float FreeCentre = (Widget->GetPanelWidth() + ScreenSize.X) * 0.5f;
 	TestTrue(FString::Printf(TEXT("Hint centred over the plan (%.1f ~ %.1f)"), HintCentre.X, FreeCentre), FMath::IsNearlyEqual((float)HintCentre.X, FreeCentre, 2.f));
+
+	// The mouse wheel asks the same boundary: over the panel or the hint it stays the UI's, over the plan it turns the selection.
+	FPlannerWheelInputs Wheel;
+	Wheel.bPlannerOpen = true;
+	Wheel.bIs2D = true;
+	Wheel.bHasObjectOrSetSelected = true;
+	Wheel.bCursorOverPlannerUI = Widget->IsScreenPositionOverPlannerUI(FVector2D(200.f, 600.f));
+	TestTrue(TEXT("Wheel over the side panel: the UI keeps it"), PlannerPanelRules::ResolveWheelTarget(Wheel) == EPlannerWheelTarget::None);
+	Wheel.bCursorOverPlannerUI = Widget->IsScreenPositionOverPlannerUI(HintCentre);
+	TestTrue(TEXT("Wheel over the hint: the UI keeps it"), PlannerPanelRules::ResolveWheelTarget(Wheel) == EPlannerWheelTarget::None);
+	Wheel.bCursorOverPlannerUI = Widget->IsScreenPositionOverPlannerUI(FVector2D(1000.f, 600.f));
+	TestTrue(TEXT("Wheel over the plan: it turns the selection"), PlannerPanelRules::ResolveWheelTarget(Wheel) == EPlannerWheelTarget::Selection);
+
+	// A full-screen catalog collapses the planner: the manager then reports it hidden, and the wheel is left to that catalog.
+	if (ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(TestWorld.World))
+	{
+		TestTrue(TEXT("Planner on screen: shown"), Manager->IsPlannerUIShown());
+		const ESlateVisibility Designed = Widget->GetVisibility();
+		Widget->SetVisibility(ESlateVisibility::Collapsed);
+		TestFalse(TEXT("Planner collapsed behind a full-screen catalog: not shown"), Manager->IsPlannerUIShown());
+		Widget->SetVisibility(Designed);
+	}
 	return true;
 }
 
@@ -625,6 +648,141 @@ bool FPlannerCategoryRulesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("A draw started outside «Планировка» brings it back"), ReturnsToLayout(EPlannerPanelCategory::Catalog, true, true));
 	TestFalse(TEXT("… not on «Планировка», not in 3D, not without a draw"), ReturnsToLayout(EPlannerPanelCategory::Layout, true, true)
 		|| ReturnsToLayout(EPlannerPanelCategory::Catalog, false, true) || ReturnsToLayout(EPlannerPanelCategory::Catalog, true, false));
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The mouse wheel turns what is being placed or the selection, in 2D only
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerWheelTargetRulesTest, "MaxiMall.Planner.UI.WheelTargetRules",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerWheelTargetRulesTest::RunTest(const FString& Parameters)
+{
+	using namespace PlannerPanelRules;
+	const EPlannerPlacementKind Kinds[] = { EPlannerPlacementKind::None, EPlannerPlacementKind::Object, EPlannerPlacementKind::CabinetSet };
+
+	// 3D (or a closed planner) is read-only: nothing is ever a wheel target, whatever else holds.
+	bool bAny3DTarget = false;
+	for (const EPlannerPlacementKind Drag : Kinds)
+	{
+		for (const EPlannerPlacementKind Pending : Kinds)
+		{
+			for (int32 Bits = 0; Bits < 8; ++Bits)
+			{
+				FPlannerWheelInputs In;
+				In.bPlannerOpen = (Bits & 1) != 0;
+				In.bIs2D = false;
+				In.bCursorOverPlannerUI = (Bits & 2) != 0;
+				In.bHasObjectOrSetSelected = (Bits & 4) != 0;
+				In.CatalogDragKind = Drag;
+				In.PendingPlacementKind = Pending;
+				bAny3DTarget |= ResolveWheelTarget(In) != EPlannerWheelTarget::None;
+				In.bIs2D = true;
+				In.bPlannerOpen = false;
+				bAny3DTarget |= ResolveWheelTarget(In) != EPlannerWheelTarget::None;
+			}
+		}
+	}
+	TestFalse(TEXT("3D / planner closed: never a wheel target"), bAny3DTarget);
+
+	FPlannerWheelInputs In;
+	In.bPlannerOpen = true;
+	In.bIs2D = true;
+	TestTrue(TEXT("2D, nothing to turn: the wheel behaves as before"), ResolveWheelTarget(In) == EPlannerWheelTarget::None);
+	In.bHasObjectOrSetSelected = true;
+	TestTrue(TEXT("A selected object / cabinet set turns"), ResolveWheelTarget(In) == EPlannerWheelTarget::Selection);
+	In.bCursorOverPlannerUI = true;
+	TestTrue(TEXT("… not with the cursor over the planner UI"), ResolveWheelTarget(In) == EPlannerWheelTarget::None);
+	In.bCursorOverPlannerUI = false;
+	In.bPlannerUIShown = false;
+	TestTrue(TEXT("… not while a full-screen catalog hides the planner"), ResolveWheelTarget(In) == EPlannerWheelTarget::None);
+	In.bPlannerUIShown = true;
+
+	In.CatalogDragKind = EPlannerPlacementKind::Object;
+	TestTrue(TEXT("A catalog drag of an object comes first, even with a selection"), ResolveWheelTarget(In) == EPlannerWheelTarget::CatalogDrag);
+	In.CatalogDragKind = EPlannerPlacementKind::CabinetSet;
+	TestTrue(TEXT("A cabinet-set drag (wall-only) turns nothing, not even the selection"), ResolveWheelTarget(In) == EPlannerWheelTarget::None);
+	In.CatalogDragKind = EPlannerPlacementKind::None;
+	In.bHasObjectOrSetSelected = false;
+	In.PendingPlacementKind = EPlannerPlacementKind::Object;
+	TestTrue(TEXT("An armed object placement turns"), ResolveWheelTarget(In) == EPlannerWheelTarget::Pending);
+	In.PendingPlacementKind = EPlannerPlacementKind::CabinetSet;
+	TestTrue(TEXT("An armed cabinet-set placement does not"), ResolveWheelTarget(In) == EPlannerWheelTarget::None);
+
+	// Notches: scroll up = −15° («↺ 15°»), down = +15°; fractions add up; a change of direction starts afresh; invert swaps.
+	float Accum = 0.f;
+	TestEqual(TEXT("+1 notch: −15°"), ConsumeWheelSteps(Accum, 1.f, 15.f), -15.f);
+	TestEqual(TEXT("−1 notch: +15°"), ConsumeWheelSteps(Accum, -1.f, 15.f), 15.f);
+	TestEqual(TEXT("−2 notches: +30°"), ConsumeWheelSteps(Accum, -2.f, 15.f), 30.f);
+	Accum = 0.f;
+	const float First = ConsumeWheelSteps(Accum, 0.4f, 15.f);
+	const float Second = ConsumeWheelSteps(Accum, 0.4f, 15.f);
+	const float Third = ConsumeWheelSteps(Accum, 0.4f, 15.f);
+	TestTrue(FString::Printf(TEXT("0.4 x 3: one step on the third (%.1f, %.1f, %.1f)"), First, Second, Third), First == 0.f && Second == 0.f && Third == -15.f);
+	TestEqual(TEXT("… 0.2 of a notch left"), Accum, 0.2f, 1e-4f);
+	Accum = 0.f;
+	float Total = 0.f;
+	for (int32 i = 0; i < 10; ++i) Total += ConsumeWheelSteps(Accum, 0.1f, 15.f);
+	TestEqual(TEXT("0.1 x 10 is exactly one notch"), Total, -15.f);
+	Accum = 0.6f;
+	TestEqual(TEXT("Reversing after 0.6 up: a whole notch down still turns"), ConsumeWheelSteps(Accum, -1.f, 15.f), 15.f);
+	Accum = 0.f;
+	TestEqual(TEXT("Inverted: +1 notch turns +15°"), ConsumeWheelSteps(Accum, 1.f, 15.f, true), 15.f);
+	TestEqual(TEXT("Step 5°: −1 notch turns +5°"), ConsumeWheelSteps(Accum, -1.f, 5.f), 5.f);
+
+	// The angle as the rotate buttons name it.
+	TestEqual(TEXT("45° clockwise"), FormatPlanAngle(45.f), FString(TEXT("↻ 45°")));
+	TestEqual(TEXT("15° counter-clockwise"), FormatPlanAngle(-15.f), FString(TEXT("↺ 15°")));
+	TestEqual(TEXT("Zero"), FormatPlanAngle(0.f), FString(TEXT("0°")));
+	TestEqual(TEXT("370° is 10° clockwise"), FormatPlanAngle(370.f), FString(TEXT("↻ 10°")));
+	TestEqual(TEXT("A fractional step"), FormatPlanAngle(7.5f), FString(TEXT("↻ 7.5°")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerCatalogDragYawTest, "MaxiMall.Planner.UI.CatalogDragYaw",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerCatalogDragYawTest::RunTest(const FString& Parameters)
+{
+	FScopedPlannerTestWorld TestWorld;
+	if (!TestNotNull(TEXT("Test world"), TestWorld.World)) return false;
+
+	// The drag visual as the card builds it (pure C++ card: thumbnail + caption).
+	UPlannerCatalogItemWidget* Visual = CreateWidget<UPlannerCatalogItemWidget>(TestWorld.World, UPlannerCatalogItemWidget::StaticClass());
+	if (!TestNotNull(TEXT("Card"), Visual)) return false;
+	TSharedRef<SWidget> Slate = Visual->TakeWidget();
+	FPlannerCatalogEntry Entry;
+	Entry.ID = TEXT("WheelTestChair");
+	Entry.DisplayName = FText::FromString(TEXT("Стул"));
+	Visual->SetupCatalogItem(nullptr, EPlannerPlacementKind::Object, Entry);
+	if (!TestNotNull(TEXT("Thumbnail"), Visual->GetThumbnailImage()) || !TestNotNull(TEXT("Caption"), Visual->GetNameText())) return false;
+	auto Caption = [Visual]() { return Visual->GetNameText()->GetText().ToString(); };
+	auto Angle = [Visual]() { return Visual->GetThumbnailImage()->GetRenderTransformAngle(); };
+
+	UPlannerCatalogDragOperation* Drag = NewObject<UPlannerCatalogDragOperation>();
+	Drag->Kind = EPlannerPlacementKind::Object;
+	Drag->ItemID = Entry.ID;
+	Drag->DefaultDragVisual = Visual;
+	TestEqual(TEXT("A drag starts unturned"), Drag->YawDeg, 0.f);
+	TestEqual(TEXT("… with the plain caption"), Caption(), FString(TEXT("Стул")));
+
+	Drag->SetYaw(45.f);
+	TestEqual(TEXT("45°: the drag carries it"), Drag->YawDeg, 45.f);
+	TestEqual(TEXT("45°: the thumbnail turns with it"), Angle(), 45.f);
+	TestTrue(FString::Printf(TEXT("45°: the caption shows it (%s)"), *Caption()), Caption().StartsWith(TEXT("Стул")) && Caption().Contains(TEXT("↻ 45°")));
+
+	Drag->SetYaw(Drag->YawDeg - 60.f);
+	TestEqual(TEXT("Three notches back: −15°"), Drag->YawDeg, -15.f);
+	TestTrue(FString::Printf(TEXT("−15°: counter-clockwise in the caption (%s)"), *Caption()), Caption().Contains(TEXT("↺ 15°")));
+	TestEqual(TEXT("−15°: the thumbnail too"), Angle(), -15.f);
+
+	Drag->SetYaw(190.f);
+	TestEqual(TEXT("Normalized: 190° is −170°"), Drag->YawDeg, -170.f, 0.01f);
+	Drag->SetYaw(0.f);
+	TestEqual(TEXT("Back to 0°: the plain caption"), Caption(), FString(TEXT("Стул")));
+	TestEqual(TEXT("Back to 0°: the thumbnail upright"), Angle(), 0.f);
 	return true;
 }
 
@@ -1814,6 +1972,13 @@ bool FPlannerContextByKindTest::RunTest(const FString& Parameters)
 		Widget->RefreshPanelState();
 		TestTrue(TEXT("Object on the floor: rotate shown and enabled"), Shown(Widget->RotateRow) && Widget->BtnRotateLeft && Widget->BtnRotateLeft->GetIsEnabled());
 		TestTrue(TEXT("Object: delete"), Shown(Widget->BtnDeleteTool));
+		// The buttons now go through RotateSelectionLocal (the wheel's rule); without a player nothing can be committed, so as
+		// before nothing turns, not even locally.
+		FPlacedFurnitureData Before, After;
+		Manager->GetPlacedObject(FloorObject, Before);
+		Widget->RotateSelected(15.f);
+		Manager->GetPlacedObject(FloorObject, After);
+		TestTrue(TEXT("Rotate without a player: nothing turns (no commit possible)"), FMath::IsNearlyEqual(Before.Rotation.Yaw, After.Rotation.Yaw, 0.01));
 	}
 	const FString WallObject = Manager->AddPlacedObjectOnWall(Objects[0].ID, South, 400.f, true, 100.f);
 	if (!WallObject.IsEmpty())
@@ -1824,6 +1989,14 @@ bool FPlannerContextByKindTest::RunTest(const FString& Parameters)
 		if (Manager->IsSelectionWallAttached())
 		{
 			TestTrue(TEXT("Object on a wall: rotate stays, disabled"), Shown(Widget->RotateRow) && Widget->BtnRotateLeft && !Widget->BtnRotateLeft->GetIsEnabled());
+			TestEqual(TEXT("Object on a wall: the disabled buttons say why"), Widget->BtnRotateLeft->GetToolTipText().ToString(), FString(ARoomPlannerManager::WallAttachedRotationMessage));
+			// Rotate on it (a Blueprint call, or the floating bar): refused by the shared rule, the reason shown, nothing turns.
+			FPlacedFurnitureData Before, After;
+			Manager->GetPlacedObject(WallObject, Before);
+			Widget->RotateSelected(-15.f);
+			Manager->GetPlacedObject(WallObject, After);
+			TestTrue(TEXT("Rotate on a wall object: refused, the wall keeps its rotation"), FMath::IsNearlyEqual(Before.Rotation.Yaw, After.Rotation.Yaw, 0.01));
+			TestEqual(TEXT("… and the reason is shown"), Widget->TxtOperationMessage->GetText().ToString(), FString(ARoomPlannerManager::WallAttachedRotationMessage));
 		}
 	}
 	return true;
@@ -2143,7 +2316,72 @@ bool FPlannerHintTextsTest::RunTest(const FString& Parameters)
 	Manager->RebuildRooms();
 	Widget->RefreshPanelState();
 	Widget->SetActiveCategory(EPlannerPanelCategory::Catalog);
-	TestTrue(TEXT("«Каталог» with walls: drag a card"), Hint().StartsWith(TEXT("Перетащите карточку")));
+	const FString CatalogHint = Hint();
+	TestTrue(TEXT("«Каталог» with walls: drag a card"), CatalogHint.StartsWith(TEXT("Перетащите карточку")));
+	TestTrue(FString::Printf(TEXT("«Каталог»: the wheel turns the dragged card (%s)"), *CatalogHint), CatalogHint.Contains(TEXT("колесо мыши")));
+	CheckWording(TEXT("«Каталог» with walls"), CatalogHint);
+
+	// «Тумбы»: cabinet sets are wall-only and the wheel turns nothing during their drag (ResolveWheelTarget gives None), so the
+	// hint does not offer it. The tab switch refreshes the hint by itself; «Интерьер» offers the wheel again.
+	Widget->SetActiveCatalogTab(EPlannerPlacementKind::CabinetSet);
+	const FString CabinetTabHint = Widget->TxtGuidanceHint->GetText().ToString();
+	CheckWording(TEXT("«Каталог» «Тумбы»"), CabinetTabHint);
+	TestTrue(FString::Printf(TEXT("«Каталог» «Тумбы»: drag a set to a wall, no wheel (%s)"), *CabinetTabHint),
+		CabinetTabHint.StartsWith(TEXT("Перетащите гарнитур")) && !CabinetTabHint.Contains(TEXT("колес")));
+	TestFalse(TEXT("«Каталог» «Тумбы»: no wheel after a refresh either"), Hint().Contains(TEXT("колес")));
+	FPlannerWheelInputs CabinetDrag;
+	CabinetDrag.bPlannerOpen = true;
+	CabinetDrag.bIs2D = true;
+	CabinetDrag.CatalogDragKind = EPlannerPlacementKind::CabinetSet;
+	TestTrue(TEXT("A cabinet-set drag gives the wheel nothing to turn"), PlannerPanelRules::ResolveWheelTarget(CabinetDrag) == EPlannerWheelTarget::None);
+	Widget->SetActiveCatalogTab(EPlannerPlacementKind::Object);
+	const FString InteriorTabHint = Widget->TxtGuidanceHint->GetText().ToString();
+	TestTrue(FString::Printf(TEXT("«Каталог» «Интерьер»: the wheel turns the dragged card (%s)"), *InteriorTabHint),
+		InteriorTabHint.StartsWith(TEXT("Перетащите карточку")) && InteriorTabHint.Contains(TEXT("колесо мыши")));
+
+	// An object selected (2D, any category): the wheel turns it. An armed placement shows the angle the wheel gave it.
+	const TArray<FPlannerCatalogEntry> Objects = Manager->GetAvailableObjects();
+	if (Objects.Num() > 0)
+	{
+		const FString Object = Manager->AddPlacedObject(Objects[0].ID, FVector(250., 200., 0.), FRotator::ZeroRotator, FVector::OneVector);
+		Manager->SelectPlacedObject(Object);
+		Widget->SetActiveCategory(EPlannerPanelCategory::Layout);
+		const FString ObjectHint = Hint();
+		CheckWording(TEXT("Object selected"), ObjectHint);
+		TestTrue(FString::Printf(TEXT("«Планировка», an object: the wheel turns it (%s)"), *ObjectHint), ObjectHint.StartsWith(TEXT("Объект выбран")) && ObjectHint.Contains(TEXT("колес")));
+		Widget->SetActiveCategory(EPlannerPanelCategory::Finish);
+		TestTrue(TEXT("«Отделка», an object: the wheel still turns it"), Hint().Contains(TEXT("колес")));
+
+		// An object on a wall: the wheel (and the buttons) refuse to turn it, so no hint offers that.
+		const FString WallObject = Manager->AddPlacedObjectOnWall(Objects[0].ID, South, 400.f, true, 100.f);
+		if (TestFalse(TEXT("Wall object placed"), WallObject.IsEmpty()))
+		{
+			Manager->SelectPlacedObject(WallObject);
+			TestTrue(TEXT("The wall object is wall-attached"), Manager->IsSelectionWallAttached());
+			Widget->SetActiveCategory(EPlannerPanelCategory::Layout);
+			const FString WallHint = Hint();
+			CheckWording(TEXT("Wall object selected"), WallHint);
+			TestTrue(FString::Printf(TEXT("«Планировка», a wall object: slide it along the wall, no wheel (%s)"), *WallHint),
+				WallHint.StartsWith(TEXT("Объект закреплён на стене")) && WallHint.Contains(TEXT("Delete")) && !WallHint.Contains(TEXT("колес")));
+			Widget->SetActiveCategory(EPlannerPanelCategory::Finish);
+			const FString WallFinishHint = Hint();
+			TestTrue(FString::Printf(TEXT("«Отделка», a wall object: paint it, no wheel (%s)"), *WallFinishHint),
+				WallFinishHint.StartsWith(TEXT("Объект выбран: назначьте «Краску»")) && !WallFinishHint.Contains(TEXT("колес")));
+			Manager->RemovePlacedObject(WallObject);
+		}
+		Widget->SetActiveCategory(EPlannerPanelCategory::Catalog);
+		Manager->BeginPlaceObject(Objects[0].ID);
+		Manager->PendingPlacementYawDeg = 30.f;
+		const FString PlaceHint = Hint();
+		TestTrue(FString::Printf(TEXT("Click-to-place: the wheel and the angle (%s)"), *PlaceHint), PlaceHint.Contains(TEXT("колесо мыши")) && PlaceHint.Contains(TEXT("↻ 30°")));
+		Manager->CancelPendingPlacement();
+		Widget->SetToolMode(EPlannerToolMode::Select);
+		Manager->RemovePlacedObject(Object);
+	}
+	else
+	{
+		AddInfo(TEXT("DT_PlannerObjects has no rows: the object hints are not checked."));
+	}
 	Widget->SetActiveCategory(EPlannerPanelCategory::Finish);
 	const FString FinishNothing = Hint();
 	CheckWording(TEXT("«Отделка», nothing selected"), FinishNothing);
@@ -2169,6 +2407,7 @@ bool FPlannerHintTextsTest::RunTest(const FString& Parameters)
 	const FString Hint3D = Hint();
 	CheckWording(TEXT("3D"), Hint3D);
 	TestTrue(TEXT("3D: picking and finishing are mentioned"), Hint3D.Contains(TEXT("Краск")) && Hint3D.Contains(TEXT("«2D»")));
+	TestTrue(TEXT("3D: the wheel still zooms (it never turns anything there)"), Hint3D.Contains(TEXT("колесо — зум")) && !Hint3D.Contains(TEXT("поворот")));
 	return true;
 }
 

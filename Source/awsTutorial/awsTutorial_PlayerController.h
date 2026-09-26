@@ -18,6 +18,8 @@ class UPrimitiveComponent;
 class ACameraActor;
 
 class UPixelStreamingInput;
+class ARoomPlannerManager;
+enum class EPlannerWheelTarget : uint8;
 
 UCLASS(Blueprintable,
        HideCategories = (Collision, Physics, Rendering, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData))
@@ -30,6 +32,14 @@ public:
 	virtual void BeginPlay() override;
 	virtual void PlayerTick(float DeltaTime) override;
 	virtual void SetupInputComponent() override;
+
+	/**
+	 * Room Planner mouse wheel, 2D only: a notch over the plan turns the interior object being placed (catalog drag, click-to-place)
+	 * or the selected / dragged object or cabinet set (PlannerPanelRules::ResolveWheelTarget) and is consumed. Everything else —
+	 * 3D, the planner's UI, nothing to turn — takes the normal input path unchanged (camera zoom, Blueprint wheel bindings).
+	 * Not bound in SetupInputComponent on purpose: a binding would consume the wheel always.
+	 */
+	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
 
 	/** Intercept camera yaw to detect RMB camera rotation drags. */
 	virtual void AddYawInput(float Val) override;
@@ -185,22 +195,29 @@ public:
 	void Server_LoadPlannerProject(const FString& SaveRecordJSON);
 
 	/**
-	 * Places a catalog item according to the resolved drop target. Objects: wall (WallSegmentID != -1) or floor.
+	 * Places a catalog item according to the resolved drop target. Objects: wall (WallSegmentID != -1) or floor, turned by
+	 * FloorYawDeg (the yaw the mouse wheel gave it before the drop; a wall placement follows the wall).
 	 * Cabinet sets: wall only — a floor drop is ignored.
 	 */
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "RoomPlanner|Network")
-	void Server_PlaceCatalogItem(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation);
+	void Server_PlaceCatalogItem(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation, float FloorYawDeg = 0.f);
 
-	/** Performs the armed click-to-place (BeginPlaceObject / BeginPlaceCabinetSet) at a world position; returns true if a request was sent. */
+	/**
+	 * Performs the armed click-to-place (BeginPlaceObject / BeginPlaceCabinetSet) at a world position; returns true if a request was sent.
+	 * A floor placement takes the armed yaw (ARoomPlannerManager::PendingPlacementYawDeg, dialled with the mouse wheel); a wall one follows the wall.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
-	bool PlannerPlacePendingAt(const FVector& WorldPos, float YawDeg = 0.f);
+	bool PlannerPlacePendingAt(const FVector& WorldPos);
 
-	/** Click-to-place using the cursor RAY (2D): wall tops are tested in their own plane, then the ground. */
-	bool PlannerPlacePendingAtCursorRay(const FVector& RayOrigin, const FVector& RayDirection, float YawDeg = 0.f);
+	/** Click-to-place using the cursor RAY (2D): wall tops are tested in their own plane, then the ground. Yaw as PlannerPlacePendingAt. */
+	bool PlannerPlacePendingAtCursorRay(const FVector& RayOrigin, const FVector& RayDirection);
 
-	/** Sends a placement for an already resolved drop; refuses (with a message) when the target is invalid for the item kind. */
+	/**
+	 * Sends a placement for an already resolved drop; refuses (with a message) when the target is invalid for the item kind.
+	 * FloorYawDeg: yaw of a floor placement (a wall placement follows the wall).
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
-	bool PlannerPlaceResolved(EPlannerPlacementKind Kind, const FString& ItemID, const FPlannerDropInfo& Drop);
+	bool PlannerPlaceResolved(EPlannerPlacementKind Kind, const FString& ItemID, const FPlannerDropInfo& Drop, float FloorYawDeg = 0.f);
 
 	/** Drag-and-drop entry point: resolves what is under the cursor (2D plan or 3D hit) and places the item there. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
@@ -212,7 +229,7 @@ public:
 	 * position is invalid, so DeprojectMousePositionToWorld fails.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
-	bool PlannerDropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition);
+	bool PlannerDropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition, float YawDeg = 0.f);
 
 	/** Converts an absolute Slate position into a world ray through this player's viewport. */
 	bool PlannerDeprojectScreenSpace(const FVector2D& ScreenSpacePosition, FVector& OutOrigin, FVector& OutDirection, FVector2D& OutViewportPixels) const;
@@ -221,9 +238,33 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	EPlannerSelectionKind PlannerPickUnderCursor();
 
-	/** Commits the current planner selection's transform (after a local drag) to the server. */
+	/** Commits the current planner selection's transform (after a local drag) to the server, with a wheel turn made during the drag. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void PlannerCommitSelectedObjectTransform();
+
+	// ── Room Planner: mouse-wheel rotation (2D) ─────────────────────────────────
+
+	/** Degrees per wheel notch (the ↺ / ↻ buttons turn 15°). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Wheel Rotation", meta = (DisplayName = "Wheel Rotate Step (deg)", ClampMin = "0.1", ClampMax = "180.0"))
+	float PlannerWheelRotateStepDeg = 15.f;
+
+	/** Off: scroll up turns counter-clockwise on the plan, like «↺ 15°». On: the other way round. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Wheel Rotation", meta = (DisplayName = "Invert Wheel Rotation"))
+	bool bInvertPlannerWheelRotation = false;
+
+	/**
+	 * The notches of one wheel burst on the selection turn it locally only; this sends them as ONE Server_MovePlacedObject /
+	 * Server_MoveCabinetSet (by the item turned, whatever is selected now). Runs by itself 0.25 s after the last notch, and at
+	 * once on an LMB press, Delete, a rotate button, leaving 2D and when the camera goes back. No-op when nothing is pending.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
+	void FlushPlannerWheelCommit();
+
+	/** True, with the yaw, while a wheel turn of InstanceID is applied locally but not sent yet. */
+	bool GetPendingPlannerWheelYaw(const FString& InstanceID, float& OutYawDeg) const;
+
+	/** Rotation a drag frame of InstanceID uses: StoredRotation with the yaw of a wheel turn not sent yet (a re-import may have reset it). */
+	FRotator GetPlannerDragRotation(const FString& InstanceID, const FRotator& StoredRotation) const;
 
     // РІвЂќР‚РІвЂќР‚ CONFIGURATOR PREVIEW MANAGEMENT РІвЂќР‚РІвЂќР‚
 
@@ -471,6 +512,40 @@ private:
     FString Dragged2DObjectID;
     bool bDragged2DIsCabinetSet = false;
     FVector Dragged2DOffset = FVector::ZeroVector;
+
+    /** Mouse-wheel rotation (2D): fractions of a notch not yet turned, and what they were counted for. */
+    float PlannerWheelAccum = 0.f;
+    FString PlannerWheelTargetKey;
+    /** Real time of the last wheel input that turned (or tried to turn) something. */
+    double LastPlannerWheelTime = -100.0;
+
+    /** The wheel burst applied locally but not committed yet (FlushPlannerWheelCommit); empty = none. */
+    FString WheelCommitID;
+    bool bWheelCommitIsCabinetSet = false;
+    float WheelCommitYaw = 0.f;
+
+    /** No wheel input for this long ends a burst: it is committed. Same as the planner's opening-drag idle time. */
+    static constexpr double PlannerWheelCommitIdleSeconds = 0.25;
+    /** No wheel input for this long drops a fraction of a notch left over. */
+    static constexpr double PlannerWheelAccumResetSeconds = 0.3;
+
+    /** What a wheel notch turns now (None: the wheel keeps its normal behaviour). */
+    EPlannerWheelTarget ResolvePlannerWheelTarget(ARoomPlannerManager* Manager) const;
+
+    /** Turns Target by the whole notches in WheelDelta (fractions add up). */
+    void ApplyPlannerWheel(ARoomPlannerManager* Manager, EPlannerWheelTarget Target, float WheelDelta);
+
+    /** Selection target: turns the selected item locally and records the burst for its single commit. */
+    void RotatePlannerSelectionByWheel(ARoomPlannerManager* Manager, float DeltaYawDeg);
+
+    /** Puts the pending burst's yaw back on its item when a replicated re-import reset it; drops a burst whose item is gone. */
+    void ReassertPendingPlannerWheelYaw(ARoomPlannerManager* Manager);
+
+    /** Every tick: commits the burst once the wheel is idle and LMB is up, else keeps its yaw on the item. */
+    void TickPlannerWheelCommit();
+
+    /** LMB held on either input path: the controller's keys, or Slate's pressed buttons (the planner widget holds the mouse in its drags). */
+    bool IsPlannerLMBHeld() const;
 
     /**
      * Cached reference to the UPixelStreamingInput component owned by the PS plugin.

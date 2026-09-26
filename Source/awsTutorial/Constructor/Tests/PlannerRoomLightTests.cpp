@@ -80,6 +80,40 @@ bool FPlannerRoomLightPanelTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Same emitted flux"), LightActor->EmittedLumens, LumensWithoutPanel);
 	TestEqual(TEXT("Same light rectangle"), LightActor->LightRectSizeCm, RectWithoutPanel);
 
+	// The slab never enters the ceiling: with the default flush offset (0.5 cm) it has no room for a rim and the panel is its
+	// luminous face alone; 4 cm under the ceiling it gets the full SurfaceThicknessCm. Never a zero-area triangle.
+	auto CheckPanelSlab = [this, LightActor, &Room](const TCHAR* State, float ExpectedHeightCm)
+	{
+		const FProcMeshSection* Section = LightActor->SurfaceMesh->GetProcMeshSection(0);
+		if (!TestNotNull(*FString::Printf(TEXT("%s: panel section"), State), Section)) return;
+		float MinZ = TNumericLimits<float>::Max(), MaxZ = TNumericLimits<float>::Lowest();
+		for (const FProcMeshVertex& Vertex : Section->ProcVertexBuffer)
+		{
+			MinZ = FMath::Min(MinZ, (float)Vertex.Position.Z);
+			MaxZ = FMath::Max(MaxZ, (float)Vertex.Position.Z);
+		}
+		int32 Degenerate = 0;
+		const TArray<uint32>& Indices = Section->ProcIndexBuffer;
+		for (int32 i = 0; i + 2 < Indices.Num(); i += 3)
+		{
+			const FVector A = Section->ProcVertexBuffer[Indices[i]].Position;
+			const FVector B = Section->ProcVertexBuffer[Indices[i + 1]].Position;
+			const FVector C = Section->ProcVertexBuffer[Indices[i + 2]].Position;
+			Degenerate += ((B - A) ^ (C - A)).SizeSquared() < 1e-4 ? 1 : 0;
+		}
+		TestEqual(*FString::Printf(TEXT("%s: no degenerate triangles"), State), Degenerate, 0);
+		TestTrue(*FString::Printf(TEXT("%s: slab height %.2f cm (expected %.2f)"), State, MaxZ - MinZ, ExpectedHeightCm),
+			FMath::IsNearlyEqual(MaxZ - MinZ, ExpectedHeightCm, 0.01f));
+		TestTrue(*FString::Printf(TEXT("%s: the slab stays under the ceiling (top %.2f)"), State, MaxZ), MaxZ <= Room.CeilingHeightCm - 0.5f + 0.01f);
+	};
+	TestEqual(TEXT("Default offset: flush with the ceiling"), Settings.CeilingOffsetCm, 0.5f);
+	CheckPanelSlab(TEXT("Flush panel"), 0.f);
+	Settings.CeilingOffsetCm = 4.f;
+	LightActor->Build(Room, Settings);
+	CheckPanelSlab(TEXT("Panel 4 cm down"), Settings.SurfaceThicknessCm);
+	Settings.CeilingOffsetCm = FPlannerRoomLightSettings().CeilingOffsetCm;
+	LightActor->Build(Room, Settings);
+
 	// And off again: rebuilding drops the geometry.
 	Settings.bShowSurface = false;
 	LightActor->Build(Room, Settings);

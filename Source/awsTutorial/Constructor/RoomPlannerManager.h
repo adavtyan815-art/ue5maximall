@@ -32,6 +32,40 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnNodeDragProgress, int32, NodeID,
 
 class APlannerRoomLightActor;
 
+/**
+ * One manager's claim on a console variable the planner overrides while it is open in 3D. A console variable belongs to the
+ * whole process, while every PIE client (and a listen server next to its clients) has a manager of its own, so the override
+ * itself is process-wide and reference-counted per variable (game thread only):
+ *   - the first claim in the process remembers how to give the variable back and sets the value at code priority; later
+ *     claims only join it (a claim asking for a different value sets that one: the latest request wins);
+ *   - only the last release gives the variable back. It is UNSET at code priority (IConsoleVariable::Unset), so it falls
+ *     back to whatever the project settings, scalability or command line hold at that moment and no code-priority value
+ *     is left behind; only when another code-priority value was there before the first claim is that value written back.
+ * A console value (higher priority) always wins over the override and is never touched. When one is on top at the first claim the
+ * override YIELDS: nothing is set at code priority (setting it would overwrite another system's code-priority value underneath, which
+ * the engine keeps in a single slot), and the variable is given back untouched. Every later Apply checks again and takes over, as a
+ * first claim would, once the higher-priority value is gone.
+ */
+struct FPlannerCVarOverride
+{
+	explicit FPlannerCVarOverride(const TCHAR* InName) : Name(InName) {}
+
+	/** The console variable. */
+	const TCHAR* Name;
+
+	/** This manager holds one of the variable's claims. */
+	bool bActive = false;
+
+	/** Claims the variable (once per manager) and sets Value at code priority whenever it differs from the value set last. */
+	void Apply(const FString& Value);
+
+	/** Drops this manager's claim; the last claim in the process gives the variable back. Nothing happens without a claim. */
+	void Restore();
+
+	/** Planner managers in this process holding a claim on the variable InName (0: the planner does not override it). */
+	static int32 GetOwnerCount(const TCHAR* InName);
+};
+
 UCLASS()
 class AWSTUTORIAL_API ARoomPlannerManager : public AActor
 {
@@ -42,6 +76,13 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	/** Destroyed before (or without) BeginPlay, EndPlay never comes: the Lumen overrides are given back here as well. */
+	virtual void Destroyed() override;
+	/**
+	 * Last resort for the process-wide Lumen overrides: a manager collected without EndPlay or Destroyed (its world torn down
+	 * without ever beginning play, as test worlds are) drops its claims here, or they would stay counted for the process.
+	 */
+	virtual void BeginDestroy() override;
 	virtual void Tick(float DeltaTime) override;
 
 	UFUNCTION()
@@ -228,6 +269,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting")
 	bool bPlannerLumenHitLightingGI = true;
 
+	/**
+	 * While the planner is open in 3D, the highest albedo Lumen's short-range ambient occlusion lets bounce light back
+	 * out of a concave edge (r.Lumen.ScreenProbeGather.ShortRangeAO.MaxMultibounceAlbedo, engine default 0.5). The
+	 * ceiling is lit by bounce light alone (the room light faces down), and the screen-space short-range AO darkens that
+	 * light in a band about 32 px wide along every concave edge; with the engine's cap the white ceiling and walls are
+	 * occluded as if they were 50 % grey, which drew a dark crease along the ceiling seams and a black notch in the upper
+	 * corners. A cap near the real albedo keeps the occlusion a white corner physically has. The shader feeds
+	 * min(albedo, cap) into both the short-range AO and the material-AO multibounce (LumenScreenProbeGather.usf), so only
+	 * surfaces with albedo <= 0.5 (the engine cap) are unchanged; surfaces between 0.5 and 0.9 (light wood, beige fabric,
+	 * white cabinets, furniture with baked AO maps) get proportionally less short-range AO and material-AO multibounce,
+	 * i.e. softer contact shadows. That trade-off is not measured: the render test's room has no furniture. Measured with
+	 * MaxiMall.Planner.Render.CeilingCorner: 0.9 and 0.95 look the same, and both nearly match short-range AO turned off.
+	 * 0 = keep the project value. The project value comes back on close / 2D (of the last planner in the process open in 3D).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting", meta = (ClampMin = "0", ClampMax = "1"))
+	float PlannerShortRangeAOMaxMultibounceAlbedo = 0.9f;
+
 	/** Default base material applied to walls when unselected (clean white / surface material). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Materials")
 	TObjectPtr<UMaterialInterface> DefaultWallMaterial;
@@ -357,6 +415,14 @@ public:
 	void ClearPlannerUIHitTest() { PlannerUIHitTest = nullptr; }
 	bool IsCursorOverPlannerUI() const { return PlannerUIHitTest && PlannerUIHitTest(); }
 
+	/**
+	 * Set by the planner widget: whether it is on screen. A full-screen catalog (bFinishCatalogBesidePanel off) collapses it; the
+	 * mouse wheel then belongs to that catalog, not to the plan behind it. True when no widget has set it.
+	 */
+	void SetPlannerUIShownQuery(TFunction<bool()> InQuery) { PlannerUIShownQuery = MoveTemp(InQuery); }
+	void ClearPlannerUIShownQuery() { PlannerUIShownQuery = nullptr; }
+	bool IsPlannerUIShown() const { return !PlannerUIShownQuery || PlannerUIShownQuery(); }
+
 	// ── Pending click-to-place (REQ-17 / REQ-18) ────────────────────────────
 
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner|Placement")
@@ -364,6 +430,13 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner|Placement")
 	FString PendingPlacementAssetID;
+
+	/**
+	 * Yaw (degrees, clockwise on the plan) the armed interior object is placed with on the floor: the mouse wheel turns it in 2D.
+	 * Back to 0 whenever the pending placement is armed again or cleared. A wall placement follows the wall instead.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "RoomPlanner|Placement")
+	float PendingPlacementYawDeg = 0.f;
 
 	/** Arms click-to-place for an interior object (catalog row name or mesh asset path) and switches to the PlaceFurniture tool. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Placement")
@@ -844,8 +917,15 @@ public:
 
 	// ── REQ-17: interior objects ────────────────────────────────────────────
 
+	/** The «Интерьер» catalog: every DT_PlannerObjects row in table order, except the rows marked bHideInCatalog. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
 	TArray<FPlannerCatalogEntry> GetAvailableObjects() const;
+
+	/**
+	 * The catalog entry (name, thumbnail, category) of one DT_PlannerObjects row, hidden rows included: bHideInCatalog only keeps a
+	 * row out of GetAvailableObjects, objects of it already placed still resolve. False when AssetID is no row (a mesh path, unknown).
+	 */
+	bool FindObjectCatalogEntry(const FString& AssetID, FPlannerCatalogEntry& OutEntry) const;
 
 	/** Server: adds an object. Returns the new InstanceID (empty on failure). */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
@@ -948,6 +1028,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Placement")
 	bool IsSelectionWallAttached() const;
 
+	/** The refusal shown when a wall-attached object / cabinet set is asked to turn (rotate buttons, mouse wheel). */
+	static constexpr const TCHAR* WallAttachedRotationMessage = TEXT("Объект закреплён на стене: его поворот задаётся стеной");
+
+	/**
+	 * Turns the selected object / cabinet set by DeltaYawDeg around Z, locally only (a prediction: nothing is published; the caller
+	 * commits with Server_MovePlacedObject / Server_MoveCabinetSet). Shared by the ↺ / ↻ buttons and the mouse wheel. 2D only. A
+	 * wall-attached selection is refused with WallAttachedRotationMessage (the wall decides its rotation) and nothing changes.
+	 * On success: the item turned, whether it is a cabinet set, and its new yaw.
+	 */
+	bool RotateSelectionLocal(float DeltaYawDeg, FString& OutInstanceID, bool& bOutCabinetSet, float& OutYawDeg);
+
 	/** Lets UI / controller code surface a refusal through OnOperationRejected. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
 	void NotifyOperationRejected(const FString& Reason);
@@ -1016,10 +1107,15 @@ private:
 
 	bool bPlannerSessionActive = false;
 
-	/** Lumen lighting-mode override bookkeeping (see bPlannerLumenHitLightingGI). */
-	bool bLumenLightingModeOverridden = false;
-	int32 SavedLumenLightingMode = 0;
-	void UpdatePlannerLumenMode(bool bWantHitLightingGI);
+	/**
+	 * This manager's claims on the Lumen overrides of the planner's 3D session (see bPlannerLumenHitLightingGI,
+	 * PlannerShortRangeAOMaxMultibounceAlbedo); the overrides themselves are shared by every manager in the process.
+	 */
+	FPlannerCVarOverride LumenLightingModeOverride = FPlannerCVarOverride(TEXT("r.Lumen.HardwareRayTracing.LightingMode"));
+	FPlannerCVarOverride ShortRangeAOAlbedoOverride = FPlannerCVarOverride(TEXT("r.Lumen.ScreenProbeGather.ShortRangeAO.MaxMultibounceAlbedo"));
+
+	/** Claims every Lumen override while bIn3DSession, drops the claims otherwise (also from EndPlay, Destroyed, BeginDestroy). */
+	void UpdatePlannerLumenMode(bool bIn3DSession);
 
 	/** Door / window dressing materials keyed by role + colour (see GetOpeningMaterial). */
 	UPROPERTY(Transient)
@@ -1182,6 +1278,9 @@ private:
 	/** See SetPlannerUIHitTest. */
 	TFunction<bool()> PlannerUIHitTest;
 
+	/** See SetPlannerUIShownQuery. */
+	TFunction<bool()> PlannerUIShownQuery;
+
 	/**
 	 * Manager-driven control-point drag (REQ-02), independent of which click path is live:
 	 * detects LMB press on a handle, updates the drag from the cursor every frame and commits
@@ -1277,8 +1376,17 @@ private:
 	bool ComputeWallAttachedTransform(const FWallAttachment& Attachment, FVector& OutLocation, FRotator& OutRotation) const;
 	/** Wall-attached transform of a cabinet set plus the row-level RotationZ (added yaw) from DT_CabinetSetLayouts. */
 	bool ComputeCabinetSetTransform(const FPlacedCabinetSetData& Data, FVector& OutLocation, FRotator& OutRotation) const;
-	/** Sets DepthOffsetCm so the actor's rearmost visible point touches the face; false (offset untouched) without a visible mesh. */
-	bool MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const;
+	/**
+	 * Wall-attached transform of a placed object (AssetID: its DT_PlannerObjects row): turned so the row's front (FrontYawDeg) faces
+	 * the room, Yaw = wall yaw − FrontYawDeg. Every placed-object wall path uses it; ComputeWallAttachedTransform alone turns actor +X
+	 * away from the wall.
+	 */
+	bool ComputePlacedObjectWallTransform(const FString& AssetID, const FWallAttachment& Attachment, FVector& OutLocation, FRotator& OutRotation) const;
+	/**
+	 * Sets DepthOffsetCm so the actor's rearmost visible point touches the face; false (offset untouched) without a visible mesh.
+	 * bLogResult off logs the measurement at Verbose only (callers that re-measure on every re-apply and log a real change themselves).
+	 */
+	bool MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment, bool bLogResult = true) const;
 	bool SlideAttachmentTo(FWallAttachment& Attachment, const FVector& RequestedLocation) const;
 	void DetachItemsFromWall(const FString& WallGuid);
 	void RehomeAttachmentsAfterSplit(const FString& OldGuid, const FString& NewGuid, float SplitDistanceCm);
@@ -1329,9 +1437,26 @@ private:
 	/** DT_PlannerObjects row → Material Overrides (empty when the row has none or is not found). */
 	TArray<FPlannerMaterialOverride> ResolveObjectMaterialOverrides(const FString& AssetID) const;
 
+	/** DT_PlannerObjects row → FrontYawDeg (0, front at +X, for a mesh path or a row not found). */
+	float ResolveObjectFrontYawDeg(const FString& AssetID) const;
+
 	// Objects / cabinet sets
-	void RebuildPlacedObjectActors();
-	void ApplyPlacedObjectActor(const FPlacedFurnitureData& Data);
+	/** Spawns / updates every object actor from PlacedObjects. True when a wall object had to be put back on its face (see ApplyPlacedObjectActor). */
+	bool RebuildPlacedObjectActors();
+	/**
+	 * Spawns / updates the object's actor from Data. A wall-attached object is then re-measured against its wall
+	 * (RemeasurePlacedObjectWallDepth): the mesh or scale just applied may not be the one its stored stand-off was measured with.
+	 * True when that moved it (its stored stand-off and Location were corrected).
+	 */
+	bool ApplyPlacedObjectActor(const FPlacedFurnitureData& Data);
+	/**
+	 * Every machine, on every apply of a wall-attached object: as RemeasureCabinetSetWallDepth, stands the actor on its wall's face
+	 * point with its front to the room, measures its rearmost point along the wall normal and pushes it out so the back touches the
+	 * face, then stores that stand-off and the Location and Rotation it gives (ComputePlacedObjectWallTransform). True when any of
+	 * them moved by more than the layout JSON's rounding (an object saved before its row had a FrontYawDeg turns to face the room
+	 * here). Not on a wall, no actor or its wall gone: nothing changes; no mesh to measure: the stored stand-off is kept.
+	 */
+	bool RemeasurePlacedObjectWallDepth(const FString& InstanceID);
 	void ReconcileCabinetSetActors();
 	AShowroomBooth* SpawnCabinetSetActor(const FPlacedCabinetSetData& Data);
 	void DestroyAllPlannerCabinetSets();

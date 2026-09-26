@@ -39,6 +39,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "Constructor/RoomPlannerManager.h"
 #include "FurnitureConfigurator/UI/RoomPlannerWidget.h"
+#include "FurnitureConfigurator/UI/PlannerCatalogItemWidget.h"
+#include "FurnitureConfigurator/UI/PlannerPanelRules.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Camera/CameraActor.h"
 #include "Kismet/KismetMathLibrary.h"
 
@@ -284,8 +287,18 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
 
     // в”Ђв”Ђ 2D Dynamic Drag-to-Draw Wall Handling в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     ARoomPlannerManager* PlannerManager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+
+    // Room Planner mouse wheel: a burst on the selection is committed once the wheel is idle (in any mode; 3D entry flushes too).
+    TickPlannerWheelCommit();
+
     if (PlannerManager && PlannerManager->Is2DModeActive())
     {
+        // A new LMB press (on the plan or on the planner UI) first sends a wheel turn still waiting for its idle commit.
+        if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
+        {
+            FlushPlannerWheelCommit();
+        }
+
         // Smoothly follow player pawn during WASD navigation across the 2D floor plan
         if (RoomPlannerTopDownCamera && IsLocalController())
         {
@@ -395,16 +408,17 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
                         }
                         else if (!Dragged2DObjectID.IsEmpty())
                         {
+                            // A wheel turn made during the drag is kept even if a replicated update reset the stored rotation meanwhile.
                             const FVector NewLoc = FVector(GroundPos.X, GroundPos.Y, 0.f) + Dragged2DOffset;
                             if (bDragged2DIsCabinetSet)
                             {
                                 FPlacedCabinetSetData D;
-                                if (PlannerManager->GetCabinetSet(Dragged2DObjectID, D)) PlannerManager->MoveCabinetSetLocal(Dragged2DObjectID, NewLoc, D.Rotation);
+                                if (PlannerManager->GetCabinetSet(Dragged2DObjectID, D)) PlannerManager->MoveCabinetSetLocal(Dragged2DObjectID, NewLoc, GetPlannerDragRotation(Dragged2DObjectID, D.Rotation));
                             }
                             else
                             {
                                 FPlacedFurnitureData D;
-                                if (PlannerManager->GetPlacedObject(Dragged2DObjectID, D)) PlannerManager->MovePlacedObjectLocal(Dragged2DObjectID, NewLoc, D.Rotation);
+                                if (PlannerManager->GetPlacedObject(Dragged2DObjectID, D)) PlannerManager->MovePlacedObjectLocal(Dragged2DObjectID, NewLoc, GetPlannerDragRotation(Dragged2DObjectID, D.Rotation));
                             }
                         }
                         else if (PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
@@ -462,6 +476,7 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
 
                 if (WasInputKeyJustPressed(EKeys::Delete) || WasInputKeyJustPressed(EKeys::BackSpace))
                 {
+                    FlushPlannerWheelCommit(); // a wheel turn not yet sent goes first (the commits stay in order)
                     if (PlannerManager->SelectedSegmentID != -1)
                     {
                         if (PlannerManager->SelectedOpeningIndex != -1)
@@ -2136,6 +2151,7 @@ void AAwsTutorial_PlayerController::SetRoomPlannerCamera2D(bool bIn2D, FVector C
 	}
 	else
 	{
+		FlushPlannerWheelCommit(); // leaving 2D: a wheel turn not yet sent is sent now (by its own item; 3D clears the selection)
 		SetIgnoreLookInput(false);
 		SetControlRotation(SavedControlRotation);
 		if (APawn* ControlledPawn = GetPawn())
@@ -2199,6 +2215,8 @@ void AAwsTutorial_PlayerController::UpdateRoomPlannerCameraToolMode(EPlannerTool
 void AAwsTutorial_PlayerController::RestorePlayerCamera()
 {
 	if (!IsLocalController()) return;
+
+	FlushPlannerWheelCommit(); // the planner closes: a wheel turn not yet sent is sent now
 
 	ResetIgnoreInputFlags();
 	SetIgnoreLookInput(false);
@@ -2552,13 +2570,13 @@ void AAwsTutorial_PlayerController::Server_AddCabinetSet_Implementation(FName Pr
 	}
 }
 
-void AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Implementation(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation)
+void AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Implementation(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation, float FloorYawDeg)
 {
 	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
 	if (!Manager) return;
 
-	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Server_PlaceCatalogItem kind=%d item='%s' wallSeg=%d dist=%.0f left=%d z=%.0f floor=(%.0f, %.0f)"),
-		(int32)Kind, *ItemID, WallSegmentID, DistanceAlongWallCm, bLeftSide ? 1 : 0, HeightCm, FloorLocation.X, FloorLocation.Y);
+	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Server_PlaceCatalogItem kind=%d item='%s' wallSeg=%d dist=%.0f left=%d z=%.0f floor=(%.0f, %.0f) yaw=%.1f"),
+		(int32)Kind, *ItemID, WallSegmentID, DistanceAlongWallCm, bLeftSide ? 1 : 0, HeightCm, FloorLocation.X, FloorLocation.Y, FloorYawDeg);
 
 	bool bPlaced = false;
 	if (Kind == EPlannerPlacementKind::Object)
@@ -2569,7 +2587,8 @@ void AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Implementation(EPlan
 		}
 		else
 		{
-			bPlaced = !Manager->AddPlacedObject(ItemID, FVector(FloorLocation.X, FloorLocation.Y, 0.f), FRotator::ZeroRotator, FVector::OneVector).IsEmpty();
+			// Floor: the yaw the wheel gave the item before the drop (a wall placement above follows the wall).
+			bPlaced = !Manager->AddPlacedObject(ItemID, FVector(FloorLocation.X, FloorLocation.Y, 0.f), FRotator(0.f, FRotator::NormalizeAxis(FloorYawDeg), 0.f), FVector::OneVector).IsEmpty();
 		}
 	}
 	else if (Kind == EPlannerPlacementKind::CabinetSet && WallSegmentID != -1)
@@ -2580,9 +2599,9 @@ void AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Implementation(EPlan
 	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Server_PlaceCatalogItem result: %s (objects=%d, cabinetSets=%d)"),
 		bPlaced ? TEXT("PLACED") : TEXT("NOT PLACED"), Manager->GetPlacedObjects().Num(), Manager->GetCabinetSets().Num());
 }
-bool AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Validate(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation) { return true; }
+bool AAwsTutorial_PlayerController::Server_PlaceCatalogItem_Validate(EPlannerPlacementKind Kind, const FString& ItemID, int32 WallSegmentID, float DistanceAlongWallCm, bool bLeftSide, float HeightCm, FVector FloorLocation, float FloorYawDeg) { return true; }
 
-bool AAwsTutorial_PlayerController::PlannerPlaceResolved(EPlannerPlacementKind Kind, const FString& ItemID, const FPlannerDropInfo& Drop)
+bool AAwsTutorial_PlayerController::PlannerPlaceResolved(EPlannerPlacementKind Kind, const FString& ItemID, const FPlannerDropInfo& Drop, float FloorYawDeg)
 {
 	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
 	if (!Manager || ItemID.IsEmpty())
@@ -2606,7 +2625,7 @@ bool AAwsTutorial_PlayerController::PlannerPlaceResolved(EPlannerPlacementKind K
 			Manager->NotifyOperationRejected(TEXT("Гарнитур можно разместить только у стены"));
 			return false;
 		}
-		Server_PlaceCatalogItem(Kind, ItemID, -1, 0.f, true, 0.f, Drop.WorldLocation);
+		Server_PlaceCatalogItem(Kind, ItemID, -1, 0.f, true, 0.f, Drop.WorldLocation, FloorYawDeg);
 		return true;
 	}
 
@@ -2634,7 +2653,7 @@ bool AAwsTutorial_PlayerController::PlannerDeprojectScreenSpace(const FVector2D&
 	return DeprojectScreenPositionToWorld(OutViewportPixels.X, OutViewportPixels.Y, OutOrigin, OutDirection);
 }
 
-bool AAwsTutorial_PlayerController::PlannerDropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition)
+bool AAwsTutorial_PlayerController::PlannerDropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition, float YawDeg)
 {
 	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
 	if (!Manager) return false;
@@ -2667,7 +2686,7 @@ bool AAwsTutorial_PlayerController::PlannerDropCatalogItemAtScreenPosition(EPlan
 			Drop = Manager->ResolveDropFromHit(Hit);
 		}
 	}
-	return PlannerPlaceResolved(Kind, ItemID, Drop);
+	return PlannerPlaceResolved(Kind, ItemID, Drop, YawDeg);
 }
 
 bool AAwsTutorial_PlayerController::PlannerDropCatalogItemUnderCursor(EPlannerPlacementKind Kind, const FString& ItemID)
@@ -2719,18 +2738,20 @@ void AAwsTutorial_PlayerController::ApplyPlannerRoomLightSettings()
 	}
 }
 
-bool AAwsTutorial_PlayerController::PlannerPlacePendingAtCursorRay(const FVector& RayOrigin, const FVector& RayDirection, float YawDeg)
+bool AAwsTutorial_PlayerController::PlannerPlacePendingAtCursorRay(const FVector& RayOrigin, const FVector& RayDirection)
 {
 	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
 	if (!Manager || !Manager->HasPendingPlacement() || FMath::IsNearlyZero(RayDirection.Z))
 	{
 		return false;
 	}
+	// The yaw the wheel dialled for the armed object, read before anything below (CancelPendingPlacement) resets it.
+	const float YawDeg = Manager->PendingPlacementYawDeg;
 
 	// Same resolver as drag-and-drop: a click on a wall TOP (displaced from its footprint by the tilted 2D
 	// camera) is resolved in that wall's own plane; otherwise the ground plane (floor / wall footprint).
 	const FPlannerDropInfo Drop = Manager->ResolveDropFromCursorRay2D(RayOrigin, RayDirection);
-	if (!PlannerPlaceResolved(Manager->PendingPlacementKind, Manager->PendingPlacementAssetID, Drop))
+	if (!PlannerPlaceResolved(Manager->PendingPlacementKind, Manager->PendingPlacementAssetID, Drop, YawDeg))
 	{
 		return false; // stays armed so the user can click a valid spot
 	}
@@ -2741,17 +2762,19 @@ bool AAwsTutorial_PlayerController::PlannerPlacePendingAtCursorRay(const FVector
 	return true;
 }
 
-bool AAwsTutorial_PlayerController::PlannerPlacePendingAt(const FVector& WorldPos, float YawDeg)
+bool AAwsTutorial_PlayerController::PlannerPlacePendingAt(const FVector& WorldPos)
 {
 	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
 	if (!Manager || !Manager->HasPendingPlacement())
 	{
 		return false;
 	}
+	// The yaw the wheel dialled for the armed object, read before anything below (CancelPendingPlacement) resets it.
+	const float YawDeg = Manager->PendingPlacementYawDeg;
 
 	// Same drop-target rules as drag-and-drop: objects on a wall or the floor, cabinet sets on walls only.
 	const FPlannerDropInfo Drop = Manager->ResolveDropAtWorldPos2D(FVector(WorldPos.X, WorldPos.Y, 0.f));
-	if (!PlannerPlaceResolved(Manager->PendingPlacementKind, Manager->PendingPlacementAssetID, Drop))
+	if (!PlannerPlaceResolved(Manager->PendingPlacementKind, Manager->PendingPlacementAssetID, Drop, YawDeg))
 	{
 		return false; // stays armed so the user can click a valid spot
 	}
@@ -2788,11 +2811,20 @@ void AAwsTutorial_PlayerController::PlannerCommitSelectedObjectTransform()
 	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
 	if (!Manager) return;
 
+	// A wheel turn made during the drag rides on this commit; one of another item is sent on its own first.
+	const FString CommitID = !Manager->SelectedObjectID.IsEmpty() ? Manager->SelectedObjectID : Manager->SelectedCabinetSetID;
+	if (!WheelCommitID.IsEmpty() && WheelCommitID != CommitID)
+	{
+		FlushPlannerWheelCommit();
+	}
+
 	if (!Manager->SelectedObjectID.IsEmpty())
 	{
 		FPlacedFurnitureData D;
 		if (Manager->GetPlacedObject(Manager->SelectedObjectID, D))
 		{
+			D.Rotation = GetPlannerDragRotation(D.InstanceID, D.Rotation);
+			WheelCommitID.Empty();
 			Server_MovePlacedObject(D.InstanceID, D.Location, D.Rotation, D.Scale);
 		}
 	}
@@ -2801,8 +2833,238 @@ void AAwsTutorial_PlayerController::PlannerCommitSelectedObjectTransform()
 		FPlacedCabinetSetData D;
 		if (Manager->GetCabinetSet(Manager->SelectedCabinetSetID, D))
 		{
+			D.Rotation = GetPlannerDragRotation(D.InstanceID, D.Rotation);
+			WheelCommitID.Empty();
 			Server_MoveCabinetSet(D.InstanceID, D.Location, D.Rotation);
 		}
 	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Room Planner: mouse-wheel rotation (2D only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool AAwsTutorial_PlayerController::InputKey(const FInputKeyEventArgs& Params)
+{
+	// Every wheel notch the UI did not take reaches the game viewport as MouseScrollUp/Down pressed + released, then MouseWheelAxis
+	// (the wheel delta). Asked here, before PlayerInput, so the wheel is consumed only while it turns something.
+	const bool bWheel = Params.Key == EKeys::MouseWheelAxis || Params.Key == EKeys::MouseScrollUp || Params.Key == EKeys::MouseScrollDown;
+	if (bWheel && IsLocalController())
+	{
+		ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+		const EPlannerWheelTarget Target = Manager ? ResolvePlannerWheelTarget(Manager) : EPlannerWheelTarget::None;
+		if (Target != EPlannerWheelTarget::None)
+		{
+			if (Params.Key == EKeys::MouseWheelAxis)
+			{
+				ApplyPlannerWheel(Manager, Target, Params.AmountDepressed);
+			}
+			return true; // the whole notch is ours: no camera zoom, no Blueprint wheel binding while it turns an item
+		}
+	}
+	return Super::InputKey(Params); // 3D, over the planner UI, or nothing to turn: exactly the path it always took
+}
+
+EPlannerWheelTarget AAwsTutorial_PlayerController::ResolvePlannerWheelTarget(ARoomPlannerManager* Manager) const
+{
+	FPlannerWheelInputs In;
+	In.bPlannerOpen = Manager && Manager->bPlannerUIOpen;
+	In.bIs2D = Manager && Manager->Is2DModeActive();
+	if (!In.bPlannerOpen || !In.bIs2D)
+	{
+		return EPlannerWheelTarget::None; // 3D: nothing is turned, nothing else is looked at
+	}
+	In.bPlannerUIShown = Manager->IsPlannerUIShown();
+	In.bCursorOverPlannerUI = Manager->IsCursorOverPlannerUI();
+	if (FSlateApplication::IsInitialized())
+	{
+		if (const UPlannerCatalogDragOperation* CatalogDrag = Cast<UPlannerCatalogDragOperation>(UWidgetBlueprintLibrary::GetDragDroppingContent()))
+		{
+			In.CatalogDragKind = CatalogDrag->Kind;
+		}
+	}
+	In.PendingPlacementKind = Manager->PendingPlacementKind;
+	In.bHasObjectOrSetSelected = !Manager->SelectedObjectID.IsEmpty() || !Manager->SelectedCabinetSetID.IsEmpty();
+	return PlannerPanelRules::ResolveWheelTarget(In);
+}
+
+void AAwsTutorial_PlayerController::ApplyPlannerWheel(ARoomPlannerManager* Manager, EPlannerWheelTarget Target, float WheelDelta)
+{
+	UPlannerCatalogDragOperation* CatalogDrag = nullptr;
+	FString TargetKey;
+	switch (Target)
+	{
+	case EPlannerWheelTarget::CatalogDrag:
+		CatalogDrag = FSlateApplication::IsInitialized() ? Cast<UPlannerCatalogDragOperation>(UWidgetBlueprintLibrary::GetDragDroppingContent()) : nullptr;
+		TargetKey = CatalogDrag ? FString::Printf(TEXT("drag:%s"), *CatalogDrag->ItemID) : FString();
+		break;
+	case EPlannerWheelTarget::Pending:
+		TargetKey = FString::Printf(TEXT("pending:%s"), *Manager->PendingPlacementAssetID);
+		break;
+	case EPlannerWheelTarget::Selection:
+		TargetKey = !Manager->SelectedObjectID.IsEmpty() ? Manager->SelectedObjectID : Manager->SelectedCabinetSetID;
+		break;
+	default:
+		return;
+	}
+
+	// Fractions of a notch add up per target; another target or a pause starts counting afresh.
+	const UWorld* World = GetWorld();
+	const double Now = World ? World->GetRealTimeSeconds() : 0.0;
+	if (TargetKey != PlannerWheelTargetKey || Now - LastPlannerWheelTime > PlannerWheelAccumResetSeconds)
+	{
+		PlannerWheelAccum = 0.f;
+	}
+	PlannerWheelTargetKey = TargetKey;
+	LastPlannerWheelTime = Now;
+
+	const float DeltaYaw = PlannerPanelRules::ConsumeWheelSteps(PlannerWheelAccum, WheelDelta, PlannerWheelRotateStepDeg, bInvertPlannerWheelRotation);
+	if (FMath::IsNearlyZero(DeltaYaw))
+	{
+		return;
+	}
+
+	switch (Target)
+	{
+	case EPlannerWheelTarget::CatalogDrag:
+		// Nothing exists in the world yet: the drag carries the yaw to the single placement RPC.
+		if (CatalogDrag)
+		{
+			CatalogDrag->SetYaw(CatalogDrag->YawDeg + DeltaYaw);
+		}
+		break;
+	case EPlannerWheelTarget::Pending:
+		// Likewise: the armed placement's yaw goes with the click that places it.
+		Manager->PendingPlacementYawDeg = (float)FRotator::NormalizeAxis(Manager->PendingPlacementYawDeg + DeltaYaw);
+		break;
+	case EPlannerWheelTarget::Selection:
+		RotatePlannerSelectionByWheel(Manager, DeltaYaw);
+		break;
+	default:
+		break;
+	}
+}
+
+void AAwsTutorial_PlayerController::RotatePlannerSelectionByWheel(ARoomPlannerManager* Manager, float DeltaYawDeg)
+{
+	const bool bCabinetSet = Manager->SelectedObjectID.IsEmpty();
+	const FString SelectedID = bCabinetSet ? Manager->SelectedCabinetSetID : Manager->SelectedObjectID;
+	if (!WheelCommitID.IsEmpty() && (WheelCommitID != SelectedID || bWheelCommitIsCabinetSet != bCabinetSet))
+	{
+		FlushPlannerWheelCommit(); // another item's burst is sent before this one starts
+	}
+	// The next notch turns on from the yaw not sent yet, even when a replicated re-import has reset the stored one meanwhile.
+	ReassertPendingPlannerWheelYaw(Manager);
+
+	FString TurnedID;
+	bool bTurnedSet = false;
+	float NewYawDeg = 0.f;
+	if (Manager->RotateSelectionLocal(DeltaYawDeg, TurnedID, bTurnedSet, NewYawDeg))
+	{
+		// Local only: one commit per burst (FlushPlannerWheelCommit), or the drag's release commit while LMB is held.
+		WheelCommitID = TurnedID;
+		bWheelCommitIsCabinetSet = bTurnedSet;
+		WheelCommitYaw = NewYawDeg;
+	}
+}
+
+void AAwsTutorial_PlayerController::FlushPlannerWheelCommit()
+{
+	if (WheelCommitID.IsEmpty()) return;
+	const FString ID = WheelCommitID;
+	WheelCommitID.Empty();
+
+	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
+	if (!Manager) return;
+	// By the item that was turned and the yaw it was given — never by the current selection (entering 3D clears it).
+	if (bWheelCommitIsCabinetSet)
+	{
+		FPlacedCabinetSetData D;
+		if (Manager->GetCabinetSet(ID, D))
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("[PlannerWheel] Commit cabinet set '%s' yaw %.1f"), *ID, WheelCommitYaw);
+			Server_MoveCabinetSet(ID, D.Location, FRotator(D.Rotation.Pitch, WheelCommitYaw, D.Rotation.Roll));
+		}
+	}
+	else
+	{
+		FPlacedFurnitureData D;
+		if (Manager->GetPlacedObject(ID, D))
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("[PlannerWheel] Commit object '%s' yaw %.1f"), *ID, WheelCommitYaw);
+			Server_MovePlacedObject(ID, D.Location, FRotator(D.Rotation.Pitch, WheelCommitYaw, D.Rotation.Roll), D.Scale);
+		}
+	}
+}
+
+bool AAwsTutorial_PlayerController::GetPendingPlannerWheelYaw(const FString& InstanceID, float& OutYawDeg) const
+{
+	if (WheelCommitID.IsEmpty() || WheelCommitID != InstanceID) return false;
+	OutYawDeg = WheelCommitYaw;
+	return true;
+}
+
+FRotator AAwsTutorial_PlayerController::GetPlannerDragRotation(const FString& InstanceID, const FRotator& StoredRotation) const
+{
+	FRotator Rotation = StoredRotation;
+	float PendingYaw = 0.f;
+	if (GetPendingPlannerWheelYaw(InstanceID, PendingYaw))
+	{
+		Rotation.Yaw = PendingYaw;
+	}
+	return Rotation;
+}
+
+void AAwsTutorial_PlayerController::ReassertPendingPlannerWheelYaw(ARoomPlannerManager* Manager)
+{
+	if (WheelCommitID.IsEmpty() || !Manager) return;
+	// A burst whose item is gone, or is on a wall now (the wall decides its rotation), has nothing left to send.
+	if (bWheelCommitIsCabinetSet)
+	{
+		FPlacedCabinetSetData D;
+		if (!Manager->GetCabinetSet(WheelCommitID, D) || D.WallAttachment.IsAttached())
+		{
+			WheelCommitID.Empty();
+			return;
+		}
+		if (FMath::Abs(FMath::FindDeltaAngleDegrees(D.Rotation.Yaw, WheelCommitYaw)) > 0.05f)
+		{
+			Manager->MoveCabinetSetLocal(WheelCommitID, D.Location, FRotator(D.Rotation.Pitch, WheelCommitYaw, D.Rotation.Roll));
+		}
+	}
+	else
+	{
+		FPlacedFurnitureData D;
+		if (!Manager->GetPlacedObject(WheelCommitID, D) || D.WallAttachment.IsAttached())
+		{
+			WheelCommitID.Empty();
+			return;
+		}
+		if (FMath::Abs(FMath::FindDeltaAngleDegrees(D.Rotation.Yaw, WheelCommitYaw)) > 0.05f)
+		{
+			Manager->MovePlacedObjectLocal(WheelCommitID, D.Location, FRotator(D.Rotation.Pitch, WheelCommitYaw, D.Rotation.Roll));
+		}
+	}
+}
+
+void AAwsTutorial_PlayerController::TickPlannerWheelCommit()
+{
+	if (WheelCommitID.IsEmpty()) return;
+	const UWorld* World = GetWorld();
+	const double Now = World ? World->GetRealTimeSeconds() : 0.0;
+	// While LMB is held (and on the frame it is released) the drag's release commit carries the yaw; otherwise the burst ends after
+	// a short pause.
+	if (Now - LastPlannerWheelTime >= PlannerWheelCommitIdleSeconds && !IsPlannerLMBHeld() && !WasInputKeyJustReleased(EKeys::LeftMouseButton))
+	{
+		FlushPlannerWheelCommit();
+		return;
+	}
+	ReassertPendingPlannerWheelYaw(ARoomPlannerManager::GetOrCreateInstance(GetWorld()));
+}
+
+bool AAwsTutorial_PlayerController::IsPlannerLMBHeld() const
+{
+	if (IsInputKeyDown(EKeys::LeftMouseButton)) return true;
+	return FSlateApplication::IsInitialized() && FSlateApplication::Get().GetPressedMouseButtons().Contains(EKeys::LeftMouseButton);
 }
 

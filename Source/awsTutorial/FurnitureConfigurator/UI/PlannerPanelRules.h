@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Constructor/RoomPlannerTypes.h"
 #include "PlannerPanelRules.generated.h"
 
 /**
@@ -61,6 +62,35 @@ struct FPlannerPanelVisibility
 	bool bLayoutTabEnabled = true;
 	bool bCatalogTabEnabled = true;
 	bool bFinishTabEnabled = true;
+};
+
+/** What a mouse-wheel notch over the 2D plan turns (PlannerPanelRules::ResolveWheelTarget). */
+enum class EPlannerWheelTarget : uint8
+{
+	/** Nothing: the wheel keeps its usual behaviour (camera zoom, scroll boxes, Blueprint bindings). */
+	None,
+	/** The interior object card being dragged from the catalog: it is placed with the yaw it was given. */
+	CatalogDrag,
+	/** The armed click-to-place interior object. */
+	Pending,
+	/** The selected object / cabinet set; also the one being dragged (a drag always drags the selection). */
+	Selection
+};
+
+/** What the wheel rule depends on. */
+struct FPlannerWheelInputs
+{
+	bool bPlannerOpen = false;
+	bool bIs2D = false;
+	/** False while a full-screen catalog hides the planner (bFinishCatalogBesidePanel off): the wheel is that catalog's. */
+	bool bPlannerUIShown = true;
+	/** Over the side panel, the status strip, a catalog beside the panel or the floating bar. */
+	bool bCursorOverPlannerUI = false;
+	/** Kind of the catalog card being dragged (None: no catalog drag). */
+	EPlannerPlacementKind CatalogDragKind = EPlannerPlacementKind::None;
+	EPlannerPlacementKind PendingPlacementKind = EPlannerPlacementKind::None;
+	/** An object or a cabinet set is selected. */
+	bool bHasObjectOrSetSelected = false;
 };
 
 namespace PlannerPanelRules
@@ -124,5 +154,53 @@ namespace PlannerPanelRules
 	inline bool IsOverSideCatalog(float LocalX, float PanelWidth, float SideCatalogWidth)
 	{
 		return SideCatalogWidth > 0.f && LocalX >= PanelWidth && LocalX <= PanelWidth + SideCatalogWidth;
+	}
+
+	/**
+	 * What a wheel notch turns. Editing is 2D-only, so 3D never turns anything; the planner's own UI keeps the wheel (its scroll
+	 * boxes, or nothing). Then the item being placed comes first — a catalog drag, else an armed click-to-place — and the selection
+	 * last. Cabinet sets are wall-only, so a cabinet-set drag or placement has nothing to turn (and does not fall back to the
+	 * selection meanwhile).
+	 */
+	inline EPlannerWheelTarget ResolveWheelTarget(const FPlannerWheelInputs& In)
+	{
+		if (!In.bPlannerOpen || !In.bIs2D) return EPlannerWheelTarget::None;
+		if (!In.bPlannerUIShown || In.bCursorOverPlannerUI) return EPlannerWheelTarget::None;
+		if (In.CatalogDragKind != EPlannerPlacementKind::None)
+		{
+			return In.CatalogDragKind == EPlannerPlacementKind::Object ? EPlannerWheelTarget::CatalogDrag : EPlannerWheelTarget::None;
+		}
+		if (In.PendingPlacementKind != EPlannerPlacementKind::None)
+		{
+			return In.PendingPlacementKind == EPlannerPlacementKind::Object ? EPlannerWheelTarget::Pending : EPlannerWheelTarget::None;
+		}
+		return In.bHasObjectOrSetSelected ? EPlannerWheelTarget::Selection : EPlannerWheelTarget::None;
+	}
+
+	/**
+	 * Yaw to add for a wheel delta. Precision wheels, touchpads and Pixel Streaming send fractions: they add up in Accum and every
+	 * whole notch turns one step (the rest stays in Accum; a change of direction starts counting afresh). Scroll up (Delta > 0)
+	 * turns counter-clockwise on the plan (−Step), like «↺ 15°»; bInvert swaps the directions.
+	 */
+	inline float ConsumeWheelSteps(float& Accum, float Delta, float StepDeg, bool bInvert = false)
+	{
+		if (Accum * Delta < 0.f) Accum = 0.f;
+		Accum += Delta;
+		constexpr float Tolerance = 1e-3f; // 0.1 x 10 is one notch, not 0.99999994 of one
+		const int32 Notches = FMath::TruncToInt32(Accum + (Accum >= 0.f ? Tolerance : -Tolerance));
+		Accum -= (float)Notches;
+		if (FMath::Abs(Accum) < Tolerance) Accum = 0.f;
+		return (bInvert ? 1.f : -1.f) * StepDeg * (float)Notches;
+	}
+
+	/** An angle on the plan as the rotate buttons name it: «↻ 30°» clockwise (positive yaw), «↺ 15°» counter-clockwise, «0°». */
+	inline FString FormatPlanAngle(float YawDeg)
+	{
+		const float Yaw = (float)FRotator::NormalizeAxis(YawDeg);
+		const float Abs = FMath::Abs(Yaw);
+		const bool bWhole = FMath::IsNearlyEqual(Abs, FMath::RoundToFloat(Abs), 0.05f);
+		const FString Number = bWhole ? FString::FromInt(FMath::RoundToInt(Abs)) : FString::Printf(TEXT("%.1f"), Abs);
+		if (Number == TEXT("0")) return TEXT("0°");
+		return FString::Printf(TEXT("%s %s°"), Yaw > 0.f ? TEXT("↻") : TEXT("↺"), *Number);
 	}
 }

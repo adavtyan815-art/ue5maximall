@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/DragDropOperation.h"
 #include "Constructor/RoomPlannerTypes.h"
 #include "Widgets/Layout/SScaleBox.h"
 #include "PlannerCatalogItemWidget.generated.h"
@@ -24,9 +25,9 @@ class UTexture2D;
  * font, image stretch). A Blueprint subclass may instead provide widgets named ImgThumbnail (Image),
  * TxtName (TextBlock) and CardBorder (Border); they are bound by name.
  *
- * Dragging: LMB press starts a UMG drag; the drag operation carries this card as Payload and the row
- * name as Tag. The drop is resolved by URoomPlannerWidget (NativeOnDrop) or, when released over the
- * plan outside any hit-testable widget, by this card's NativeOnDragCancelled → planner drop logic.
+ * Dragging: LMB press starts a UMG drag (UPlannerCatalogDragOperation); the drag operation carries this card
+ * as Payload and the row name as Tag. The drop is resolved by URoomPlannerWidget (NativeOnDrop) or, when
+ * released over the plan outside any hit-testable widget, by this card's NativeOnDragCancelled → planner drop logic.
  */
 UCLASS()
 class AWSTUTORIAL_API UPlannerCatalogItemWidget : public UUserWidget
@@ -81,6 +82,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PlannerCatalog")
 	void SetupCatalogItem(URoomPlannerWidget* InOwner, EPlannerPlacementKind InKind, const FPlannerCatalogEntry& Entry);
 
+	/** Drag visual only: the yaw the mouse wheel has given the dragged item. The thumbnail turns with it; the caption shows it. */
+	void ShowDragYaw(float YawDeg);
+
+	float GetDragYaw() const { return DragYawDeg; }
+	UImage* GetThumbnailImage() const { return ImgThumbnail; }
+	UTextBlock* GetNameText() const { return TxtName; }
+
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeConstruct() override;
@@ -104,7 +112,36 @@ private:
 	TWeakObjectPtr<URoomPlannerWidget> OwnerPlanner;
 	bool bHovered = false;
 	bool bPressed = false;
+	float DragYawDeg = 0.f;
 
 	void ApplyVisuals();
 	void ApplyStateTint();
+	void ApplyDragYaw();
+};
+
+/**
+ * The drag of a catalog card. Besides the card (Payload) it carries the item and the yaw the mouse wheel gives it while it is
+ * dragged over the 2D plan (interior objects; AAwsTutorial_PlayerController::InputKey). The drag visual's thumbnail turns with
+ * it and its caption shows the angle; a floor drop places the object with that yaw, a wall drop follows the wall.
+ */
+UCLASS()
+class AWSTUTORIAL_API UPlannerCatalogDragOperation : public UDragDropOperation
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(BlueprintReadOnly, Category = "PlannerCatalog")
+	EPlannerPlacementKind Kind = EPlannerPlacementKind::Object;
+
+	/** Row name: AssetID for objects, ProductID for cabinet sets. */
+	UPROPERTY(BlueprintReadOnly, Category = "PlannerCatalog")
+	FString ItemID;
+
+	/** Degrees, clockwise on the plan; normalized to (-180, 180]. */
+	UPROPERTY(BlueprintReadOnly, Category = "PlannerCatalog")
+	float YawDeg = 0.f;
+
+	/** Sets the yaw and shows it on the drag visual (a UPlannerCatalogItemWidget). */
+	UFUNCTION(BlueprintCallable, Category = "PlannerCatalog")
+	void SetYaw(float InYawDeg);
 };

@@ -351,9 +351,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
 	bool DropCatalogItemUnderCursor(EPlannerPlacementKind Kind, const FString& ItemID);
 
-	/** Drop at an explicit Slate screen-space position (drag/drop event position). */
+	/** Drop at an explicit Slate screen-space position (drag/drop event position). YawDeg: the floor placement's yaw (the wheel's, during the drag). */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
-	bool DropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition);
+	bool DropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition, float YawDeg = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
 	bool DropObjectUnderCursor(const FString& AssetID) { return DropCatalogItemUnderCursor(EPlannerPlacementKind::Object, AssetID); }
@@ -510,13 +510,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|UI")
 	void UpdateSeparatorLines();
 
-	/** Called by a card when its drag was released without any widget accepting it (plan area). */
-	void HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition);
+	/** Called by a card when its drag was released without any widget accepting it (plan area). YawDeg: the yaw the wheel gave it. */
+	void HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition, float YawDeg = 0.f);
 
 	/** True when the screen-space point is over the catalog content area (a release there is not a placement). */
 	bool IsScreenPositionOverCatalogPanels(const FVector2D& ScreenSpacePosition) const;
 
-	/** Rotates the selected object / cabinet set around Z by DeltaYawDeg and commits it. */
+	/**
+	 * Rotates the selected object / cabinet set around Z by DeltaYawDeg and commits it (2D; the rules of
+	 * ARoomPlannerManager::RotateSelectionLocal, shared with the mouse wheel).
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Objects")
 	void RotateSelected(float DeltaYawDeg);
 

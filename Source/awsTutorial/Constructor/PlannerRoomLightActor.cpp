@@ -578,8 +578,11 @@ void APlannerRoomLightActor::BuildSurface(const FPlannerRoomLightSettings& Setti
 		T.Add(SurfaceTris[i]); T.Add(SurfaceTris[i + 1]); T.Add(SurfaceTris[i + 2]);
 		T.Add(SurfaceTris[i]); T.Add(SurfaceTris[i + 2]); T.Add(SurfaceTris[i + 1]);
 	}
-	// Rim (thickness), both windings as well.
-	for (int32 i = 0; i < VCount; ++i)
+	// Rim (thickness), both windings as well. The slab never enters the ceiling, so the rim is
+	// Min(SurfaceThicknessCm, CeilingOffsetCm - 0.5) tall; with the panel (nearly) flush, e.g. the default CeilingOffsetCm 0.5,
+	// that is under 0.1 cm and the panel is the luminous face alone (a zero-height rim would be degenerate triangles only).
+	const bool bRim = Top - Bottom >= 0.1f;
+	for (int32 i = 0; bRim && i < VCount; ++i)
 	{
 		const FVector2D P1 = SurfacePolygon[i];
 		const FVector2D P2 = SurfacePolygon[(i + 1) % VCount];

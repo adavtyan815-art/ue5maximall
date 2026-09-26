@@ -1,6 +1,7 @@
 // Copyright 2026 MaxiMall. All Rights Reserved.
 
 #include "FurnitureConfigurator/UI/PlannerCatalogItemWidget.h"
+#include "FurnitureConfigurator/UI/PlannerPanelRules.h"
 #include "FurnitureConfigurator/UI/RoomPlannerWidget.h"
 #include "Blueprint/WidgetTree.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
@@ -121,6 +122,39 @@ void UPlannerCatalogItemWidget::ApplyVisuals()
 		}
 	}
 	ApplyStateTint();
+	ApplyDragYaw();
+}
+
+void UPlannerCatalogItemWidget::ShowDragYaw(float YawDeg)
+{
+	DragYawDeg = (float)FRotator::NormalizeAxis(YawDeg);
+	ApplyDragYaw();
+}
+
+void UPlannerCatalogItemWidget::ApplyDragYaw()
+{
+	// Positive yaw is clockwise on the plan (the 2D camera looks down with +X up), and so is a positive render angle on screen.
+	if (ImgThumbnail && !FMath::IsNearlyEqual(ImgThumbnail->GetRenderTransformAngle(), DragYawDeg))
+	{
+		ImgThumbnail->SetRenderTransformAngle(DragYawDeg);
+	}
+	if (TxtName && !FMath::IsNearlyZero(DragYawDeg))
+	{
+		TxtName->SetText(FText::FromString(FString::Printf(TEXT("%s · %s"), *DisplayName.ToString(), *PlannerPanelRules::FormatPlanAngle(DragYawDeg))));
+	}
+	else if (TxtName)
+	{
+		TxtName->SetText(DisplayName);
+	}
+}
+
+void UPlannerCatalogDragOperation::SetYaw(float InYawDeg)
+{
+	YawDeg = (float)FRotator::NormalizeAxis(InYawDeg);
+	if (UPlannerCatalogItemWidget* Visual = Cast<UPlannerCatalogItemWidget>(DefaultDragVisual))
+	{
+		Visual->ShowDragYaw(YawDeg);
+	}
 }
 
 void UPlannerCatalogItemWidget::ApplyStateTint()
@@ -169,7 +203,7 @@ void UPlannerCatalogItemWidget::NativeOnDragDetected(const FGeometry& InGeometry
 	bPressed = false;
 	ApplyStateTint();
 
-	UDragDropOperation* Op = UWidgetBlueprintLibrary::CreateDragDropOperation(UDragDropOperation::StaticClass());
+	UPlannerCatalogDragOperation* Op = Cast<UPlannerCatalogDragOperation>(UWidgetBlueprintLibrary::CreateDragDropOperation(UPlannerCatalogDragOperation::StaticClass()));
 	if (!Op)
 	{
 		Super::NativeOnDragDetected(InGeometry, InMouseEvent, OutOperation);
@@ -179,6 +213,8 @@ void UPlannerCatalogItemWidget::NativeOnDragDetected(const FGeometry& InGeometry
 	Op->Payload = this;
 	Op->Tag = ItemID;
 	Op->Pivot = EDragPivot::CenterCenter;
+	Op->Kind = Kind;
+	Op->ItemID = ItemID; // the yaw starts at 0; the mouse wheel turns it over the 2D plan
 
 	// Drag visual: a second card with the same data and style.
 	if (UPlannerCatalogItemWidget* Visual = CreateWidget<UPlannerCatalogItemWidget>(GetOwningPlayer(), GetClass()))
@@ -211,9 +247,10 @@ void UPlannerCatalogItemWidget::NativeOnDragCancelled(const FDragDropEvent& InDr
 
 	// Released over something that did not accept the drop (typically the plan itself when the planner
 	// root is not hit-testable). Let the planner resolve the drop at the cursor; it ignores releases
-	// over its own catalog area.
+	// over its own catalog area. The yaw the wheel gave the item during the drag goes with it.
 	if (URoomPlannerWidget* Planner = OwnerPlanner.Get())
 	{
-		Planner->HandleCatalogDragReleased(Kind, ItemID, InDragDropEvent.GetScreenSpacePosition());
+		const UPlannerCatalogDragOperation* CatalogDrag = Cast<UPlannerCatalogDragOperation>(InOperation);
+		Planner->HandleCatalogDragReleased(Kind, ItemID, InDragDropEvent.GetScreenSpacePosition(), CatalogDrag ? CatalogDrag->YawDeg : 0.f);
 	}
 }

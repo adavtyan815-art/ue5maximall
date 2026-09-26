@@ -319,6 +319,15 @@ void URoomPlannerWidget::NativeDestruct()
 
 FReply URoomPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	// Any press first sends a mouse-wheel rotation still waiting for its idle commit (the press may select, drag or place another item).
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		if (AAwsTutorial_PlayerController* WheelPC = GetPreviewController())
+		{
+			WheelPC->FlushPlannerWheelCommit();
+		}
+	}
+
 	// A press on the panel background, between its buttons, on the status strip or on a catalog beside the panel reaches this root
 	// unhandled: it must not draw, select or pick on the plan hidden behind the UI.
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && IsScreenPositionOverPlannerUI(InMouseEvent.GetScreenSpacePosition()))
@@ -445,16 +454,17 @@ FReply URoomPlannerWidget::NativeOnMouseMove(const FGeometry& InGeometry, const 
 					}
 					else if (!WidgetDraggedObjectID.IsEmpty() && InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton))
 					{
+						// The rotation keeps a wheel turn made during the drag even if a replicated update reset the stored one meanwhile.
 						const FVector NewLoc = FVector(GroundPos.X, GroundPos.Y, 0.f) + WidgetDragOffset;
 						if (bWidgetDraggedIsCabinetSet)
 						{
 							FPlacedCabinetSetData D;
-							if (PlannerManager->GetCabinetSet(WidgetDraggedObjectID, D)) PlannerManager->MoveCabinetSetLocal(WidgetDraggedObjectID, NewLoc, D.Rotation);
+							if (PlannerManager->GetCabinetSet(WidgetDraggedObjectID, D)) PlannerManager->MoveCabinetSetLocal(WidgetDraggedObjectID, NewLoc, PC->GetPlannerDragRotation(WidgetDraggedObjectID, D.Rotation));
 						}
 						else
 						{
 							FPlacedFurnitureData D;
-							if (PlannerManager->GetPlacedObject(WidgetDraggedObjectID, D)) PlannerManager->MovePlacedObjectLocal(WidgetDraggedObjectID, NewLoc, D.Rotation);
+							if (PlannerManager->GetPlacedObject(WidgetDraggedObjectID, D)) PlannerManager->MovePlacedObjectLocal(WidgetDraggedObjectID, NewLoc, PC->GetPlannerDragRotation(WidgetDraggedObjectID, D.Rotation));
 						}
 						return FReply::Handled();
 					}
@@ -762,6 +772,7 @@ void URoomPlannerWidget::SetActiveCatalogTab(EPlannerPlacementKind Tab)
 	{
 		bCatalogOpen = true;
 		ApplyCatalogSectionVisibility();
+		UpdateGuidanceHintText(); // the «Каталог» hint depends on the tab (the wheel turns interior cards only)
 	}
 }
 
@@ -988,11 +999,13 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 		else if (bCategoryLayoutBuilt && Active2DCategory == EPlannerPanelCategory::Finish && PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None
 			&& PlannerManager->SelectedRoomID == -1)
 		{
-			// «Отделка» shows the finishes only (no size fields, no creation blocks, no rotate): the hint says what this page does.
+			// «Отделка» shows the finishes only (no size fields, no creation blocks, no rotate): the hint says what this page does. The
+			// wheel still turns a free object here; one on a wall is refused (its wall decides its rotation), so it is not offered.
 			const EPlannerSelectionKind Kind = PlannerManager->GetSelectionKind();
 			TxtGuidanceHint->SetText(FText::FromString(Kind == EPlannerSelectionKind::Wall ? TEXT("Стена выбрана: назначьте «Краску» или «Плитку» этой стороне стены")
 				: (Kind == EPlannerSelectionKind::Opening ? TEXT("Проём выбран: назначьте краску наличнику / раме")
-				: (Kind == EPlannerSelectionKind::Object ? TEXT("Объект выбран: назначьте «Краску»")
+				: (Kind == EPlannerSelectionKind::Object ? (PlannerManager->IsSelectionWallAttached() ? TEXT("Объект выбран: назначьте «Краску»")
+					: TEXT("Объект выбран: назначьте «Краску» • колесо мыши — поворот"))
 				: TEXT("Отделка для тумб недоступна: выберите стену, пол, дверь / окно или объект")))));
 		}
 		else if (PlannerManager->SelectedSegmentID != -1 && PlannerManager->SelectedOpeningIndex != -1)
@@ -1013,11 +1026,18 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 		}
 		else if (!PlannerManager->SelectedObjectID.IsEmpty() || !PlannerManager->SelectedCabinetSetID.IsEmpty())
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("Объект выбран: тяните для перемещения, поверните кнопками или удалите клавишей Delete")));
+			// A wall-attached object / cabinet set only slides along its wall: the wheel and the rotate buttons are refused for it.
+			TxtGuidanceHint->SetText(FText::FromString(PlannerManager->IsSelectionWallAttached()
+				? TEXT("Объект закреплён на стене: тяните вдоль стены, удалите клавишей Delete")
+				: TEXT("Объект выбран: тяните для перемещения, поворачивайте колесом мыши или кнопками, удалите клавишей Delete")));
 		}
 		else if (bCategoryLayoutBuilt && Active2DCategory == EPlannerPanelCategory::Catalog)
 		{
-			TxtGuidanceHint->SetText(FText::FromString(TEXT("Перетащите карточку из каталога на пол или на стену")));
+			// Cabinet sets are wall-only: the wheel has nothing to turn during their drag (PlannerPanelRules::ResolveWheelTarget), so
+			// their tab does not offer it.
+			const bool bCabinetTab = HasActiveCatalogTab() && GetActiveCatalogTab() == EPlannerPlacementKind::CabinetSet;
+			TxtGuidanceHint->SetText(FText::FromString(bCabinetTab ? TEXT("Перетащите гарнитур из каталога к стене")
+				: TEXT("Перетащите карточку из каталога на пол или на стену; колесо мыши при перетаскивании поворачивает объект")));
 		}
 		else if (bCategoryLayoutBuilt && Active2DCategory == EPlannerPanelCategory::Finish)
 		{
@@ -1030,7 +1050,16 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 		break;
 
 	case EPlannerToolMode::PlaceFurniture:
-		TxtGuidanceHint->SetText(FText::FromString(TEXT("Кликните на плане, чтобы разместить выбранный объект")));
+		if (PlannerManager->PendingPlacementKind == EPlannerPlacementKind::Object)
+		{
+			// The yaw the wheel has given the armed object (placed on the floor with it; on a wall it follows the wall).
+			TxtGuidanceHint->SetText(FText::FromString(FString::Printf(TEXT("Кликните на плане, чтобы разместить выбранный объект • колесо мыши — поворот (%s)"),
+				*PlannerPanelRules::FormatPlanAngle(PlannerManager->PendingPlacementYawDeg))));
+		}
+		else
+		{
+			TxtGuidanceHint->SetText(FText::FromString(TEXT("Кликните на плане, чтобы разместить выбранный объект")));
+		}
 		break;
 
 	case EPlannerToolMode::Erase:
@@ -1339,7 +1368,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 		{
 			if (!Button || Button->GetIsEnabled() == bRotatable) continue;
 			Button->SetIsEnabled(bRotatable);
-			Button->SetToolTipText(FText::FromString(!bRotatable ? TEXT("Объект закреплён на стене: его поворот задаётся стеной")
+			Button->SetToolTipText(FText::FromString(!bRotatable ? ARoomPlannerManager::WallAttachedRotationMessage
 				: (Button == BtnRotateLeft ? TEXT("Повернуть объект на 15° против часовой стрелки") : TEXT("Повернуть объект на 15° по часовой стрелке"))));
 		}
 	}
@@ -1400,10 +1429,8 @@ FString URoomPlannerWidget::GetSelectionTitleText() const
 		{
 			if (Obj.InstanceID == PlannerManager->SelectedObjectID) { AssetID = Obj.AssetID; break; }
 		}
-		for (const FPlannerCatalogEntry& Entry : PlannerManager->GetAvailableObjects())
-		{
-			if (Entry.ID == AssetID && !Entry.DisplayName.IsEmpty()) return Entry.DisplayName.ToString();
-		}
+		FPlannerCatalogEntry Entry; // a row hidden from the catalog (bHideInCatalog) still names what was placed from it
+		if (PlannerManager->FindObjectCatalogEntry(AssetID, Entry) && !Entry.DisplayName.IsEmpty()) return Entry.DisplayName.ToString();
 		return AssetID.IsEmpty() ? FString(TEXT("Объект")) : AssetID;
 	}
 	case EPlannerSelectionKind::CabinetSet:
@@ -1837,6 +1864,11 @@ void URoomPlannerWidget::BindManagerDelegates()
 	{
 		return WeakThis.IsValid() && WeakThis->IsCursorOverPlannerUI();
 	});
+	// The controller's mouse wheel leaves the plan alone while a full-screen catalog hides this widget.
+	PlannerManager->SetPlannerUIShownQuery([WeakThis = TWeakObjectPtr<URoomPlannerWidget>(this)]()
+	{
+		return WeakThis.IsValid() && WeakThis->IsVisible();
+	});
 	// The manager binds here (NativeConstruct), not in the tick fallback, so the session flag that drives the
 	// planner's bounded 3D exposure must be raised here as well.
 	PlannerManager->SetPlannerSessionActive(true);
@@ -1862,6 +1894,7 @@ void URoomPlannerWidget::UnbindManagerDelegates()
 	PlannerManager->OnSelectionChanged.RemoveAll(this);
 	PlannerManager->OnFloorSelected.RemoveAll(this);
 	PlannerManager->ClearPlannerUIHitTest();
+	PlannerManager->ClearPlannerUIShownQuery();
 	bManagerDelegatesBound = false;
 }
 
@@ -2904,15 +2937,15 @@ bool URoomPlannerWidget::IsScreenPositionOverCatalogPanels(const FVector2D& Scre
 	return Catalog_Container && Catalog_Container->IsVisible() && Catalog_Container->GetCachedGeometry().IsUnderLocation(ScreenSpacePosition);
 }
 
-void URoomPlannerWidget::HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition)
+void URoomPlannerWidget::HandleCatalogDragReleased(EPlannerPlacementKind Kind, const FString& ItemID, const FVector2D& ScreenSpacePosition, float YawDeg)
 {
 	if (IsScreenPositionOverPlannerUI(ScreenSpacePosition))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Drag of '%s' released over the planner UI — ignored."), *ItemID);
 		return; // dropped back onto the panel (the cards, the tabs, the toolbar ...): not a placement on the plan hidden behind it
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Drag-cancel path: '%s' (kind %d) released at screen (%.0f, %.0f)"), *ItemID, (int32)Kind, ScreenSpacePosition.X, ScreenSpacePosition.Y);
-	DropCatalogItemAtScreenPosition(Kind, ItemID, ScreenSpacePosition);
+	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Drag-cancel path: '%s' (kind %d) released at screen (%.0f, %.0f), yaw %.1f"), *ItemID, (int32)Kind, ScreenSpacePosition.X, ScreenSpacePosition.Y, YawDeg);
+	DropCatalogItemAtScreenPosition(Kind, ItemID, ScreenSpacePosition, YawDeg);
 }
 
 bool URoomPlannerWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
@@ -2933,7 +2966,8 @@ bool URoomPlannerWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDr
 			UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] NativeOnDrop path: '%s' (kind %d) at screen (%.0f, %.0f)"), *Card->ItemID, (int32)Card->Kind, InDragDropEvent.GetScreenSpacePosition().X, InDragDropEvent.GetScreenSpacePosition().Y);
 			if (!IsScreenPositionOverPlannerUI(InDragDropEvent.GetScreenSpacePosition()))
 			{
-				DropCatalogItemAtScreenPosition(Card->Kind, Card->ItemID, InDragDropEvent.GetScreenSpacePosition());
+				const UPlannerCatalogDragOperation* CatalogDrag = Cast<UPlannerCatalogDragOperation>(InOperation);
+				DropCatalogItemAtScreenPosition(Card->Kind, Card->ItemID, InDragDropEvent.GetScreenSpacePosition(), CatalogDrag ? CatalogDrag->YawDeg : 0.f);
 			}
 			return true; // consumed either way: no cancel-path placement for this drop
 		}
@@ -2966,7 +3000,7 @@ bool URoomPlannerWidget::DropCatalogItemUnderCursor(EPlannerPlacementKind Kind, 
 	return bSent;
 }
 
-bool URoomPlannerWidget::DropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition)
+bool URoomPlannerWidget::DropCatalogItemAtScreenPosition(EPlannerPlacementKind Kind, const FString& ItemID, FVector2D ScreenSpacePosition, float YawDeg)
 {
 	if (!PlannerManager)
 	{
@@ -2985,7 +3019,7 @@ bool URoomPlannerWidget::DropCatalogItemAtScreenPosition(EPlannerPlacementKind K
 		return false;
 	}
 	BeginSelectDroppedItem(Kind, ItemID); // before the call: on a listen server the new item arrives inside it
-	const bool bSent = PC->PlannerDropCatalogItemAtScreenPosition(Kind, ItemID, ScreenSpacePosition);
+	const bool bSent = PC->PlannerDropCatalogItemAtScreenPosition(Kind, ItemID, ScreenSpacePosition, YawDeg);
 	if (!bSent) PendingDrop = FPendingDropSelection();
 	UpdateDynamicPropertiesPanel();
 	return bSent;
@@ -2995,32 +3029,36 @@ void URoomPlannerWidget::RotateSelected(float DeltaYawDeg)
 {
 	if (!PlannerManager) return;
 	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // moving / rotating is a 2D workflow
-	if (PlannerManager->IsSelectionWallAttached())
-	{
-		HandleOperationRejected(TEXT("Объект закреплён на стене: его поворот задаётся стеной"));
-		return;
-	}
 	AAwsTutorial_PlayerController* PC = GetPreviewController();
-	if (!PC) return;
-
-	if (!PlannerManager->SelectedObjectID.IsEmpty())
+	if (PC)
 	{
-		FPlacedFurnitureData D;
-		if (PlannerManager->GetPlacedObject(PlannerManager->SelectedObjectID, D))
-		{
-			D.Rotation.Yaw = FRotator::NormalizeAxis(D.Rotation.Yaw + DeltaYawDeg);
-			PlannerManager->MovePlacedObjectLocal(D.InstanceID, D.Location, D.Rotation);
-			PC->Server_MovePlacedObject(D.InstanceID, D.Location, D.Rotation, D.Scale);
-		}
+		PC->FlushPlannerWheelCommit(); // a wheel turn not yet sent goes first, so the two commits arrive in order
 	}
-	else if (!PlannerManager->SelectedCabinetSetID.IsEmpty())
+	else if (!PlannerManager->IsSelectionWallAttached())
+	{
+		return; // no player: nothing could be committed (a refusal is still shown, below)
+	}
+
+	// The mouse wheel's rules: a wall-attached selection is refused with the message, anything else turns locally.
+	FString InstanceID;
+	bool bCabinetSet = false;
+	float NewYawDeg = 0.f;
+	if (!PlannerManager->RotateSelectionLocal(DeltaYawDeg, InstanceID, bCabinetSet, NewYawDeg) || !PC) return;
+
+	if (bCabinetSet)
 	{
 		FPlacedCabinetSetData D;
-		if (PlannerManager->GetCabinetSet(PlannerManager->SelectedCabinetSetID, D))
+		if (PlannerManager->GetCabinetSet(InstanceID, D))
 		{
-			D.Rotation.Yaw = FRotator::NormalizeAxis(D.Rotation.Yaw + DeltaYawDeg);
-			PlannerManager->MoveCabinetSetLocal(D.InstanceID, D.Location, D.Rotation);
 			PC->Server_MoveCabinetSet(D.InstanceID, D.Location, D.Rotation);
+		}
+	}
+	else
+	{
+		FPlacedFurnitureData D;
+		if (PlannerManager->GetPlacedObject(InstanceID, D))
+		{
+			PC->Server_MovePlacedObject(D.InstanceID, D.Location, D.Rotation, D.Scale);
 		}
 	}
 }
@@ -3031,6 +3069,7 @@ void URoomPlannerWidget::DeleteSelected()
 	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // deleting is a 2D workflow (matches the Delete key handling)
 	AAwsTutorial_PlayerController* PC = GetPreviewController();
 	if (!PC) return;
+	PC->FlushPlannerWheelCommit(); // as the Delete key does
 
 	switch (PlannerManager->GetSelectionKind())
 	{

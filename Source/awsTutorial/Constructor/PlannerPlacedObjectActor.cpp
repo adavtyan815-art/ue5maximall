@@ -67,7 +67,37 @@ void APlannerPlacedObjectActor::ApplyData(const FPlacedFurnitureData& InData, US
 		}
 	}
 
+	// On every apply, not only when the mesh changed: cheap, idempotent, and a colour-only update keeps the same offset.
+	CentreMeshOnOrigin();
+
 	ApplyColorOverride(ColorOverrideMaterial);
+}
+
+bool APlannerPlacedObjectActor::GetMeshBoundsUnderRoot(FBox& OutBox) const
+{
+	const UStaticMesh* Mesh = MeshComponent ? MeshComponent->GetStaticMesh() : nullptr;
+	if (!Mesh) return false;
+	// The same local box MeasureAttachmentDepth and GetActorFootprint use (extended bounds, kept on a dedicated server too).
+	const FBox Local = Mesh->GetBoundingBox();
+	if (!Local.IsValid) return false;
+	OutBox = Local.TransformBy(FTransform(MeshComponent->GetRelativeRotation(), FVector::ZeroVector, MeshComponent->GetRelativeScale3D()));
+	return OutBox.IsValid != 0;
+}
+
+void APlannerPlacedObjectActor::CentreMeshOnOrigin()
+{
+	if (!MeshComponent) return;
+	// Minus the bottom centre, in SceneRoot's unscaled frame: the actor scale then scales offset and mesh alike, so the bottom
+	// centre stays on the origin at any DefaultScale. A mesh already authored bottom-centred (the sofa: bounds min Z −0.01,
+	// XY centre within 0.01 cm of its pivot) moves by that fraction of a millimetre only.
+	FVector Offset = FVector::ZeroVector;
+	FBox Box(ForceInit);
+	if (GetMeshBoundsUnderRoot(Box))
+	{
+		const FVector Centre = Box.GetCenter();
+		Offset = FVector(-Centre.X, -Centre.Y, -Box.Min.Z);
+	}
+	MeshComponent->SetRelativeLocation(Offset);
 }
 
 void APlannerPlacedObjectActor::ApplyColorOverride(UMaterialInterface* ColorOverrideMaterial)
@@ -136,10 +166,10 @@ void APlannerPlacedObjectActor::SetSelectedHighlight(bool bSelected)
 
 FVector APlannerPlacedObjectActor::GetLocalHalfExtents() const
 {
-	if (MeshComponent && MeshComponent->GetStaticMesh())
+	FBox Box(ForceInit);
+	if (GetMeshBoundsUnderRoot(Box))
 	{
-		const FBoxSphereBounds B = MeshComponent->GetStaticMesh()->GetBounds();
-		return B.BoxExtent * GetActorScale3D();
+		return Box.GetExtent() * GetActorScale3D().GetAbs();
 	}
 	return FVector(50.f, 50.f, 50.f);
 }

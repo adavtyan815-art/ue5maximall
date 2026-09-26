@@ -857,6 +857,7 @@ void ARoomPlannerManager::ClearLayout()
 	SelectedCabinetSetID.Empty();
 	PendingPlacementKind = EPlannerPlacementKind::None;
 	PendingPlacementAssetID.Empty();
+	PendingPlacementYawDeg = 0.f;
 }
 
 void ARoomPlannerManager::ComputeMiterOffsetsAtNode(int32 NodeID, TMap<int32, FVector2D>& OutStartLeftOffsets,
@@ -2405,7 +2406,7 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 	{
 		RebuildAllWalls();
 	}
-	RebuildPlacedObjectActors();
+	const bool bWallStandOffCorrected = RebuildPlacedObjectActors();
 	ReconcileCabinetSetActors();
 
 	if (!SelectedOpeningIDBeforeImport.IsEmpty())
@@ -2418,7 +2419,17 @@ bool ARoomPlannerManager::ImportLayoutFromJSON(const FString& JSONString)
 
 	UpdateSelectionVisuals();
 	RefreshNodeHandles();
-	OnRoomPlannerUpdated.Broadcast(JSONString);
+	if (bWallStandOffCorrected && HasAuthority())
+	{
+		// A wall object's mesh or scale no longer matched the stand-off this layout carries (e.g. its catalog row's mesh was swapped
+		// since it was saved): it was put back on its wall face above, and the clients need that stand-off too. Published once, here.
+		// A client corrects its own copy the same way and never publishes; the authority never re-imports what it publishes.
+		CommitStateAfterMutation();
+	}
+	else
+	{
+		OnRoomPlannerUpdated.Broadcast(JSONString);
+	}
 	if (SelectedSegmentID != -1)
 	{
 		OnWallSelected.Broadcast(SelectedSegmentID, GetWallLength(SelectedSegmentID));
@@ -2852,6 +2863,7 @@ void ARoomPlannerManager::SetToolMode(EPlannerToolMode NewToolMode)
 	{
 		PendingPlacementKind = EPlannerPlacementKind::None;
 		PendingPlacementAssetID.Empty();
+		PendingPlacementYawDeg = 0.f;
 	}
 	// Only an actual tool change cancels a corner drag; re-asserting Select on every click must not.
 	if (bChanged && DraggingNodeID != -1)
@@ -4147,7 +4159,15 @@ bool ARoomPlannerManager::ComputeCabinetSetTransform(const FPlacedCabinetSetData
 	return true;
 }
 
-bool ARoomPlannerManager::MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment) const
+bool ARoomPlannerManager::ComputePlacedObjectWallTransform(const FString& AssetID, const FWallAttachment& Attachment, FVector& OutLocation, FRotator& OutRotation) const
+{
+	if (!ComputeWallAttachedTransform(Attachment, OutLocation, OutRotation)) return false;
+	// OutRotation turns actor +X away from the wall; the model's front (FrontYawDeg in its own frame) goes there instead.
+	OutRotation.Yaw = FRotator::NormalizeAxis(OutRotation.Yaw - ResolveObjectFrontYawDeg(AssetID));
+	return true;
+}
+
+bool ARoomPlannerManager::MeasureAttachmentDepth(AActor* Actor, FWallAttachment& Attachment, bool bLogResult) const
 {
 	// Actor must already stand at the face point (DepthOffsetCm == 0) with the attached rotation.
 	if (!Actor) return false;
@@ -4190,15 +4210,31 @@ bool ARoomPlannerManager::MeasureAttachmentDepth(AActor* Actor, FWallAttachment&
 			bAnyMesh = true;
 		}
 	}
+	// bLogResult off (a placed object re-measured on every re-apply, see RemeasurePlacedObjectWallDepth): Verbose only, the caller
+	// logs a real change itself.
 	if (!bAnyMesh)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s has no visible mesh bounds yet; depth offset left at %.1f."), *Actor->GetName(), Attachment.DepthOffsetCm);
+		if (bLogResult)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s has no visible mesh bounds yet; depth offset left at %.1f."), *Actor->GetName(), Attachment.DepthOffsetCm);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("[PlannerDrop] %s has no visible mesh bounds yet; depth offset left at %.1f."), *Actor->GetName(), Attachment.DepthOffsetCm);
+		}
 		return false;
 	}
 
 	const float FaceAlongN = FVector2D::DotProduct(Face, N);
 	Attachment.DepthOffsetCm = FaceAlongN - BackAlongN; // push out along N so the rearmost point touches the face
-	UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s rear point along wall normal %.1f, face %.1f → depth offset %.1f cm"), *Actor->GetName(), BackAlongN, FaceAlongN, Attachment.DepthOffsetCm);
+	if (bLogResult)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] %s rear point along wall normal %.1f, face %.1f → depth offset %.1f cm"), *Actor->GetName(), BackAlongN, FaceAlongN, Attachment.DepthOffsetCm);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[PlannerDrop] %s rear point along wall normal %.1f, face %.1f → depth offset %.1f cm"), *Actor->GetName(), BackAlongN, FaceAlongN, Attachment.DepthOffsetCm);
+	}
 	return true;
 }
 
@@ -4289,17 +4325,11 @@ FString ARoomPlannerManager::AddPlacedObjectOnWall(const FString& AssetID, int32
 	D.WallAttachment.HeightCm = FMath::Max(0.f, HeightCm);
 	D.WallAttachment.DepthOffsetCm = 0.f;
 
-	// Stand it on the face, measure its bounds, then push it out so the back touches the wall.
-	if (!ComputeWallAttachedTransform(D.WallAttachment, D.Location, D.Rotation)) return FString();
+	// Stand it on the face, its front to the room; applying its actor measures its bounds and pushes it out so the back touches the
+	// wall (ApplyPlacedObjectActor → RemeasurePlacedObjectWallDepth, which stores the stand-off and the Location).
+	if (!ComputePlacedObjectWallTransform(D.AssetID, D.WallAttachment, D.Location, D.Rotation)) return FString();
 	PlacedObjects.Add(D.InstanceID, D);
 	ApplyPlacedObjectActor(D);
-	if (APlannerPlacedObjectActor* Actor = FindPlacedObjectActor(D.InstanceID))
-	{
-		FPlacedFurnitureData& Stored = PlacedObjects[D.InstanceID];
-		MeasureAttachmentDepth(Actor, Stored.WallAttachment);
-		ComputeWallAttachedTransform(Stored.WallAttachment, Stored.Location, Stored.Rotation);
-		ApplyPlacedObjectActor(Stored);
-	}
 	CommitStateAfterMutation();
 	return D.InstanceID;
 }
@@ -4354,7 +4384,7 @@ void ARoomPlannerManager::RefreshWallAttachedPlacements()
 		FPlacedFurnitureData& D = Pair.Value;
 		if (!D.WallAttachment.IsAttached()) continue;
 		FVector Loc; FRotator Rot;
-		if (ComputeWallAttachedTransform(D.WallAttachment, Loc, Rot))
+		if (ComputePlacedObjectWallTransform(D.AssetID, D.WallAttachment, Loc, Rot))
 		{
 			if (!D.Location.Equals(Loc, 0.01f) || !D.Rotation.Equals(Rot, 0.01f))
 			{
@@ -4425,6 +4455,46 @@ bool ARoomPlannerManager::RemeasureCabinetSetWallDepth(const FString& InstanceID
 	return bMeasured;
 }
 
+bool ARoomPlannerManager::RemeasurePlacedObjectWallDepth(const FString& InstanceID)
+{
+	FPlacedFurnitureData* D = PlacedObjects.Find(InstanceID);
+	APlannerPlacedObjectActor* Actor = FindPlacedObjectActor(InstanceID);
+	if (!D || !Actor || !D->WallAttachment.IsAttached()) return false;
+
+	// Not authority-only, unlike cabinet sets (replicated booths): every machine builds its own object actors, so every machine keeps
+	// its copy flush. Stand the object on the face point, measure its rear along the wall normal, then push it out. The actor centres
+	// its mesh's footprint on its origin, so this comes out as its half depth, whatever mesh or scale the row gives it now.
+	FWallAttachment Measured = D->WallAttachment;
+	Measured.DepthOffsetCm = 0.f;
+	FVector Location; FRotator Rotation;
+	if (!ComputePlacedObjectWallTransform(D->AssetID, Measured, Location, Rotation)) return false; // its wall is gone: RefreshWallAttachedPlacements detaches it
+	Actor->SetActorLocationAndRotation(Location, Rotation);
+	if (!MeasureAttachmentDepth(Actor, Measured, /*bLogResult*/ false)) // runs on every re-apply: a real change is logged below
+	{
+		Measured.DepthOffsetCm = D->WallAttachment.DepthOffsetCm; // no mesh to measure (asset not resolved): keep the stand-off
+	}
+	ComputePlacedObjectWallTransform(D->AssetID, Measured, Location, Rotation);
+
+	// The layout JSON rounds centimetres to 0.01, so a copy rebuilt from it differs by that much: only a real move counts as a change.
+	constexpr float Tolerance = 0.05f;
+	const bool bChanged = !FMath::IsNearlyEqual(Measured.DepthOffsetCm, D->WallAttachment.DepthOffsetCm, Tolerance)
+		|| !Location.Equals(D->Location, Tolerance) || !Rotation.Equals(D->Rotation, 0.01f);
+	if (bChanged)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Object %s (%s) re-measured against its wall → depth offset %.2f → %.2f cm, yaw %.1f → %.1f"),
+			*InstanceID, *D->AssetID, D->WallAttachment.DepthOffsetCm, Measured.DepthOffsetCm, D->Rotation.Yaw, Rotation.Yaw);
+		D->WallAttachment = Measured;
+		D->Location = Location;
+		D->Rotation = Rotation;
+	}
+	// Unchanged: back where the data has it (what was published), not off by the JSON's rounding.
+	Actor->SetActorLocationAndRotation(D->Location, D->Rotation);
+	Actor->Data.WallAttachment = D->WallAttachment;
+	Actor->Data.Location = D->Location;
+	Actor->Data.Rotation = D->Rotation;
+	return bChanged;
+}
+
 void ARoomPlannerManager::HandleCabinetSetProductChanged(AShowroomBooth* Booth, FName NewProductID)
 {
 	if (!HasAuthority() || !Booth || Booth->PlannerInstanceID.IsEmpty()) return;
@@ -4443,6 +4513,44 @@ bool ARoomPlannerManager::IsSelectionWallAttached() const
 		if (const FPlacedCabinetSetData* D = CabinetSets.Find(SelectedCabinetSetID)) return D->WallAttachment.IsAttached();
 	}
 	return false;
+}
+
+bool ARoomPlannerManager::RotateSelectionLocal(float DeltaYawDeg, FString& OutInstanceID, bool& bOutCabinetSet, float& OutYawDeg)
+{
+	OutInstanceID.Empty();
+	bOutCabinetSet = false;
+	OutYawDeg = 0.f;
+	// Moving / rotating is a 2D workflow; a 3D pick (for finishing) selects objects too, and must never turn them.
+	if (!b2DViewMode || (SelectedObjectID.IsEmpty() && SelectedCabinetSetID.IsEmpty())) return false;
+	if (IsSelectionWallAttached())
+	{
+		BroadcastRejected(WallAttachedRotationMessage);
+		return false;
+	}
+
+	if (!SelectedObjectID.IsEmpty())
+	{
+		const FPlacedFurnitureData* D = PlacedObjects.Find(SelectedObjectID);
+		if (!D) return false;
+		const FString ID = SelectedObjectID;
+		const FVector Location = D->Location;
+		const FRotator Rotation(D->Rotation.Pitch, FRotator::NormalizeAxis(D->Rotation.Yaw + DeltaYawDeg), D->Rotation.Roll);
+		MovePlacedObjectLocal(ID, Location, Rotation);
+		OutInstanceID = ID;
+		OutYawDeg = (float)Rotation.Yaw;
+		return true;
+	}
+
+	const FPlacedCabinetSetData* D = CabinetSets.Find(SelectedCabinetSetID);
+	if (!D) return false;
+	const FString ID = SelectedCabinetSetID;
+	const FVector Location = D->Location;
+	const FRotator Rotation(D->Rotation.Pitch, FRotator::NormalizeAxis(D->Rotation.Yaw + DeltaYawDeg), D->Rotation.Roll);
+	MoveCabinetSetLocal(ID, Location, Rotation);
+	OutInstanceID = ID;
+	bOutCabinetSet = true;
+	OutYawDeg = (float)Rotation.Yaw;
+	return true;
 }
 
 void ARoomPlannerManager::NotifySelectionChanged()
@@ -5586,6 +5694,7 @@ TArray<FPlannerDimensionLabel> ARoomPlannerManager::GetSelectionDimensionLabels(
 	{
 		if (const FPlacedFurnitureData* D = PlacedObjects.Find(SelectedObjectID))
 		{
+			// The object actor stands its mesh's bounds bottom-centre on its origin (any authored pivot), so the top is 2·Half.Z above it.
 			FVector Half(50.f, 50.f, 50.f);
 			if (APlannerPlacedObjectActor* A = FindPlacedObjectActor(SelectedObjectID)) Half = A->GetLocalHalfExtents();
 			const FString SizeText = FString::Printf(TEXT("%.2f × %.2f × %.2f м"), Half.X * 2.f / 100.f, Half.Y * 2.f / 100.f, Half.Z * 2.f / 100.f);
@@ -7192,6 +7301,7 @@ void ARoomPlannerManager::BeginPlaceObject(const FString& AssetID)
 {
 	PendingPlacementKind = EPlannerPlacementKind::Object;
 	PendingPlacementAssetID = AssetID;
+	PendingPlacementYawDeg = 0.f;
 	ActiveToolMode = EPlannerToolMode::PlaceFurniture;
 	ClearAllSelection();
 	RefreshNodeHandles();
@@ -7201,6 +7311,7 @@ void ARoomPlannerManager::BeginPlaceCabinetSet(FName ProductID)
 {
 	PendingPlacementKind = EPlannerPlacementKind::CabinetSet;
 	PendingPlacementAssetID = ProductID.ToString();
+	PendingPlacementYawDeg = 0.f;
 	ActiveToolMode = EPlannerToolMode::PlaceFurniture;
 	ClearAllSelection();
 	RefreshNodeHandles();
@@ -7210,6 +7321,7 @@ void ARoomPlannerManager::CancelPendingPlacement()
 {
 	PendingPlacementKind = EPlannerPlacementKind::None;
 	PendingPlacementAssetID.Empty();
+	PendingPlacementYawDeg = 0.f;
 }
 
 UStaticMesh* ARoomPlannerManager::ResolveObjectMesh(const FString& AssetID) const
@@ -7260,6 +7372,32 @@ TArray<FPlannerMaterialOverride> ARoomPlannerManager::ResolveObjectMaterialOverr
 	return {};
 }
 
+float ARoomPlannerManager::ResolveObjectFrontYawDeg(const FString& AssetID) const
+{
+	if (AssetID.IsEmpty()) return 0.f;
+	if (UDataTable* Catalog = ResolveObjectCatalog())
+	{
+		if (const FPlannerObjectRow* Row = Catalog->FindRow<FPlannerObjectRow>(FName(*AssetID), TEXT("ResolveObjectFrontYawDeg"), false))
+		{
+			return Row->FrontYawDeg;
+		}
+	}
+	return 0.f;
+}
+
+namespace
+{
+	FPlannerCatalogEntry MakeObjectCatalogEntry(const FName& RowName, const FPlannerObjectRow& Row)
+	{
+		FPlannerCatalogEntry E;
+		E.ID = RowName.ToString();
+		E.DisplayName = Row.DisplayName.IsEmpty() ? FText::FromName(RowName) : Row.DisplayName;
+		E.Thumbnail = Row.Thumbnail;
+		E.Category = Row.Category;
+		return E;
+	}
+}
+
 TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableObjects() const
 {
 	TArray<FPlannerCatalogEntry> Out;
@@ -7268,15 +7406,19 @@ TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableObjects() const
 	for (const auto& Pair : Catalog->GetRowMap())
 	{
 		const FPlannerObjectRow* Row = reinterpret_cast<const FPlannerObjectRow*>(Pair.Value);
-		if (!Row) continue;
-		FPlannerCatalogEntry E;
-		E.ID = Pair.Key.ToString();
-		E.DisplayName = Row->DisplayName.IsEmpty() ? FText::FromName(Pair.Key) : Row->DisplayName;
-		E.Thumbnail = Row->Thumbnail;
-		E.Category = Row->Category;
-		Out.Add(E);
+		if (!Row || Row->bHideInCatalog) continue; // hidden: not offered, but still resolved for what is placed (FindObjectCatalogEntry)
+		Out.Add(MakeObjectCatalogEntry(Pair.Key, *Row));
 	}
 	return Out;
+}
+
+bool ARoomPlannerManager::FindObjectCatalogEntry(const FString& AssetID, FPlannerCatalogEntry& OutEntry) const
+{
+	UDataTable* Catalog = AssetID.IsEmpty() ? nullptr : ResolveObjectCatalog();
+	const FPlannerObjectRow* Row = Catalog ? Catalog->FindRow<FPlannerObjectRow>(FName(*AssetID), TEXT("FindObjectCatalogEntry"), false) : nullptr;
+	if (!Row) return false;
+	OutEntry = MakeObjectCatalogEntry(FName(*AssetID), *Row);
+	return true;
 }
 
 FString ARoomPlannerManager::AddPlacedObject(const FString& AssetID, const FVector& Location, const FRotator& Rotation, const FVector& Scale)
@@ -7313,7 +7455,7 @@ bool ARoomPlannerManager::MovePlacedObject(const FString& InstanceID, const FVec
 	if (D->WallAttachment.IsAttached() && SlideAttachmentTo(D->WallAttachment, Location))
 	{
 		// Attached items slide along their wall; rotation stays fixed by the wall.
-		ComputeWallAttachedTransform(D->WallAttachment, D->Location, D->Rotation);
+		ComputePlacedObjectWallTransform(D->AssetID, D->WallAttachment, D->Location, D->Rotation);
 	}
 	else
 	{
@@ -7382,6 +7524,7 @@ APlannerPlacedObjectActor* ARoomPlannerManager::FindPlacedObjectActor(const FStr
 
 FString ARoomPlannerManager::FindPlacedObjectAtWorldPos(const FVector& WorldPos) const
 {
+	// Around each object's Location: its actor origin, which is its footprint centre (the actor re-centres its mesh on it).
 	const FVector2D P(WorldPos.X, WorldPos.Y);
 	FString Best;
 	float BestDist = TNumericLimits<float>::Max();
@@ -7405,7 +7548,7 @@ void ARoomPlannerManager::MovePlacedObjectLocal(const FString& InstanceID, const
 	if (!D) return;
 	if (D->WallAttachment.IsAttached() && SlideAttachmentTo(D->WallAttachment, Location))
 	{
-		ComputeWallAttachedTransform(D->WallAttachment, D->Location, D->Rotation);
+		ComputePlacedObjectWallTransform(D->AssetID, D->WallAttachment, D->Location, D->Rotation);
 	}
 	else
 	{
@@ -7420,8 +7563,9 @@ void ARoomPlannerManager::MovePlacedObjectLocal(const FString& InstanceID, const
 	}
 }
 
-void ARoomPlannerManager::ApplyPlacedObjectActor(const FPlacedFurnitureData& Data)
+bool ARoomPlannerManager::ApplyPlacedObjectActor(const FPlacedFurnitureData& Data)
 {
+	bool bWallStandOffCorrected = false;
 	APlannerPlacedObjectActor* Actor = FindPlacedObjectActor(Data.InstanceID);
 	if (!Actor && GetWorld())
 	{
@@ -7444,14 +7588,23 @@ void ARoomPlannerManager::ApplyPlacedObjectActor(const FPlacedFurnitureData& Dat
 		UE_LOG(LogTemp, Warning, TEXT("[PlannerDrop] Object %s (%s) → actor %s, mesh %s, at (%.0f, %.0f, %.0f)%s"),
 			*Data.InstanceID, *Data.AssetID, *Actor->GetName(), Mesh ? *Mesh->GetName() : TEXT("NONE"),
 			Data.Location.X, Data.Location.Y, Data.Location.Z, Data.WallAttachment.IsAttached() ? TEXT(" [wall]") : TEXT(" [floor]"));
+
+		// On a wall, the stand-off was measured with the mesh and scale of that moment. The row's mesh may have been swapped since the
+		// layout was saved, or the scale changed: keep the back on the face on every apply. (Data may be the stored entry itself, which
+		// this rewrites; nothing reads Data after it.)
+		if (Data.WallAttachment.IsAttached())
+		{
+			bWallStandOffCorrected = RemeasurePlacedObjectWallDepth(Data.InstanceID);
+		}
 	}
 	else
 	{
 		UE_LOG(LogTemp, Error, TEXT("[PlannerDrop] Failed to spawn actor for object %s (%s)."), *Data.InstanceID, *Data.AssetID);
 	}
+	return bWallStandOffCorrected;
 }
 
-void ARoomPlannerManager::RebuildPlacedObjectActors()
+bool ARoomPlannerManager::RebuildPlacedObjectActors()
 {
 	// Remove actors whose data is gone
 	TArray<FString> ToRemove;
@@ -7466,10 +7619,12 @@ void ARoomPlannerManager::RebuildPlacedObjectActors()
 	for (const FString& Key : ToRemove) PlacedObjectActors.Remove(Key);
 
 	// Spawn / update the rest
+	bool bWallStandOffCorrected = false;
 	for (const auto& Pair : PlacedObjects)
 	{
-		ApplyPlacedObjectActor(Pair.Value);
+		bWallStandOffCorrected |= ApplyPlacedObjectActor(Pair.Value);
 	}
+	return bWallStandOffCorrected;
 }
 
 TArray<FPlannerCatalogEntry> ARoomPlannerManager::GetAvailableCabinetSets() const
@@ -8013,6 +8168,18 @@ void ARoomPlannerManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+void ARoomPlannerManager::Destroyed()
+{
+	UpdatePlannerLumenMode(false); // a manager that never began play (test worlds) gets no EndPlay
+	Super::Destroyed();
+}
+
+void ARoomPlannerManager::BeginDestroy()
+{
+	UpdatePlannerLumenMode(false); // no claim held (the usual case): nothing happens
+	Super::BeginDestroy();
+}
+
 void ARoomPlannerManager::SetPlannerSessionActive(bool bActive)
 {
 	bPlannerSessionActive = bActive;
@@ -8036,34 +8203,159 @@ void ARoomPlannerManager::UpdatePlannerExposure()
 		PlannerExposure->bEnabled = bWantEnabled;
 	}
 
-	// Lumen hit lighting for GI follows the same lifecycle as the exposure override (planner open, 3D).
-	UpdatePlannerLumenMode(bPlannerLumenHitLightingGI && bSessionOpen && !b2DViewMode
-		&& GetWorld() && GetWorld()->GetNetMode() != NM_DedicatedServer);
+	// The Lumen overrides follow the same lifecycle as the exposure override (planner open, 3D, never on a dedicated server).
+	UpdatePlannerLumenMode(bSessionOpen && !b2DViewMode && GetWorld() && GetWorld()->GetNetMode() != NM_DedicatedServer);
 }
 
-void ARoomPlannerManager::UpdatePlannerLumenMode(bool bWantHitLightingGI)
+namespace PlannerCVarOverrides
 {
-	static IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Lumen.HardwareRayTracing.LightingMode"));
+	/** The planner's process-wide override of one console variable (see FPlannerCVarOverride). */
+	struct FShared
+	{
+		/** Managers holding a claim. */
+		int32 Owners = 0;
+		/** The variable held a code-priority value before the first claim: write SavedValue back rather than unsetting. */
+		bool bRestoreSavedValue = false;
+		FString SavedValue;
+		/** The value the planner set last. */
+		FString AppliedValue;
+		/**
+		 * A higher-priority value (console, command line…) was on top when the claim began: the planner sets nothing, not even into
+		 * the code-priority slot beneath it (the engine records a rejected Set there, overwriting another system's code value), and
+		 * gives nothing back. Checked again on every Apply: once that value is gone, the override takes over as a first claim would.
+		 */
+		bool bYielded = false;
+	};
+
+	/** The variable's current priority is above code: a code-priority Set would be refused, and would still overwrite the code slot. */
+	bool IsOutrankedAboveCode(const IConsoleVariable* CVar)
+	{
+		return (uint32)(CVar->GetFlags() & ECVF_SetByMask) > (uint32)ECVF_SetByCode;
+	}
+
+	/** Records how to give the variable back (its value now, and whether that is a code-priority value) and leaves the yield. */
+	void TakeOver(FShared& Shared, const IConsoleVariable* CVar)
+	{
+		Shared.SavedValue = CVar->GetString();
+		Shared.bRestoreSavedValue = (CVar->GetFlags() & ECVF_SetByMask) == ECVF_SetByCode;
+		Shared.AppliedValue.Reset();
+		Shared.bYielded = false;
+	}
+
+	/** Keyed by console variable name. Console variables and the managers' lifecycle belong to the game thread. */
+	TMap<FString, FShared>& Get()
+	{
+		static TMap<FString, FShared> Overrides;
+		return Overrides;
+	}
+}
+
+void FPlannerCVarOverride::Apply(const FString& Value)
+{
+	IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name);
 	if (!CVar) return;
-	if (bWantHitLightingGI && !bLumenLightingModeOverridden)
+	PlannerCVarOverrides::FShared& Shared = PlannerCVarOverrides::Get().FindOrAdd(Name);
+	bool bTakingOver = false;
+	if (!bActive)
 	{
-		SavedLumenLightingMode = CVar->GetInt();
-		if (SavedLumenLightingMode != 1)
+		bActive = true;
+		if (++Shared.Owners == 1)
 		{
-			CVar->Set(1, ECVF_SetByCode);
+			// The first claim in the process remembers how to give the variable back, unless a higher-priority value is on top: then
+			// it yields and touches nothing.
+			if (PlannerCVarOverrides::IsOutrankedAboveCode(CVar))
+			{
+				Shared.bYielded = true;
+				Shared.AppliedValue.Reset();
+				UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] %s stays %s: a %s value outranks the planner's override (not applied)."),
+					Name, *CVar->GetString(), GetConsoleVariableSetByName((EConsoleVariableFlags)(CVar->GetFlags() & ECVF_SetByMask)));
+			}
+			else
+			{
+				PlannerCVarOverrides::TakeOver(Shared, CVar);
+				bTakingOver = true;
+			}
 		}
-		bLumenLightingModeOverridden = true;
-		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] Lumen HWRT lighting mode %d → 1 (hit lighting for GI) while the planner is open in 3D."), SavedLumenLightingMode);
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] %s is already claimed by another planner in this process (%d claims)."), Name, Shared.Owners);
+		}
 	}
-	else if (!bWantHitLightingGI && bLumenLightingModeOverridden)
+	if (Shared.bYielded && !PlannerCVarOverrides::IsOutrankedAboveCode(CVar))
 	{
-		if (CVar->GetInt() != SavedLumenLightingMode)
-		{
-			CVar->Set(SavedLumenLightingMode, ECVF_SetByCode);
-		}
-		bLumenLightingModeOverridden = false;
-		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] Lumen HWRT lighting mode restored to %d."), SavedLumenLightingMode);
+		// The value that outranked the override is gone: take over now, as the first claim would have.
+		PlannerCVarOverrides::TakeOver(Shared, CVar);
+		bTakingOver = true;
 	}
+	if (Shared.bYielded) return;
+	if (Shared.AppliedValue != Value)
+	{
+		CVar->Set(*Value, ECVF_SetByCode); // ignored (with the engine's warning) if a console value came on top since the claim
+		Shared.AppliedValue = Value;
+	}
+	if (bTakingOver)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] %s %s → %s while the planner is open in 3D."), Name, *Shared.SavedValue, *CVar->GetString());
+	}
+}
+
+void FPlannerCVarOverride::Restore()
+{
+	if (!bActive) return;
+	bActive = false;
+	TMap<FString, PlannerCVarOverrides::FShared>& Overrides = PlannerCVarOverrides::Get();
+	PlannerCVarOverrides::FShared* Shared = Overrides.Find(Name);
+	if (!Shared) return;
+	if (--Shared->Owners > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] %s stays %s: %d other planner(s) in this process still open in 3D."), Name,
+			Shared->bYielded ? TEXT("claimed (yielded)") : TEXT("overridden"), Shared->Owners);
+		return;
+	}
+	// The last claim gives the variable back; a yielded override never set anything, so there is nothing to give back.
+	if (Shared->bYielded)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] %s released: the override had yielded, the variable was not touched."), Name);
+	}
+	else if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name))
+	{
+		if (Shared->bRestoreSavedValue)
+		{
+			CVar->Set(*Shared->SavedValue, ECVF_SetByCode);
+		}
+		else
+		{
+			CVar->Unset(ECVF_SetByCode); // back to the project / scalability / command-line value, nothing left at code priority
+		}
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] %s given back: %s."), Name, *CVar->GetString());
+	}
+	Overrides.Remove(Name);
+}
+
+int32 FPlannerCVarOverride::GetOwnerCount(const TCHAR* InName)
+{
+	const PlannerCVarOverrides::FShared* Shared = PlannerCVarOverrides::Get().Find(InName);
+	return Shared ? Shared->Owners : 0;
+}
+
+void ARoomPlannerManager::UpdatePlannerLumenMode(bool bIn3DSession)
+{
+	auto Update = [](FPlannerCVarOverride& Override, bool bWant, const FString& Value)
+	{
+		if (bWant)
+		{
+			Override.Apply(Value);
+		}
+		else
+		{
+			Override.Restore();
+		}
+	};
+	// Hit lighting for GI (see bPlannerLumenHitLightingGI).
+	Update(LumenLightingModeOverride, bIn3DSession && bPlannerLumenHitLightingGI, TEXT("1"));
+	// White ceilings and walls keep their bounce light in concave edges (see PlannerShortRangeAOMaxMultibounceAlbedo).
+	Update(ShortRangeAOAlbedoOverride, bIn3DSession && PlannerShortRangeAOMaxMultibounceAlbedo > 0.f,
+		FString::SanitizeFloat(FMath::Clamp(PlannerShortRangeAOMaxMultibounceAlbedo, 0.f, 1.f)));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
