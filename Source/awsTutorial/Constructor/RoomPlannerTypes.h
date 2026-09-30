@@ -807,9 +807,14 @@ struct FPlannerRoomLightSettings
 
 	// ── Light (one rect light per room) ──
 
-	/** Luminous flux budget per m² of room floor (lumens). 280 is the value the fixed planner exposure (EV100 6.8) was tuned with. */
+	/**
+	 * Luminous flux budget per m² of room floor (lumens), on the LEVEL's photometric scale: the level's sun and sky are a few lux and
+	 * its auto exposure sits near EV100 −1.5, so inside and outside share one exposure (doors and windows show the real level, the
+	 * interior is not blown out from outside, a doorway is a small adjustment). The interior look was tuned as 280 lm/m² at a fixed
+	 * EV100 6.8; 280 / 2^8.8 ≈ 0.65 gives the same picture at the level's exposure, half a stop darker than the outside.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light", meta = (ClampMin = "0"))
-	float LumensPerM2 = 280.f;
+	float LumensPerM2 = 0.65f;
 
 	/** Global multiplier on the flux (planner.CeilingLightScale). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room Light|Light", meta = (ClampMin = "0"))

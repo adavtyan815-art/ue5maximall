@@ -169,12 +169,12 @@ bool FPlannerWheelRotateSelectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("… and keeps the wall's yaw"), WheelObjectYaw(Manager, WallObj), Before, 0.01);
 	}
 
-	// 3D never turns anything, even an object picked there for finishing.
+	// 3D turns a selected object too (the ↺ / ↻ buttons, the wheel while it is dragged); when is the callers' decision.
 	Manager->SetViewMode(false);
 	Manager->SelectPlacedObject(Obj);
 	const double Before3D = WheelObjectYaw(Manager, Obj);
-	TestFalse(TEXT("3D: a picked object is not turned"), Manager->RotateSelectionLocal(15.f, ID, bSet, Yaw));
-	TestEqual(TEXT("3D: yaw unchanged"), WheelObjectYaw(Manager, Obj), Before3D, 0.01);
+	TestTrue(TEXT("3D: a selected object turns"), Manager->RotateSelectionLocal(15.f, ID, bSet, Yaw));
+	TestEqual(TEXT("3D: by the asked angle"), WheelObjectYaw(Manager, Obj), FRotator::NormalizeAxis(Before3D + 15.), 0.01);
 	Manager->Destroy();
 	return true;
 }

@@ -14,6 +14,7 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/LocalLightComponent.h"
+#include "Components/PostProcessComponent.h"
 #include "Components/RectLightComponent.h"
 #include "Components/SkyLightComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -1933,6 +1934,327 @@ bool FPlannerLumenOverridesTest::RunTest(const FString& Parameters)
 	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
 	TestFalse(TEXT("The orphaned manager was collected"), Orphan.IsValid(true));
 	TestTrue(TEXT("Collected (BeginDestroy): the project values are back"), IsUntouched());
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The 3D selection overlay, rendered (no custom depth: frame + tint geometry)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Captures what a selection looks like in 3D: a whole wall face, the middle of a wall face with its borders off-screen, a door, the
+// floor, an object, and a single wall without a room (the level's own light and exposure). The tint is held at its pulse maximum.
+// Needs a game viewport and a GPU like the tests above: -PlannerSnapshotDir=<folder> under -game, e.g. with
+// "/Game/FirstPerson/Maps/WaitingRoomLobbyMap?game=/Script/Engine.GameModeBase" -PlannerRenderRoomAt=planner for the owner's scene
+// (-PlannerRenderRoomAt=X,Y puts the room's south-west corner there; default the origin).
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlannerSelection3DRenderTest, "MaxiMall.Planner.Render.Selection3D",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::EngineFilter)
+
+bool FPlannerSelection3DRenderTest::RunTest(const FString& Parameters)
+{
+	FString OutDir;
+	if (!FParse::Value(FCommandLine::Get(), TEXT("PlannerSnapshotDir="), OutDir))
+	{
+		AddInfo(TEXT("Selection render skipped (needs a GPU and -PlannerSnapshotDir=<folder>)."));
+		return true;
+	}
+	if (!FApp::CanEverRender())
+	{
+		AddWarning(TEXT("Selection render skipped although -PlannerSnapshotDir is given: this session cannot render (-nullrhi?)."));
+		return true;
+	}
+	UWorld* World = AutomationCommon::GetAnyGameWorld();
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	if (!World || !World->GetGameViewport() || !PC)
+	{
+		AddWarning(TEXT("Selection render skipped although -PlannerSnapshotDir is given: it needs a game viewport (run it under -game)."));
+		return true;
+	}
+
+	TSharedRef<FFurnishedRenderRun> Run = MakeShared<FFurnishedRenderRun>();
+	Run->OutDir = OutDir;
+	IFileManager::Get().MakeDirectory(*OutDir, true);
+	FParse::Value(FCommandLine::Get(), TEXT("PlannerRenderSettle="), Run->SettleSeconds);
+	Run->SettleSeconds = FMath::Clamp(Run->SettleSeconds, 1.f, 60.f);
+
+	ARoomPlannerManager* Manager = nullptr;
+	for (TActorIterator<ARoomPlannerManager> It(World); It; ++It) { Manager = *It; break; }
+	Run->bCreatedManager = Manager == nullptr;
+	Manager = ARoomPlannerManager::GetOrCreateInstance(World);
+	if (!TestNotNull(TEXT("Planner manager"), Manager)) return false;
+	if (Manager->GetWallSegmentsForDebug().Num() > 0)
+	{
+		AddWarning(TEXT("Selection render skipped although -PlannerSnapshotDir is given: the planner in this world already holds a layout."));
+		return true;
+	}
+	Run->World = World;
+	Run->Manager = Manager;
+	Run->Controller = PC;
+
+	// Where the room goes: the south-west corner at Base.
+	FVector2D Base = FVector2D::ZeroVector;
+	FString RoomAt;
+	if (FParse::Value(FCommandLine::Get(), TEXT("PlannerRenderRoomAt="), RoomAt, false))
+	{
+		if (RoomAt.Equals(TEXT("planner"), ESearchCase::IgnoreCase))
+		{
+			FVector Relocation(-10000., 0., 0.);
+			if (const UClass* WidgetClass = LoadClass<URoomPlannerWidget>(nullptr, TEXT("/Game/RoomPlanner/WBP_RoomPlannerWidget.WBP_RoomPlannerWidget_C")))
+			{
+				Relocation = WidgetClass->GetDefaultObject<URoomPlannerWidget>()->PlannerRelocationLocation;
+			}
+			const FVector Spot = AAwsTutorial_PlayerController::FindNonOverlappingPlannerSpot(World, PC->GetPawn(), Relocation);
+			Base = FVector2D(Spot.X - 250., Spot.Y - 200.);
+		}
+		else
+		{
+			TArray<FString> Parts;
+			if (RoomAt.ParseIntoArray(Parts, TEXT(","), true) == 2) Base = FVector2D(FCString::Atod(*Parts[0]), FCString::Atod(*Parts[1]));
+		}
+	}
+	auto P = [Base](double X, double Y) { return FVector2D(Base.X + X, Base.Y + Y); };
+	auto V = [Base](double X, double Y, double Z) { return FVector(Base.X + X, Base.Y + Y, Z); };
+
+	auto BuildRoom = [P](ARoomPlannerManager* M, int32 (&Walls)[4])
+	{
+		Walls[0] = M->AddWallBetweenPoints(P(0., 0.), P(500., 0.));
+		Walls[1] = M->AddWallBetweenPoints(P(500., 0.), P(500., 400.));
+		Walls[2] = M->AddWallBetweenPoints(P(500., 400.), P(0., 400.));
+		Walls[3] = M->AddWallBetweenPoints(P(0., 400.), P(0., 0.));
+		M->AddOpeningToWall(Walls[0], EOpeningType::Door, 200.f, 90.f, 210.f, 0.f);
+		M->AddOpeningToWall(Walls[2], EOpeningType::Window, 250.f, 120.f, 120.f, 90.f);
+		M->RebuildRooms();
+	};
+	BuildRoom(Manager, Run->Walls);
+	if (!TestEqual(TEXT("One room"), Manager->GetRoomsForDebug().Num(), 1))
+	{
+		Manager->ClearLayout();
+		if (Run->bCreatedManager) Manager->Destroy();
+		return false;
+	}
+	Run->CeilZ = Manager->GetRoomsForDebug().CreateConstIterator()->Value.CeilingHeightCm;
+	Manager->SetPlannerSessionActive(true);
+	Manager->SetViewMode(false);
+	Run->bCeilingVisible = Manager->bCeilingVisible;
+	const float SavedPulse = Manager->SelectionPulseSeconds;
+	Manager->SelectionPulseSeconds = 0.f; // the tint at its strongest in every capture
+
+	const float Settle = Run->SettleSeconds;
+	auto Shot = [](const FVector& Eye, const FVector& Target, float Fov)
+	{
+		return [Eye, Target, Fov](FFurnishedRenderRun& R) { SetFurnishedCamera(R, Eye, (Target - Eye).Rotation(), Fov); };
+	};
+	// The north wall's room face (its left: it runs from east to west).
+	auto SelectNorthFace = [](FFurnishedRenderRun& R)
+	{
+		if (ARoomPlannerManager* M = R.Manager.Get())
+		{
+			M->ClearAllSelection();
+			M->SelectedSegmentID = R.Walls[2];
+			M->SelectedOpeningIndex = -1;
+			M->bSelectedWallFaceLeft = true;
+			M->UpdateSelectionVisuals();
+		}
+	};
+	Run->Shots.Add({ TEXT("Selection3D_wall"), [=](FFurnishedRenderRun& R) { SelectNorthFace(R); Shot(V(250., 40., 165.), V(250., 390., 130.), 80.f)(R); }, Settle });
+	Run->Shots.Add({ TEXT("Selection3D_wall_centre"), [=](FFurnishedRenderRun& R) { SelectNorthFace(R); Shot(V(140., 270., 150.), V(140., 390., 150.), 70.f)(R); }, Settle });
+	Run->Shots.Add({ TEXT("Selection3D_wall_unselected"), [=](FFurnishedRenderRun& R)
+	{
+		if (ARoomPlannerManager* M = R.Manager.Get()) M->ClearAllSelection();
+		Shot(V(250., 40., 165.), V(250., 390., 130.), 80.f)(R);
+	}, Settle });
+	Run->Shots.Add({ TEXT("Selection3D_door"), [=](FFurnishedRenderRun& R)
+	{
+		if (ARoomPlannerManager* M = R.Manager.Get()) M->SelectOpening(R.Walls[0], 0, true);
+		Shot(V(320., 330., 160.), V(200., 10., 110.), 80.f)(R);
+	}, Settle });
+	Run->Shots.Add({ TEXT("Selection3D_floor"), [=](FFurnishedRenderRun& R)
+	{
+		if (ARoomPlannerManager* M = R.Manager.Get()) M->SelectFloorAtWorldPos(V(250., 200., 0.));
+		Shot(V(470., 370., 230.), V(200., 130., 0.), 80.f)(R);
+	}, Settle });
+	Run->Shots.Add({ TEXT("Selection3D_object"), [=](FFurnishedRenderRun& R)
+	{
+		ARoomPlannerManager* M = R.Manager.Get();
+		if (!M) return;
+		const FString ID = M->AddPlacedObject(TEXT("/Engine/BasicShapes/Cube.Cube"), V(250., 200., 0.), FRotator::ZeroRotator, FVector(0.8, 0.8, 0.8));
+		if (ID.IsEmpty()) { R.Errors.Add(TEXT("object: cube not placed")); return; }
+		R.Objects.Emplace(TEXT("Cube"), ID);
+		M->SelectPlacedObject(ID);
+		Shot(V(420., 60., 190.), V(250., 200., 40.), 80.f)(R);
+	}, Settle });
+	// Walked out of the closed room: the level's own light, exposure, sky and fog (no interior exposure, no backdrop haze).
+	Run->Shots.Add({ TEXT("Selection3D_outside_room"), [=](FFurnishedRenderRun& R)
+	{
+		ClearFurnishedObjects(R);
+		if (ARoomPlannerManager* M = R.Manager.Get()) M->ClearAllSelection();
+		Shot(V(700., -450., 170.), V(250., 200., 120.), 80.f)(R);
+	}, Settle });
+	Run->Shots.Add({ TEXT("Selection3D_back_inside"), [=](FFurnishedRenderRun& R)
+	{
+		Shot(V(250., 40., 165.), V(250., 390., 130.), 80.f)(R);
+	}, Settle });
+	// One light scale (inside and outside under the level's auto exposure): out through the open door from inside, into the room from
+	// outside, then a walk out through the doorway in steps, each step's measured exposure logged (a doorway should be a small change).
+	Run->Shots.Add({ TEXT("Light_inside_looking_out"), [=](FFurnishedRenderRun& R)
+	{
+		if (ARoomPlannerManager* M = R.Manager.Get()) M->SetAllOpeningLeavesOpen(true);
+		Shot(V(300., 330., 160.), V(200., -200., 110.), 80.f)(R);
+	}, Settle });
+	Run->Shots.Add({ TEXT("Light_outside_looking_in"), [=](FFurnishedRenderRun& R)
+	{
+		Shot(V(160., -520., 165.), V(210., 200., 110.), 70.f)(R);
+	}, Settle });
+	const double WalkY[] = { 250., 120., 40., 0., -60., -200., -450. };
+	for (int32 Step = 0; Step < UE_ARRAY_COUNT(WalkY); ++Step)
+	{
+		const double Y = WalkY[Step];
+		Run->Shots.Add({ FString::Printf(TEXT("Light_doorway_%d"), Step), [=](FFurnishedRenderRun& R)
+		{
+			if (const ARoomPlannerManager* M = R.Manager.Get())
+			{
+				R.Infos.Add(FString::Printf(TEXT("[Light] before step %d (y %.0f): measured exposure %.5f (EV100 %.2f)"), Step, Y,
+					M->GetMeasuredViewExposure(), M->GetMeasuredViewExposure() > 0.f ? -FMath::Log2(M->GetMeasuredViewExposure()) : 0.f));
+			}
+			Shot(V(200., Y, 165.), V(200., Y - 400., 130.), 80.f)(R);
+		}, FMath::Max(2.f, Settle * 0.6f) });
+	}
+	// The 2D plan draws no dynamic shadows (walls, furniture, the pawn); 3D gets them back. The same top-down view in both, a cube by the
+	// east wall, the ceiling hidden in 3D too so the sun reaches the floor there as well.
+	auto PlanShadowCheck = [](FFurnishedRenderRun& R, bool bExpectOff, const TCHAR* Label)
+	{
+		const ARoomPlannerManager* M = R.Manager.Get();
+		const UWorld* W = R.World.Get();
+		const UGameViewportClient* Viewport = W ? W->GetGameViewport() : nullptr;
+		const bool bFlag = Viewport && Viewport->EngineShowFlags.DynamicShadows;
+		R.Infos.Add(FString::Printf(TEXT("[PlanShadows] %s: viewport DynamicShadows=%d, manager suppressing=%d"), Label, bFlag ? 1 : 0,
+			(M && M->ArePlanViewShadowsSuppressed()) ? 1 : 0));
+		if (!Viewport || bFlag == bExpectOff) R.Errors.Add(FString::Printf(TEXT("%s: dynamic shadows expected %s"), Label, bExpectOff ? TEXT("off") : TEXT("on")));
+	};
+	Run->Shots.Add({ TEXT("Plan2D_no_shadows"), [=](FFurnishedRenderRun& R)
+	{
+		ARoomPlannerManager* M = R.Manager.Get();
+		if (!M) return;
+		M->ClearAllSelection();
+		const FString ID = M->AddPlacedObject(TEXT("/Engine/BasicShapes/Cube.Cube"), V(400., 200., 0.), FRotator::ZeroRotator, FVector(0.7, 0.7, 1.2));
+		if (!ID.IsEmpty()) R.Objects.Emplace(TEXT("Cube"), ID);
+		M->SetViewMode(true);
+		PlanShadowCheck(R, true, TEXT("2D"));
+		Shot(V(250., 200., 1300.), V(250., 200.5, 0.), 60.f)(R);
+	}, Settle });
+	Run->Shots.Add({ TEXT("Plan3D_shadows_back"), [=](FFurnishedRenderRun& R)
+	{
+		ARoomPlannerManager* M = R.Manager.Get();
+		if (!M) return;
+		M->SetViewMode(false);
+		M->SetCeilingVisibility(false);
+		PlanShadowCheck(R, false, TEXT("3D"));
+		Shot(V(250., 200., 1300.), V(250., 200.5, 0.), 60.f)(R);
+	}, Settle });
+	// No closed room: one wall under the level's own light and exposure.
+	Run->Shots.Add({ TEXT("Selection3D_single_wall"), [=](FFurnishedRenderRun& R)
+	{
+		ARoomPlannerManager* M = R.Manager.Get();
+		if (!M) return;
+		ClearFurnishedObjects(R);
+		M->ClearLayout();
+		const int32 Wall = M->AddWallBetweenPoints(P(0., 200.), P(500., 200.));
+		M->SetViewMode(false);
+		M->UpdatePlannerExposure();
+		M->SelectedSegmentID = Wall;
+		M->SelectedOpeningIndex = -1;
+		M->bSelectedWallFaceLeft = false; // the side facing the camera (−Y)
+		M->UpdateSelectionVisuals();
+		R.Infos.Add(FString::Printf(TEXT("[Selection3D] single wall: settings EV100 %.2f, measured exposure before the switch %.5f"),
+			M->GetViewExposureEV100(), M->GetMeasuredViewExposure()));
+		Shot(V(250., -300., 170.), V(250., 200., 130.), 80.f)(R);
+	}, Settle });
+	Run->Shots.Add({ TEXT("Selection3D_single_wall_unselected"), [=](FFurnishedRenderRun& R)
+	{
+		if (ARoomPlannerManager* M = R.Manager.Get()) M->ClearAllSelection();
+		Shot(V(250., -300., 170.), V(250., 200., 130.), 80.f)(R);
+	}, Settle });
+
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ACameraActor* Camera = World->SpawnActor<ACameraActor>(V(250., 200., 150.), FRotator::ZeroRotator, Params);
+	if (!TestNotNull(TEXT("Camera"), Camera)) return false;
+	Camera->GetCameraComponent()->SetConstraintAspectRatio(false);
+	Run->Camera = Camera;
+	if (APawn* Pawn = PC->GetPawn())
+	{
+		Pawn->SetActorHiddenInGame(true);
+		Pawn->SetActorEnableCollision(false);
+	}
+	PC->SetViewTarget(Camera);
+	GEngine->Exec(World, TEXT("DisableAllScreenMessages"));
+	Run->SavedQuality = Scalability::GetQualityLevels();
+	{
+		Scalability::FQualityLevels Epic = Run->SavedQuality;
+		Epic.SetFromSingleQualityLevel(3);
+		Scalability::SetQualityLevels(Epic);
+	}
+	Run->CaptureHandle = UGameViewportClient::OnScreenshotCaptured().AddLambda([Run](int32 Width, int32 Height, const TArray<FColor>& Bitmap)
+	{
+		HandleFurnishedCapture(*Run, Width, Height, Bitmap);
+	});
+
+	ADD_LATENT_AUTOMATION_COMMAND(FUntilCommand([]()
+	{
+		return !(GShaderCompilingManager && GShaderCompilingManager->IsCompiling()) && FAssetCompilingManager::Get().GetNumRemainingAssets() == 0;
+	}, []() { return true; }, 600.f));
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(4.f));
+	for (int32 Index = 0; Index < Run->Shots.Num(); ++Index)
+	{
+		ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([Run, Index]()
+		{
+			Run->CurrentShot = Index;
+			Run->bCaptured = false;
+			if (Run->Shots[Index].Setup) Run->Shots[Index].Setup(*Run);
+			return true;
+		}));
+		ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(Run->Shots[Index].Settle));
+		ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([Run]()
+		{
+			FScreenshotRequest::RequestScreenshot(FPaths::Combine(Run->OutDir, TEXT("Selection3D_unused.png")), false, false);
+			return true;
+		}));
+		ADD_LATENT_AUTOMATION_COMMAND(FUntilCommand([Run]() { return Run->bCaptured; },
+			[Run, Index]() { Run->Errors.Add(FString::Printf(TEXT("%s: no capture within 20 s"), *Run->Shots[Index].Name)); return true; }, 20.f));
+	}
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Run, SavedPulse]()
+	{
+		if (const ARoomPlannerManager* M = Run->Manager.Get())
+		{
+			AddInfo(FString::Printf(TEXT("[Selection3D] measured exposure at the end (single wall, level): %.5f"), M->GetMeasuredViewExposure()));
+		}
+		UGameViewportClient::OnScreenshotCaptured().Remove(Run->CaptureHandle);
+		for (const FString& Info : Run->Infos) AddInfo(Info);
+		for (const FString& Error : Run->Errors) AddError(Error);
+		TestEqual(TEXT("Every shot captured"), Run->FrameLuminance.Num(), Run->Shots.Num());
+		ClearFurnishedObjects(*Run);
+		if (ARoomPlannerManager* M = Run->Manager.Get())
+		{
+			M->SelectionPulseSeconds = SavedPulse;
+			M->ClearAllSelection();
+			M->SetPlannerSessionActive(false);
+			M->SetViewMode(true);
+			M->ClearLayout();
+			if (Run->bCreatedManager) M->Destroy();
+		}
+		if (APlayerController* Controller = Run->Controller.Get())
+		{
+			if (APawn* Pawn = Controller->GetPawn())
+			{
+				Pawn->SetActorHiddenInGame(false);
+				Pawn->SetActorEnableCollision(true);
+				Controller->SetViewTarget(Pawn);
+			}
+		}
+		if (ACameraActor* Cam = Run->Camera.Get()) Cam->Destroy();
+		Scalability::SetQualityLevels(Run->SavedQuality);
+		return true;
+	}));
 	return true;
 }
 

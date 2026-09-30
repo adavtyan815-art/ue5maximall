@@ -705,6 +705,13 @@ bool URoomPlannerWidget::IsContextEditorVisible() const
 	return CurrentViewMode == ERoomPlannerViewMode::View2D && (!bCategoryLayoutBuilt || Active2DCategory != EPlannerPanelCategory::Finish);
 }
 
+bool URoomPlannerWidget::IsSizeEditorVisible() const
+{
+	// In 3D a door / window is sized here as well (width, height, sill); walls are sized on the plan.
+	return IsContextEditorVisible() || (CurrentViewMode == ERoomPlannerViewMode::View3D && PlannerManager
+		&& PlannerManager->GetSelectionKind() == EPlannerSelectionKind::Opening);
+}
+
 void URoomPlannerWidget::UpdateCreationBlocksVisibility()
 {
 	using namespace PlannerPanelLayout;
@@ -777,8 +784,9 @@ void URoomPlannerWidget::UpdateContextSummary(const TArray<FPlannerDimensionLabe
 	// While a corner is dragged the labels are the dragged corner's walls, not the selection's: keep the line until the drop.
 	if (PlannerManager && PlannerManager->IsNodeDragActive()) return;
 	const bool bIs2D = (CurrentViewMode == ERoomPlannerViewMode::View2D);
+	// Not where the size fields show the same numbers (a door / window in 3D).
 	const bool bWanted = PlannerManager && PlannerManager->GetSelectionKind() != EPlannerSelectionKind::None
-		&& (!bIs2D || (bCategoryLayoutBuilt && Active2DCategory == EPlannerPanelCategory::Finish));
+		&& (!bIs2D || (bCategoryLayoutBuilt && Active2DCategory == EPlannerPanelCategory::Finish)) && !(!bIs2D && IsSizeEditorVisible());
 	FString Summary;
 	if (bWanted)
 	{
@@ -973,7 +981,7 @@ void URoomPlannerWidget::UpdateFloatingContextBar(const TArray<FPlannerDimension
 	{
 		Viewport = WidgetTree->RootWidget->GetCachedGeometry().GetLocalSize();
 	}
-	const float LeftLimit = GetPanelWidth() + ((bFinishCatalogBesidePanel && IsSideCatalogOpen()) ? GetPanelWidth() : 0.f);
+	const float LeftLimit = GetPanelWidth() + GetFinishCatalogColumnWidth();
 	// "On screen" from the projection only means in front of the camera: a selection scrolled out of the free plan area gets no bar
 	// (it would be pinned to an edge, far from the object).
 	const bool bAnchorVisible = Anchor && Anchor->bOnScreen && Anchor->ScreenPosition.X >= LeftLimit && Anchor->ScreenPosition.X <= Viewport.X
@@ -1527,12 +1535,18 @@ bool URoomPlannerWidget::IsSideCatalogOpen() const
 		|| (::IsValid(ActivePlannerTileCatalog) && ActivePlannerTileCatalog->IsInViewport());
 }
 
+float URoomPlannerWidget::GetFinishCatalogColumnWidth() const
+{
+	return (bFinishCatalogBesidePanel && IsSideCatalogOpen()) ? PlannerPanelRules::FinishCatalogShift(bFinishCatalogOverPanel, GetPanelWidth()) : 0.f;
+}
+
 void URoomPlannerWidget::OpenFinishFlyout(UUserWidget* Catalog)
 {
 	if (!Catalog) return;
-	// Same Z as before (over the plan); shifted right by the panel's width, so it stands beside the planner instead of over it.
+	// Same Z as before (over the planner). Its own panel is on the left, so unshifted it opens in place over the planner's panel (as the
+	// save dialog does); shifted by the panel's width it stands in a column beside it (bFinishCatalogOverPanel off).
 	Catalog->AddToViewport(99);
-	Catalog->SetRenderTranslation(FVector2D(GetPanelWidth(), 0.f));
+	Catalog->SetRenderTranslation(FVector2D(PlannerPanelRules::FinishCatalogShift(bFinishCatalogOverPanel, GetPanelWidth()), 0.f));
 	UpdateStatusStripPlacement();
 }
 
@@ -1552,7 +1566,7 @@ void URoomPlannerWidget::CloseFinishFlyouts()
 void URoomPlannerWidget::UpdateStatusStripPlacement()
 {
 	if (!StatusStrip) return;
-	const float SideWidth = (bFinishCatalogBesidePanel && IsSideCatalogOpen()) ? GetPanelWidth() : 0.f;
+	const float SideWidth = GetFinishCatalogColumnWidth();
 	if (UCanvasPanelSlot* StripSlot = Cast<UCanvasPanelSlot>(StatusStrip->Slot))
 	{
 		const FVector2D Wanted(PlannerPanelRules::StatusStripOffset(GetPanelWidth(), SideWidth), 20.f);
@@ -1611,14 +1625,15 @@ bool URoomPlannerWidget::IsScreenPositionOverPlannerUI(const FVector2D& ScreenSp
 		if (IsUnder(Pill ? Pill : HorizontalBox_3.Get()) || IsUnder(BtnHideHelp)) return true;
 	}
 	if (IsUnder(MessageChip) || IsUnder(FloatingContextBar)) return true;
-	// A paint / tile catalog beside the panel: its column (it takes its own clicks; the ones between its controls stop here too).
-	if (bFinishCatalogBesidePanel && IsSideCatalogOpen())
+	// A paint / tile catalog in a column beside the panel: that column (it takes its own clicks; the ones between its controls stop here
+	// too). Over the panel it needs nothing more: the panel's area is UI already.
+	if (const float CatalogColumn = GetFinishCatalogColumnWidth(); CatalogColumn > 0.f)
 	{
 		if (const UWidget* Root = WidgetTree ? WidgetTree->RootWidget.Get() : nullptr)
 		{
 			const FGeometry& RootGeometry = Root->GetCachedGeometry();
 			if (RootGeometry.GetLocalSize().X > 0.f && RootGeometry.IsUnderLocation(ScreenSpacePosition)
-				&& PlannerPanelRules::IsOverSideCatalog((float)RootGeometry.AbsoluteToLocal(ScreenSpacePosition).X, GetPanelWidth(), GetPanelWidth()))
+				&& PlannerPanelRules::IsOverSideCatalog((float)RootGeometry.AbsoluteToLocal(ScreenSpacePosition).X, GetPanelWidth(), CatalogColumn))
 			{
 				return true;
 			}

@@ -91,10 +91,37 @@ struct FPlannerWheelInputs
 	EPlannerPlacementKind PendingPlacementKind = EPlannerPlacementKind::None;
 	/** An object or a cabinet set is selected. */
 	bool bHasObjectOrSetSelected = false;
+	/** 3D: an interior object / cabinet set is being dragged with the left button (the wheel turns it instead of zooming). */
+	bool bDraggingObject3D = false;
+};
+
+/** What still counts as a click (not a camera orbit or a drag) in the 3D planner. */
+struct FPlannerClickLimits
+{
+	/** Cursor travel between press and release, in viewport pixels. */
+	float MaxMovePx = 6.f;
+	/** Look input the camera received while the button was down (sum of |yaw| + |pitch| input): any real orbit exceeds it. */
+	float MaxLookInput = 3.f;
+	float MaxHeldSeconds = 0.6f;
 };
 
 namespace PlannerPanelRules
 {
+	/**
+	 * 3D right button: the same button orbits the camera, so a press selects only when it was a click — released soon, without the
+	 * cursor travelling and without turning the camera. An orbit (cursor locked or not) always turns the camera.
+	 */
+	inline bool IsPointerClick(float MovedPx, float LookInput, float HeldSeconds, const FPlannerClickLimits& Limits)
+	{
+		return MovedPx <= Limits.MaxMovePx && LookInput <= Limits.MaxLookInput && HeldSeconds <= Limits.MaxHeldSeconds;
+	}
+
+	/** 3D left press on a door / window: it becomes a drag along the wall once the cursor has travelled this far (a shorter press is a click). */
+	inline bool StartsOpeningDrag(float MovedPx, float DragStartPx)
+	{
+		return MovedPx > DragStartPx;
+	}
+
 	inline FPlannerPanelVisibility Compute(const FPlannerPanelInputs& In)
 	{
 		FPlannerPanelVisibility Out;
@@ -150,6 +177,12 @@ namespace PlannerPanelRules
 		return FVector2D(FMath::Clamp(Anchor.X - 0.5f * BarSize.X, MinX, MaxX), FMath::Clamp(Anchor.Y + BelowLabel, Margin, MaxY));
 	}
 
+	/**
+	 * Where a paint / tile catalog stands (its render translation X) and the extra column it takes beside the planner panel: over the
+	 * panel, in place like the save dialog (0, no column), or beside it (the panel's width for both).
+	 */
+	inline float FinishCatalogShift(bool bOverPanel, float PanelWidth) { return bOverPanel ? 0.f : PanelWidth; }
+
 	/** The column a finish catalog beside the panel covers, in root-canvas X. */
 	inline bool IsOverSideCatalog(float LocalX, float PanelWidth, float SideCatalogWidth)
 	{
@@ -157,14 +190,15 @@ namespace PlannerPanelRules
 	}
 
 	/**
-	 * What a wheel notch turns. Editing is 2D-only, so 3D never turns anything; the planner's own UI keeps the wheel (its scroll
-	 * boxes, or nothing). Then the item being placed comes first — a catalog drag, else an armed click-to-place — and the selection
-	 * last. Cabinet sets are wall-only, so a cabinet-set drag or placement has nothing to turn (and does not fall back to the
-	 * selection meanwhile).
+	 * What a wheel notch turns. In 3D the wheel zooms, except while an object is dragged with the left button: then it turns that object
+	 * (the drag has selected it). In 2D the planner's own UI keeps the wheel (its scroll boxes, or nothing). Then the item being placed
+	 * comes first — a catalog drag, else an armed click-to-place — and the selection last. Cabinet sets are wall-only, so a cabinet-set
+	 * drag or placement has nothing to turn (and does not fall back to the selection meanwhile).
 	 */
 	inline EPlannerWheelTarget ResolveWheelTarget(const FPlannerWheelInputs& In)
 	{
-		if (!In.bPlannerOpen || !In.bIs2D) return EPlannerWheelTarget::None;
+		if (!In.bPlannerOpen) return EPlannerWheelTarget::None;
+		if (!In.bIs2D) return (In.bDraggingObject3D && In.bHasObjectOrSetSelected) ? EPlannerWheelTarget::Selection : EPlannerWheelTarget::None;
 		if (!In.bPlannerUIShown || In.bCursorOverPlannerUI) return EPlannerWheelTarget::None;
 		if (In.CatalogDragKind != EPlannerPlacementKind::None)
 		{
@@ -191,6 +225,16 @@ namespace PlannerPanelRules
 		Accum -= (float)Notches;
 		if (FMath::Abs(Accum) < Tolerance) Accum = 0.f;
 		return (bInvert ? 1.f : -1.f) * StepDeg * (float)Notches;
+	}
+
+	/**
+	 * «↺ / ↻ 15°»: the yaw first rounds to the nearest multiple of StepDeg (0, 15, 30, 45…), then turns by DeltaDeg (±StepDeg), so the
+	 * buttons always land on the grid whatever the wheel's fine turns left. Returns the new yaw in (−180, 180].
+	 */
+	inline float SnapAndStepYaw(float CurrentYawDeg, float DeltaDeg, float StepDeg)
+	{
+		const float Snapped = StepDeg > KINDA_SMALL_NUMBER ? FMath::RoundToFloat(CurrentYawDeg / StepDeg) * StepDeg : CurrentYawDeg;
+		return (float)FRotator::NormalizeAxis(Snapped + DeltaDeg);
 	}
 
 	/** An angle on the plan as the rotate buttons name it: «↻ 30°» clockwise (positive yaw), «↺ 15°» counter-clockwise, «0°». */

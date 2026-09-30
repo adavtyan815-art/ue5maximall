@@ -38,6 +38,7 @@
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "Constructor/RoomPlannerManager.h"
+#include "Constructor/PlannerPlacedObjectActor.h"
 #include "FurnitureConfigurator/UI/RoomPlannerWidget.h"
 #include "FurnitureConfigurator/UI/PlannerCatalogItemWidget.h"
 #include "FurnitureConfigurator/UI/PlannerPanelRules.h"
@@ -235,6 +236,8 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
         return;
     }
 
+    TickPlannerCameraCuts();
+
     // в”Ђв”Ђ PS Input late-bind retry в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     // If BeginPlay ran before the PS plugin attached the component (common on
     // persistent servers where the browser connects after level load), we retry
@@ -290,6 +293,18 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
 
     // Room Planner mouse wheel: a burst on the selection is committed once the wheel is idle (in any mode; 3D entry flushes too).
     TickPlannerWheelCommit();
+
+    // A 3D gesture ends with the 3D planner (2D switch, planner closed): the drag's release never comes, so commit it here.
+    if (!(PlannerManager && PlannerManager->bPlannerUIOpen && !PlannerManager->Is2DModeActive()))
+    {
+        EndPlanner3DPointer(PlannerManager, true);
+        if (bPlannerShowsCursorDuringCapture)
+        {
+            // 2D sets its own capture behaviour (ApplyRoomPlannerInputMode); a closed planner gets back the 3D view's (hide during capture).
+            if (!(PlannerManager && PlannerManager->bPlannerUIOpen)) SetPlannerCursorHiddenDuringCapture(true);
+            bPlannerShowsCursorDuringCapture = false;
+        }
+    }
 
     if (PlannerManager && PlannerManager->Is2DModeActive())
     {
@@ -509,12 +524,12 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
 
     bool bIsMouseOverUI = IsWidgetHoveredGeometrically(MainWidgetInstance);
 
-    // Planner 3D mode: LMB picks the wall / opening / floor / object / cabinet set under the cursor (REQ-13 in 3D).
-    // Passive selection only — the booth double-click / hover interaction below is unaffected.
-    if (PlannerManager && PlannerManager->bPlannerUIOpen && !bIsMouseOverUI && WasInputKeyJustPressed(EKeys::LeftMouseButton)
-        && !PlannerManager->IsCursorOverPlannerUI())
+    // Planner 3D mode: a right click selects the wall face / opening / floor / object / cabinet set under the cursor (REQ-13 in 3D),
+    // a left press on a door or window drags it along its wall, a left click on a leaf opens or closes it. The booth double-click /
+    // hover interaction below is unaffected.
+    if (PlannerManager && PlannerManager->bPlannerUIOpen && !PlannerManager->Is2DModeActive())
     {
-        PlannerPickUnderCursor();
+        TickPlanner3DPointer(PlannerManager, bIsMouseOverUI);
     }
 
     bool bIsMouseDown = IsInputKeyDown(EKeys::LeftMouseButton) || IsInputKeyDown(EKeys::RightMouseButton) || bRightMouseIsDragging;
@@ -565,10 +580,14 @@ void AAwsTutorial_PlayerController::PlayerTick(float DeltaTime)
             {
                 bHoveringShowroom = true;
             }
-            else if (PlannerManager && PlannerManager->bPlannerUIOpen && !PlannerManager->Is2DModeActive()
-                && ARoomPlannerManager::IsOpeningLeafComponent(HitComp))
+            else if (PlannerManager && PlannerManager->bPlannerUIOpen && !PlannerManager->Is2DModeActive())
             {
-                bHoveringShowroom = true; // planner 3D: door / window leaves are clickable (open / close)
+                // Planner 3D: doors, windows and interior objects can be grabbed (dragged), leaves clicked (open / close).
+                int32 HoverSeg = -1, HoverOpening = -1;
+                bool bHoverFaceLeft = true;
+                bHoveringShowroom = ARoomPlannerManager::IsOpeningLeafComponent(HitComp)
+                    || Cast<APlannerPlacedObjectActor>(HitResult.GetActor()) != nullptr
+                    || PlannerManager->FindOpeningAtHit(HitResult, HoverSeg, HoverOpening, bHoverFaceLeft);
             }
         }
     }
@@ -638,6 +657,7 @@ void AAwsTutorial_PlayerController::AddYawInput(float Val)
     if (Val != 0.f && IsInputKeyDown(EKeys::RightMouseButton))
     {
         bRightMouseIsDragging = true;
+        PlannerRMBLookInput += FMath::Abs(Val);
     }
 }
 
@@ -648,6 +668,7 @@ void AAwsTutorial_PlayerController::AddPitchInput(float Val)
     if (Val != 0.f && IsInputKeyDown(EKeys::RightMouseButton))
     {
         bRightMouseIsDragging = true;
+        PlannerRMBLookInput += FMath::Abs(Val);
     }
 }
 
@@ -2106,6 +2127,8 @@ void AAwsTutorial_PlayerController::SetRoomPlannerCamera2D(bool bIn2D, FVector C
 	UWorld* World = GetWorld();
 	if (!World) return;
 
+	RequestPlannerCameraCut(2); // plan ↔ 3D: the exposure starts at the new view's target, not from the other view's
+
 	if (bIn2D)
 	{
 		SavedControlRotation = GetControlRotation();
@@ -2222,6 +2245,11 @@ void AAwsTutorial_PlayerController::RestorePlayerCamera()
 	SetIgnoreLookInput(false);
 	SetIgnoreMoveInput(false);
 	SetControlRotation(SavedControlRotation);
+
+	// Back to the main world: its own FOV, and the teleport back (made by the server, arriving whenever) is a camera cut.
+	RestoreMainCameraFOV();
+	RequestPlannerCameraCut(2);
+	WatchPlannerCameraJumps(6.f);
 	if (APawn* ControlledPawn = GetPawn())
 	{
 		SetViewTargetWithBlend(ControlledPawn, 0.0f);
@@ -2785,7 +2813,7 @@ bool AAwsTutorial_PlayerController::PlannerPlacePendingAt(const FVector& WorldPo
 	return true;
 }
 
-EPlannerSelectionKind AAwsTutorial_PlayerController::PlannerPickUnderCursor()
+EPlannerSelectionKind AAwsTutorial_PlayerController::PlannerPickUnderCursor(bool bToggleLeaves)
 {
 	ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(GetWorld());
 	if (!Manager)
@@ -2796,7 +2824,7 @@ EPlannerSelectionKind AAwsTutorial_PlayerController::PlannerPickUnderCursor()
 	if (GetHitResultUnderCursor(ECC_Visibility, true, Hit) && Hit.GetActor())
 	{
 		// 3D: a click on a door / window leaf opens or closes it (local view state) instead of selecting.
-		if (Manager->TryToggleOpeningLeafFromHit(Hit))
+		if (bToggleLeaves && Manager->TryToggleOpeningLeafFromHit(Hit))
 		{
 			return EPlannerSelectionKind::None;
 		}
@@ -2804,6 +2832,356 @@ EPlannerSelectionKind AAwsTutorial_PlayerController::PlannerPickUnderCursor()
 	}
 	Manager->ClearAllSelection();
 	return EPlannerSelectionKind::None;
+}
+
+void AAwsTutorial_PlayerController::TickPlanner3DPointer(ARoomPlannerManager* Manager, bool bMouseOverMainUI)
+{
+	if (!Manager || !IsLocalController()) return;
+	const float Now = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
+	FVector2D Mouse = FVector2D::ZeroVector;
+	const bool bHaveMouse = GetMousePosition(Mouse.X, Mouse.Y);
+	const bool bOverUI = bMouseOverMainUI || Manager->IsCursorOverPlannerUI();
+
+	// ── Right button: a click selects; held and moved, the camera orbits (the pawn's own binding, untouched here) ──
+	if (WasInputKeyJustPressed(EKeys::RightMouseButton))
+	{
+		bPlannerRMBArmed = !bOverUI && !bPlanner3DOpeningDrag;
+		bPlannerRMBHadMousePos = bHaveMouse;
+		PlannerRMBPressPos = Mouse;
+		PlannerRMBPressTime = Now;
+		PlannerRMBLookInput = 0.f;
+	}
+	if (bPlannerRMBArmed && WasInputKeyJustReleased(EKeys::RightMouseButton))
+	{
+		bPlannerRMBArmed = false;
+		const float Moved = (bHaveMouse && bPlannerRMBHadMousePos) ? FVector2D::Distance(Mouse, PlannerRMBPressPos) : 0.f;
+		FPlannerClickLimits Limits;
+		Limits.MaxMovePx = PlannerClickMaxMovePx;
+		Limits.MaxLookInput = PlannerClickMaxLookInput;
+		Limits.MaxHeldSeconds = PlannerClickMaxSeconds;
+		// Cabinet sets (тумбы) take no planner right click: a booth has its own right-button interaction.
+		FHitResult RMBHit;
+		const bool bOverBooth = GetHitResultUnderCursor(ECC_Visibility, true, RMBHit) && Cast<AShowroomBooth>(RMBHit.GetActor()) != nullptr;
+		if (!bOverBooth && PlannerPanelRules::IsPointerClick(Moved, PlannerRMBLookInput, Now - PlannerRMBPressTime, Limits))
+		{
+			// A right click on what is already selected (the same face, opening, room surface, object) deselects it.
+			const FString Before = Manager->GetSelectionSignature();
+			PlannerPickUnderCursor(false); // a leaf selects its door / window here; opening it is the left click's job
+			if (!Before.IsEmpty() && Manager->GetSelectionSignature() == Before)
+			{
+				Manager->ClearAllSelection();
+			}
+		}
+	}
+
+	// ── What a left press here would grab (a door / window, an interior object, a cabinet set, or only a leaf to click) ──
+	auto ResolveGrab = [Manager](const FHitResult& Hit, EPlanner3DDragKind& OutKind, FString& OutID, int32& OutSeg, int32& OutOpening, bool& bOutFaceLeft)
+	{
+		OutKind = EPlanner3DDragKind::None;
+		OutID.Empty();
+		if (const APlannerPlacedObjectActor* Obj = Cast<APlannerPlacedObjectActor>(Hit.GetActor()))
+		{
+			OutKind = EPlanner3DDragKind::Object;
+			OutID = Obj->Data.InstanceID;
+		}
+		else if (const AShowroomBooth* Booth = Cast<AShowroomBooth>(Hit.GetActor()); Booth && !Booth->PlannerInstanceID.IsEmpty())
+		{
+			OutKind = EPlanner3DDragKind::CabinetSet;
+			OutID = Booth->PlannerInstanceID;
+		}
+		else if (Manager->FindOpeningAtHit(Hit, OutSeg, OutOpening, bOutFaceLeft))
+		{
+			OutKind = EPlanner3DDragKind::Opening;
+			OutID = Manager->GetOpeningID(OutSeg, OutOpening);
+		}
+		return OutKind != EPlanner3DDragKind::None || ARoomPlannerManager::IsOpeningLeafComponent(Hit.GetComponent());
+	};
+
+	// While no button is down: over something grabbable the viewport must not hide (and pin) the cursor when a press captures the mouse,
+	// or the cursor never moves during the drag. Elsewhere the 3D view keeps hiding it during a capture (RMB orbit).
+	if (!IsInputKeyDown(EKeys::LeftMouseButton) && !IsInputKeyDown(EKeys::RightMouseButton))
+	{
+		FHitResult Hover;
+		EPlanner3DDragKind HoverKind;
+		FString HoverID;
+		int32 HoverSeg = -1, HoverOpening = -1;
+		bool bHoverFaceLeft = true;
+		const bool bOverGrabbable = !bOverUI && bHaveMouse && GetHitResultUnderCursor(ECC_Visibility, true, Hover) && Hover.GetActor()
+			&& ResolveGrab(Hover, HoverKind, HoverID, HoverSeg, HoverOpening, bHoverFaceLeft);
+		SetPlannerCursorHiddenDuringCapture(!bOverGrabbable);
+	}
+
+	// ── Left button: press on a door / window / object and move → drag it; a release without moving clicks a leaf ──
+	if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
+	{
+		EndPlanner3DPointer(Manager, true); // a press never overlaps a drag, but a lost release must not strand one
+		FHitResult Hit;
+		if (!bOverUI && GetHitResultUnderCursor(ECC_Visibility, true, Hit) && Hit.GetActor())
+		{
+			int32 SegID = -1, OpIdx = -1;
+			bool bFaceLeft = true;
+			EPlanner3DDragKind Kind;
+			FString ID;
+			if (ResolveGrab(Hit, Kind, ID, SegID, OpIdx, bFaceLeft))
+			{
+				bPlannerLMBArmed = true;
+				PlannerLMBPressHit = Hit;
+				PlannerLMBPressPos = Mouse;
+				Planner3DDragKind = Kind;
+				Planner3DDragItemID = ID;
+				Planner3DDragSegmentID = SegID;
+				Planner3DDragOpeningID = (Kind == EPlanner3DDragKind::Opening) ? ID : FString();
+				bPlanner3DDragFaceLeft = bFaceLeft;
+				Planner3DDragGrabOffset = 0.f;
+				FVector Origin, Direction;
+				float Along = 0.f, Centre = 0.f;
+				if (Kind == EPlanner3DDragKind::Opening && DeprojectMousePositionToWorld(Origin, Direction)
+					&& Manager->ProjectRayOntoWallFace(SegID, bFaceLeft, Origin, Direction, Along) && Manager->GetOpeningDistance(SegID, OpIdx, Centre))
+				{
+					Planner3DDragGrabOffset = Along - Centre; // the opening keeps its place under the cursor, wherever it was grabbed
+				}
+				// Objects move in the horizontal plane of the grabbed point, which stays under the cursor.
+				Planner3DDragPlaneZ = Hit.ImpactPoint.Z;
+				Planner3DDragItemOffset = FVector::ZeroVector;
+				FPlacedFurnitureData ObjData;
+				FPlacedCabinetSetData SetData;
+				if (Kind == EPlanner3DDragKind::Object && Manager->GetPlacedObject(ID, ObjData))
+				{
+					Planner3DDragItemOffset = ObjData.Location - FVector(Hit.ImpactPoint.X, Hit.ImpactPoint.Y, 0.f);
+				}
+				else if (Kind == EPlanner3DDragKind::CabinetSet && Manager->GetCabinetSet(ID, SetData))
+				{
+					Planner3DDragItemOffset = SetData.Location - FVector(Hit.ImpactPoint.X, Hit.ImpactPoint.Y, 0.f);
+				}
+			}
+		}
+	}
+	if (!bPlannerLMBArmed) return;
+
+	if (IsInputKeyDown(EKeys::LeftMouseButton))
+	{
+		if (!bPlanner3DOpeningDrag && Planner3DDragKind != EPlanner3DDragKind::None && bHaveMouse
+			&& PlannerPanelRules::StartsOpeningDrag(FVector2D::Distance(Mouse, PlannerLMBPressPos), PlannerOpeningDragStartPx))
+		{
+			// The drag selects what it moves (its panel, its overlay), as a right click would.
+			bool bSelected = false;
+			if (Planner3DDragKind == EPlanner3DDragKind::Opening)
+			{
+				const int32 OpIdx = Manager->FindOpeningIndexByID(Planner3DDragSegmentID, Planner3DDragOpeningID);
+				bSelected = OpIdx != INDEX_NONE && Manager->SelectOpening(Planner3DDragSegmentID, OpIdx, bPlanner3DDragFaceLeft);
+			}
+			else if (Planner3DDragKind == EPlanner3DDragKind::Object)
+			{
+				bSelected = Manager->SelectPlacedObject(Planner3DDragItemID);
+			}
+			else
+			{
+				bSelected = Manager->SelectCabinetSet(Planner3DDragItemID);
+			}
+			if (!bSelected)
+			{
+				bPlannerLMBArmed = false; // it went away (a replicated edit) between the press and the move
+				return;
+			}
+			bPlanner3DOpeningDrag = true;
+			if (!bPlannerLookIgnoredForDrag)
+			{
+				SetIgnoreLookInput(true);
+				bPlannerLookIgnoredForDrag = true;
+			}
+		}
+		if (bPlanner3DOpeningDrag)
+		{
+			FVector Origin, Direction;
+			if (DeprojectMousePositionToWorld(Origin, Direction))
+			{
+				if (Planner3DDragKind == EPlanner3DDragKind::Opening)
+				{
+					Manager->DragSelectedOpeningAlongRay(Origin, Direction, Planner3DDragGrabOffset);
+				}
+				else if (!FMath::IsNearlyZero(Direction.Z, 1.e-4))
+				{
+					// The grabbed point's horizontal plane; a ray that meets it behind the camera or beyond 100 m moves nothing.
+					const double T = (Planner3DDragPlaneZ - Origin.Z) / Direction.Z;
+					if (T > 0.0 && T < 10000.0)
+					{
+						const FVector Point = Origin + Direction * T;
+						const FVector NewLoc = FVector(Point.X, Point.Y, 0.f) + Planner3DDragItemOffset;
+						if (Planner3DDragKind == EPlanner3DDragKind::Object)
+						{
+							FPlacedFurnitureData D;
+							if (Manager->GetPlacedObject(Planner3DDragItemID, D))
+							{
+								// A free-standing item stops at walls (and slides along them); a wall-mounted one follows its wall anyway.
+								const FVector Allowed = D.WallAttachment.IsAttached() ? NewLoc
+									: Manager->ConstrainDragOutsideWalls(Manager->FindPlacedObjectActor(Planner3DDragItemID), D.Location, NewLoc);
+								Manager->MovePlacedObjectLocal(Planner3DDragItemID, Allowed, GetPlannerDragRotation(Planner3DDragItemID, D.Rotation));
+							}
+						}
+						else
+						{
+							FPlacedCabinetSetData D;
+							if (Manager->GetCabinetSet(Planner3DDragItemID, D)) Manager->MoveCabinetSetLocal(Planner3DDragItemID, NewLoc, GetPlannerDragRotation(Planner3DDragItemID, D.Rotation));
+						}
+					}
+				}
+			}
+		}
+		return;
+	}
+
+	// Released.
+	if (bPlanner3DOpeningDrag)
+	{
+		EndPlanner3DPointer(Manager, true);
+		return;
+	}
+	if (WasInputKeyJustReleased(EKeys::LeftMouseButton) && !bOverUI)
+	{
+		Manager->TryToggleOpeningLeafFromHit(PlannerLMBPressHit); // a click on a leaf opens / closes it (no-op elsewhere)
+	}
+	bPlannerLMBArmed = false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Room Planner: camera field of view and camera cuts on the way in and out
+// ═══════════════════════════════════════════════════════════════════════════════
+
+UCameraComponent* AAwsTutorial_PlayerController::FindPlannerViewCamera() const
+{
+	// The camera the pawn is seen through: its active camera component (the first one if none is marked active).
+	const APawn* ControlledPawn = GetPawn();
+	if (!ControlledPawn) return nullptr;
+	TArray<UCameraComponent*> Cameras;
+	ControlledPawn->GetComponents<UCameraComponent>(Cameras);
+	for (UCameraComponent* Camera : Cameras)
+	{
+		if (Camera && Camera->IsActive()) return Camera;
+	}
+	return Cameras.Num() > 0 ? Cameras[0] : nullptr;
+}
+
+void AAwsTutorial_PlayerController::ApplyPlannerCameraFOV()
+{
+	if (!IsLocalController() || bPlannerFOVApplied) return; // a second open keeps the main world's value saved the first time
+	if (UCameraComponent* Camera = FindPlannerViewCamera())
+	{
+		PlannerFOVCamera = Camera;
+		SavedMainCameraFOV = Camera->FieldOfView;
+		Camera->SetFieldOfView(PlannerCameraFOV);
+	}
+	// A locked camera-manager FOV outranks the camera component: follow it the same way.
+	if (PlayerCameraManager && PlayerCameraManager->GetLockedFOV() > 0.f)
+	{
+		SavedLockedFOV = PlayerCameraManager->GetLockedFOV();
+		PlayerCameraManager->SetFOV(PlannerCameraFOV);
+	}
+	bPlannerFOVApplied = true;
+	UE_LOG(LogTemp, Log, TEXT("[RoomPlanner] Camera FOV %.0f → %.0f while the planner is open."), SavedMainCameraFOV, PlannerCameraFOV);
+}
+
+void AAwsTutorial_PlayerController::RestoreMainCameraFOV()
+{
+	if (!bPlannerFOVApplied) return;
+	if (UCameraComponent* Camera = PlannerFOVCamera.Get())
+	{
+		if (SavedMainCameraFOV > 0.f) Camera->SetFieldOfView(SavedMainCameraFOV);
+	}
+	if (PlayerCameraManager && SavedLockedFOV > 0.f)
+	{
+		PlayerCameraManager->SetFOV(SavedLockedFOV);
+	}
+	UE_LOG(LogTemp, Log, TEXT("[RoomPlanner] Camera FOV back to %.0f."), SavedMainCameraFOV);
+	PlannerFOVCamera.Reset();
+	SavedMainCameraFOV = -1.f;
+	SavedLockedFOV = 0.f;
+	bPlannerFOVApplied = false;
+}
+
+void AAwsTutorial_PlayerController::RequestPlannerCameraCut(int32 Frames)
+{
+	PlannerCameraCutFrames = FMath::Max(PlannerCameraCutFrames, Frames);
+}
+
+void AAwsTutorial_PlayerController::WatchPlannerCameraJumps(float Seconds)
+{
+	const UWorld* World = GetWorld();
+	PlannerCameraJumpWatchUntil = FMath::Max(PlannerCameraJumpWatchUntil, (World ? World->GetRealTimeSeconds() : 0.) + Seconds);
+	// Where the camera is now (before a teleport made this frame shows): the next tick compares with it.
+	bHaveLastPlannerCameraLocation = PlayerCameraManager != nullptr;
+	if (PlayerCameraManager) LastPlannerCameraLocation = PlayerCameraManager->GetCameraLocation();
+}
+
+void AAwsTutorial_PlayerController::TickPlannerCameraCuts()
+{
+	if (!PlayerCameraManager) return;
+	const UWorld* World = GetWorld();
+	const double Now = World ? World->GetRealTimeSeconds() : 0.;
+
+	// Entering and leaving the planner teleports the pawn (locally on the way in, by the server on the way out, whenever that arrives):
+	// the camera's jump is a cut, so exposure and temporal history start at the new place instead of adapting from the old one.
+	if (Now < PlannerCameraJumpWatchUntil)
+	{
+		const FVector Camera = PlayerCameraManager->GetCameraLocation();
+		if (bHaveLastPlannerCameraLocation && FVector::DistSquared(Camera, LastPlannerCameraLocation) > FMath::Square(PlannerCameraJumpCutDistanceCm))
+		{
+			RequestPlannerCameraCut(2);
+		}
+		LastPlannerCameraLocation = Camera;
+		bHaveLastPlannerCameraLocation = true;
+	}
+	if (PlannerCameraCutFrames > 0)
+	{
+		PlayerCameraManager->SetGameCameraCutThisFrame();
+		--PlannerCameraCutFrames;
+	}
+}
+
+void AAwsTutorial_PlayerController::SetPlannerCursorHiddenDuringCapture(bool bHide)
+{
+	const ULocalPlayer* LP = GetLocalPlayer();
+	UGameViewportClient* Viewport = LP ? LP->ViewportClient.Get() : nullptr;
+	if (!Viewport) return;
+	if (Viewport->HideCursorDuringCapture() != bHide)
+	{
+		Viewport->SetHideCursorDuringCapture(bHide);
+	}
+	bPlannerShowsCursorDuringCapture = !bHide;
+}
+
+void AAwsTutorial_PlayerController::EndPlanner3DPointer(ARoomPlannerManager* Manager, bool bCommit)
+{
+	bPlannerRMBArmed = false;
+	if (bPlanner3DOpeningDrag && bCommit && Manager)
+	{
+		if (Planner3DDragKind == EPlanner3DDragKind::Opening && Manager->SelectedSegmentID != -1 && Manager->SelectedOpeningIndex != -1)
+		{
+			// As the 2D release: one commit by the opening's id (the drag may have re-sorted the wall's openings).
+			float OpeningDist = 0.f;
+			if (Manager->GetOpeningDistance(Manager->SelectedSegmentID, Manager->SelectedOpeningIndex, OpeningDist))
+			{
+				Server_UpdateOpeningPosition(Manager->SelectedSegmentID,
+					Manager->GetOpeningID(Manager->SelectedSegmentID, Manager->SelectedOpeningIndex), OpeningDist);
+			}
+		}
+		else if (Planner3DDragKind == EPlanner3DDragKind::Object || Planner3DDragKind == EPlanner3DDragKind::CabinetSet)
+		{
+			PlannerCommitSelectedObjectTransform(); // as the 2D release (a wheel turn made meanwhile rides along)
+		}
+	}
+	if (bPlanner3DOpeningDrag && Manager)
+	{
+		// Drop and deselect: the drag's selection (and its highlight) lasts while the button is held, the release clears both.
+		Manager->ClearAllSelection();
+	}
+	bPlanner3DOpeningDrag = false;
+	bPlannerLMBArmed = false;
+	Planner3DDragKind = EPlanner3DDragKind::None;
+	if (bPlannerLookIgnoredForDrag)
+	{
+		SetIgnoreLookInput(false);
+		bPlannerLookIgnoredForDrag = false;
+	}
 }
 
 void AAwsTutorial_PlayerController::PlannerCommitSelectedObjectTransform()
@@ -2872,7 +3250,10 @@ EPlannerWheelTarget AAwsTutorial_PlayerController::ResolvePlannerWheelTarget(ARo
 	In.bIs2D = Manager && Manager->Is2DModeActive();
 	if (!In.bPlannerOpen || !In.bIs2D)
 	{
-		return EPlannerWheelTarget::None; // 3D: nothing is turned, nothing else is looked at
+		// 3D: the wheel zooms, except that it turns an object while the left button drags it.
+		In.bDraggingObject3D = bPlanner3DOpeningDrag && (Planner3DDragKind == EPlanner3DDragKind::Object || Planner3DDragKind == EPlanner3DDragKind::CabinetSet);
+		In.bHasObjectOrSetSelected = Manager && (!Manager->SelectedObjectID.IsEmpty() || !Manager->SelectedCabinetSetID.IsEmpty());
+		return PlannerPanelRules::ResolveWheelTarget(In);
 	}
 	In.bPlannerUIShown = Manager->IsPlannerUIShown();
 	In.bCursorOverPlannerUI = Manager->IsCursorOverPlannerUI();
@@ -2918,7 +3299,10 @@ void AAwsTutorial_PlayerController::ApplyPlannerWheel(ARoomPlannerManager* Manag
 	PlannerWheelTargetKey = TargetKey;
 	LastPlannerWheelTime = Now;
 
-	const float DeltaYaw = PlannerPanelRules::ConsumeWheelSteps(PlannerWheelAccum, WheelDelta, PlannerWheelRotateStepDeg, bInvertPlannerWheelRotation);
+	// 3D drag: fine 1° steps (the ↺ / ↻ buttons put it back on the 15° grid); the 2D plan keeps its own step.
+	const bool bFine3D = Manager && !Manager->Is2DModeActive() && bPlanner3DOpeningDrag;
+	const float StepDeg = bFine3D ? Planner3DWheelRotateStepDeg : PlannerWheelRotateStepDeg;
+	const float DeltaYaw = PlannerPanelRules::ConsumeWheelSteps(PlannerWheelAccum, WheelDelta, StepDeg, bInvertPlannerWheelRotation);
 	if (FMath::IsNearlyZero(DeltaYaw))
 	{
 		return;

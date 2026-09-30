@@ -114,6 +114,8 @@ public:
 
 	/** The selection's size fields, «Добавить на стену», swing, style and rotate: 2D, on «Планировка» and «Каталог». */
 	bool IsContextEditorVisible() const;
+	/** The size fields: the Context's editor, and in 3D for a selected door / window. */
+	bool IsSizeEditorVisible() const;
 
 	// ── Replace actions and tool / selection coherence ──
 
@@ -155,8 +157,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel")
 	bool bFinishCatalogBesidePanel = true;
 
+	/**
+	 * With bFinishCatalogBesidePanel: the catalog opens in place, over the left panel (as the save dialog does), and the plan keeps the
+	 * rest of the screen. Off: in its own column to the right of the panel.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MaxiMall | UI Sizing - Panel", meta = (EditCondition = "bFinishCatalogBesidePanel"))
+	bool bFinishCatalogOverPanel = true;
+
 	/** A paint or tile catalog is open (beside the panel, or full-screen when bFinishCatalogBesidePanel is off). */
 	bool IsSideCatalogOpen() const;
+
+	/** Width of the column an open paint / tile catalog takes to the right of the panel (0 when it opens over the panel, or none is open). */
+	float GetFinishCatalogColumnWidth() const;
 
 	/** «Пол» / «Плинтус» / «Потолок» on the «Отделка» page: the same room's other surface (the ceiling in 3D only). */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Finish")

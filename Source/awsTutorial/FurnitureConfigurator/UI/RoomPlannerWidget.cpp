@@ -103,6 +103,15 @@ void URoomPlannerWidget::NativeConstruct()
 		UE_LOG(LogTemp, Warning, TEXT("[RoomPlanner] Requesting server relocation of player to: %s (Original was: %s)"),
 			*SafeSpot.ToString(), *CachedOriginalPlayerLocation.ToString());
 
+		// The planner's camera: its FOV, and the teleport below (and the server's correction of it) as camera cuts, so the exposure is
+		// right from the first frame instead of fading in from the main world's.
+		if (PC)
+		{
+			PC->ApplyPlannerCameraFOV();
+			PC->RequestPlannerCameraCut(3);
+			PC->WatchPlannerCameraJumps(6.f);
+		}
+
 		// Immediate local client-side prediction
 		CharPawn->TeleportTo(SafeSpot, FRotator::ZeroRotator, false, true);
 		if (UCharacterMovementComponent* MoveComp = CharPawn->GetCharacterMovement())
@@ -403,12 +412,8 @@ FReply URoomPlannerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, 
 			}
 		}
 	}
-	else if (CurrentViewMode == ERoomPlannerViewMode::View3D && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
-	{
-		// 3D mode: pick the surface / object under the cursor for finishing (REQ-13 in 3D). Not handled so the
-		// controller's booth interaction still receives the click. Placement / editing stay 2D-only.
-		PickSurfaceUnderCursor();
-	}
+	// 3D: nothing here. The press stays unhandled and reaches the player controller, which selects on a right click and drags doors
+	// and windows with the left button (AAwsTutorial_PlayerController::TickPlanner3DPointer), and still runs the booth interaction.
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
@@ -948,7 +953,7 @@ void URoomPlannerWidget::UpdateGuidanceHintText()
 
 	if (CurrentViewMode == ERoomPlannerViewMode::View3D)
 	{
-		TxtGuidanceHint->SetText(FText::FromString(TEXT("3D: кликните по стене, полу, потолку или объекту и назначьте «Краску» или «Плитку» • ПКМ — вращение камеры • колесо — зум • «2D» — редактирование плана")));
+		TxtGuidanceHint->SetText(FText::FromString(TEXT("3D: щелчок ПКМ — выбрать стену, пол, потолок, проём или объект (повторный щелчок — снять выбор), затем «Краска» или «Плитка» • ПКМ с перемещением — вращение камеры • ЛКМ по двери, окну или предмету — перетащить (колесо — повернуть предмет), щелчок по створке — открыть / закрыть • колесо — зум • «2D» — редактирование плана")));
 		return;
 	}
 
@@ -1226,8 +1231,8 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 	if (!PlannerManager) return;
 
 	// The size fields, «Добавить на стену», swing, style and rotate are the Context's editor: 2D, not on «Отделка» (which shows the
-	// title, a one-line size summary and the finishes instead).
-	const bool bEditorVisible = IsContextEditorVisible();
+	// title, a one-line size summary and the finishes instead). A door / window keeps its size fields in 3D too.
+	const bool bEditorVisible = IsSizeEditorVisible();
 
 	if (PlannerManager->SelectedSegmentID != -1 && bEditorVisible)
 	{
@@ -1300,7 +1305,8 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 		}
 
 		if (BtnApplyProperties) BtnApplyProperties->SetVisibility(ESlateVisibility::Visible);
-		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(ESlateVisibility::Visible);
+		// Deleting stays a 2D workflow (DeleteSelected, the Delete key).
+		if (BtnDeleteTool) BtnDeleteTool->SetVisibility(IsContextEditorVisible() ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		if (Image_2) Image_2->SetVisibility(ESlateVisibility::Visible);
 		if (Border_wall_size) Border_wall_size->SetVisibility(ESlateVisibility::Visible);
 	}
@@ -1324,7 +1330,8 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 
 	// REQ-07: swing controls only for a selected door / window, 2D only
 	const EPlannerSelectionKind Kind = PlannerManager->GetSelectionKind();
-	const ESlateVisibility SwingVis = (bEditorVisible && Kind == EPlannerSelectionKind::Opening) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	const bool bContextEditor = IsContextEditorVisible(); // swing, style, rotate: 2D only (the size fields above also show in 3D)
+	const ESlateVisibility SwingVis = (bContextEditor && Kind == EPlannerSelectionKind::Opening) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 	if (BtnSwingLeft) BtnSwingLeft->SetVisibility(SwingVis);
 	if (BtnSwingRight) BtnSwingRight->SetVisibility(SwingVis);
 	if (BtnSwingInward) BtnSwingInward->SetVisibility(SwingVis);
@@ -1345,7 +1352,7 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 	// Door / window / archway style picker (built-in catalog): 2D only, like the swing controls.
 	if (StyleRow)
 	{
-		const bool bShowStyles = bEditorVisible && Kind == EPlannerSelectionKind::Opening;
+		const bool bShowStyles = bContextEditor && Kind == EPlannerSelectionKind::Opening;
 		StyleRow->SetVisibility(bShowStyles ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 		if (StyleCaption) StyleCaption->SetVisibility(bShowStyles ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 		if (bShowStyles)
@@ -1356,7 +1363,9 @@ void URoomPlannerWidget::UpdateDynamicPropertiesPanel()
 
 	// REQ-17 / REQ-18: rotate controls for objects / cabinet sets. An object hung on a wall takes its rotation from the wall: the
 	// buttons stay (the row does not jump) but are disabled and say why.
-	const ESlateVisibility RotVis = (bEditorVisible && (Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet)) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
+	// Also in 3D (a right-clicked object turns with ↺ / ↻; while dragged with the left button, with the wheel).
+	const ESlateVisibility RotVis = ((bContextEditor || !bIs2DPanel) && (Kind == EPlannerSelectionKind::Object || Kind == EPlannerSelectionKind::CabinetSet))
+		? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 	if (BtnRotateLeft) BtnRotateLeft->SetVisibility(RotVis);
 	if (BtnRotateRight) BtnRotateRight->SetVisibility(RotVis);
 	if (RotateRow) RotateRow->SetVisibility(RotVis == ESlateVisibility::Visible ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
@@ -3027,8 +3036,7 @@ bool URoomPlannerWidget::DropCatalogItemAtScreenPosition(EPlannerPlacementKind K
 
 void URoomPlannerWidget::RotateSelected(float DeltaYawDeg)
 {
-	if (!PlannerManager) return;
-	if (CurrentViewMode != ERoomPlannerViewMode::View2D) return; // moving / rotating is a 2D workflow
+	if (!PlannerManager) return; // 2D and 3D alike (3D: the object picked with a right click)
 	AAwsTutorial_PlayerController* PC = GetPreviewController();
 	if (PC)
 	{
@@ -3039,11 +3047,22 @@ void URoomPlannerWidget::RotateSelected(float DeltaYawDeg)
 		return; // no player: nothing could be committed (a refusal is still shown, below)
 	}
 
+	// The buttons stay on the 15° grid: the current yaw (maybe a wheel's fine turn) first rounds to it, then one step.
+	float CurrentYawDeg = 0.f;
+	{
+		FPlacedFurnitureData Obj;
+		FPlacedCabinetSetData Set;
+		if (!PlannerManager->SelectedObjectID.IsEmpty() && PlannerManager->GetPlacedObject(PlannerManager->SelectedObjectID, Obj)) CurrentYawDeg = Obj.Rotation.Yaw;
+		else if (!PlannerManager->SelectedCabinetSetID.IsEmpty() && PlannerManager->GetCabinetSet(PlannerManager->SelectedCabinetSetID, Set)) CurrentYawDeg = Set.Rotation.Yaw;
+	}
+	const float StepDeg = FMath::Abs(DeltaYawDeg);
+	const float TurnDeg = (float)FRotator::NormalizeAxis(PlannerPanelRules::SnapAndStepYaw(CurrentYawDeg, DeltaYawDeg, StepDeg) - CurrentYawDeg);
+
 	// The mouse wheel's rules: a wall-attached selection is refused with the message, anything else turns locally.
 	FString InstanceID;
 	bool bCabinetSet = false;
 	float NewYawDeg = 0.f;
-	if (!PlannerManager->RotateSelectionLocal(DeltaYawDeg, InstanceID, bCabinetSet, NewYawDeg) || !PC) return;
+	if (!PlannerManager->RotateSelectionLocal(TurnDeg, InstanceID, bCabinetSet, NewYawDeg) || !PC) return;
 
 	if (bCabinetSet)
 	{

@@ -19,6 +19,7 @@ class FJsonValue;
 class ULocalLightComponent;
 class UPostProcessComponent;
 class UTexture2D;
+class UGameViewportClient;
 struct FHitResult;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRoomPlannerUpdated, const FString&, JSONState);
@@ -225,30 +226,37 @@ public:
 	float GetLeafOpenTargetForDebug(int32 SegmentID, int32 OpeningIndex) const;
 
 	// ── Planner exposure ───────────────────────────────────────────────────────
-	// Lighting is tuned against a deliberate exposure: while the planner UI is open in 3D, an unbound
-	// post-process (priority 10) owns the exposure in physical EV100. The planner sets the light level itself
-	// (CeilingLightLumensPerM2), so the exposure is FIXED (Min EV100 == Max EV100 disables adaptation): the
-	// picture no longer changes with camera framing, and wall / floor brightness differences are real, not
-	// metering artefacts. 6.8 EV100 puts the default white floor at ~75 % linear under the 280 lm/m² budget
-	// (≈200 lux on the floor), two thirds of a stop below clipping. Widen the range only for adaptive behaviour.
+	// One light scale for inside and outside: the room light is set on the level's photometric scale (see
+	// FPlannerRoomLightSettings::LumensPerM2), so the level's own auto exposure shows the interior, the level through doors and
+	// windows, and the building from outside at once. The planner does not fix the exposure; while it is open an unbound
+	// post-process (priority 10) only makes the level's adaptation quicker and smooth (walking through a doorway, a new view).
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting|Exposure")
 	bool bManagePlannerExposure = true;
 
-	/** Fixed exposure (EV100) when equal to Max; otherwise the darkest the view may adapt to. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting|Exposure", meta = (ClampMin = "-10", ClampMax = "20"))
-	float PlannerExposureMinEV100 = 6.8f;
-
-	/** Equal to Min = fixed exposure (default). Raise above Min only to allow adaptation between the two values. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting|Exposure", meta = (ClampMin = "-10", ClampMax = "20"))
-	float PlannerExposureMaxEV100 = 6.8f;
-
-	/** Exposure compensation in stops on top of the fixed EV100: +1 doubles the displayed brightness, −1 halves it. The one taste control. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting|Exposure", meta = (ClampMin = "-5", ClampMax = "5"))
-	float PlannerExposureBias = 0.f;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoomPlanner|Lighting|Exposure")
 	TObjectPtr<UPostProcessComponent> PlannerExposure;
+
+	/**
+	 * While the planner is open, the level's auto exposure adapts at this speed (stops per second, up and down): inside and outside
+	 * differ by about a stop, so a doorway is a gentle, eye-like adjustment. Jumps (teleports, view switches) are camera cuts.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting|Exposure", meta = (ClampMin = "0.5", ClampMax = "100"))
+	float PlannerExposureAdaptSpeed = 3.f;
+
+	/**
+	 * The 2D plan draws no dynamic shadows: the sun's shadows of walls, furniture and the pawn only cluttered the floor plan and hid the
+	 * grid. Done with the local game viewport's DynamicShadows show flag (shadow maps, virtual shadow maps, ray-traced, distance-field and
+	 * capsule shadows alike; this player's view only, no console variable changed). 3D and a closed planner get the flag back as it was.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Lighting")
+	bool bHideShadowsInPlan = true;
+
+	/** Applies bHideShadowsInPlan to the local game viewport for the current view mode and session (also on EndPlay). */
+	void UpdatePlanViewShadows();
+
+	/** True while this manager holds the plan's shadows off (tests, diagnostics). */
+	bool ArePlanViewShadowsSuppressed() const { return bPlanShadowsSuppressed; }
 
 	/** Called by the planner widget on open / close; the exposure override exists only while a session is open in 3D. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Lighting|Exposure")
@@ -341,25 +349,68 @@ public:
 	/** Near-black, fully rough material of the 2D plan symbols (swing arcs). */
 	UMaterialInterface* GetPlanSymbolMaterial();
 
-	// ── Exterior view (3D) ─────────────────────────────────────────────────────
+	// Doors and windows show the level itself (its sky, sun and ground): interior and level share one light scale and one exposure.
+
+	// ── 3D selection overlay ───────────────────────────────────────────────────
+	// The project renders without custom depth (r.CustomDepth 0, kept for streaming and performance), so there is no outline pass.
+	// In 3D the selection is extra geometry instead of a material swap: the selected surface keeps its finish, a thin lit frame runs
+	// along its borders and around its openings, and a faint additive tint pulses over the whole surface, so the middle of a wall
+	// wider than the screen still reads as selected. A selected door / window gets the frame around it and the tint over its hole on
+	// both faces; objects and cabinet sets get the tint as an overlay material. The 2D plan keeps the selection material.
+
+	/** Colour (linear) of the frame. The frame is lit like paint, so it reads the same at every exposure. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Selection|3D")
+	FLinearColor SelectionFrameColor = FLinearColor(0.02f, 0.22f, 0.85f);
+
+	/** Hue of the pulsing tint (its brightness follows SelectionTintMin/MaxFraction). A deep blue: added light shows little on white. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Selection|3D")
+	FLinearColor SelectionTintColor = FLinearColor(0.06f, 0.3f, 1.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Selection|3D", meta = (ClampMin = "0.5", ClampMax = "20"))
+	float SelectionFrameWidthCm = 4.f;
 
 	/**
-	 * While the planner is open in 3D, an unlit sky + ground enclosure around the layout is shown behind the doors and windows
-	 * (otherwise they show the level lit several stops below the planner exposure, i.e. black). It is not a light: it casts no
-	 * shadow, contributes no GI, is invisible to ray tracing and reflection captures, and its brightness is absolute cd/m²
-	 * matched to the planner's fixed exposure.
+	 * The tint pulses between these shares of display white. It is added light: a white wall sits near the top of the tone curve, so
+	 * it needs about 0.3 to read as blue; darker finishes show it much more strongly.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Exterior")
-	bool bShowExteriorBackdrop = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Selection|3D", meta = (ClampMin = "0", ClampMax = "2"))
+	float SelectionTintMinFraction = 0.04f;
 
-	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Exterior")
-	void SetExteriorBackdropEnabled(bool bEnabled);
+	/** Under the level's exposure (local exposure on) 0.11 matches the look 0.32 had under the former fixed EV 6.8. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Selection|3D", meta = (ClampMin = "0", ClampMax = "2"))
+	float SelectionTintMaxFraction = 0.11f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoomPlanner|Exterior")
-	TObjectPtr<UProceduralMeshComponent> ExteriorSkyMesh;
+	/** One pulse of the tint (s); 0 = steady at the maximum. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Selection|3D", meta = (ClampMin = "0"))
+	float SelectionPulseSeconds = 1.6f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoomPlanner|Exterior")
-	TObjectPtr<UProceduralMeshComponent> ExteriorGroundMesh;
+	/**
+	 * Exposure (EV100) assumed before the view's real exposure is measured when no post-process volume around the camera sets an exposure
+	 * range. The level's volume normally does (see GetViewExposureEV100); this only keeps the tint sane in a level without one.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Selection|3D", meta = (ClampMin = "-10", ClampMax = "20"))
+	float OpenLayoutExposureEV100 = 0.5f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoomPlanner|Selection|3D")
+	TObjectPtr<UProceduralMeshComponent> SelectionTintMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoomPlanner|Selection|3D")
+	TObjectPtr<UProceduralMeshComponent> SelectionFrameMesh;
+
+	/**
+	 * Estimated EV100 of the view (the tint's fallback until GetMeasuredViewExposure has a value): the range of the highest-priority post-process
+	 * volume around the camera that sets one (its middle), else OpenLayoutExposureEV100.
+	 */
+	float GetViewExposureEV100() const;
+
+	/** True while the 3D selection overlay shows something (tests, diagnostics). */
+	bool IsSelectionOverlayShown() const;
+
+	/** Exposure the renderer applied to this world's game view, as the selection tint reads it (0 = not measured yet). Diagnostics. */
+	float GetMeasuredViewExposure() const;
+
+	/** Mesh components currently carrying the selection tint as their overlay material (tests, diagnostics). */
+	int32 GetSelectionOverlayMaterialCount() const;
 
 	/** Tile catalog (rows: FPlannerTileRow). Falls back to /Game/DT/DT_PlannerTiles. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Catalogs")
@@ -732,6 +783,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "RoomPlanner|Selection")
 	EPlannerSelectionKind GetSelectionKind() const;
 
+	/**
+	 * What is selected, as one comparable string (kind, wall + face, opening id, room + surface, object / cabinet set id); empty when
+	 * nothing is. Two picks of the same thing give the same string (3D: a right click on the selection deselects it).
+	 */
+	FString GetSelectionSignature() const;
+
 	/** Clears every kind of selection (wall, opening, floor, object, cabinet set). */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Selection")
 	void ClearAllSelection();
@@ -754,6 +811,35 @@ public:
 	/** 3D pick from a cursor line trace (walls, openings, floor, objects, cabinet sets). Works in any tool mode. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Selection")
 	EPlannerSelectionKind SelectSurfaceFromHit(const FHitResult& Hit);
+
+	/**
+	 * The door / window under a 3D cursor hit (its leaf, its trim, or the wall around its hole), without selecting anything.
+	 * bOutFaceLeft: the wall face the hit is on (for a hit inside the wall's thickness, the side the ray comes from).
+	 */
+	bool FindOpeningAtHit(const FHitResult& Hit, int32& OutSegmentID, int32& OutOpeningIndex, bool& bOutFaceLeft) const;
+
+	/** Selects one opening of a wall, seen from its left or right face (3D pick and drag). */
+	bool SelectOpening(int32 SegmentID, int32 OpeningIndex, bool bFaceLeft);
+
+	/** Along-wall distance (cm from the start node) where the ray meets the vertical plane of that wall face; false when parallel or behind. */
+	bool ProjectRayOntoWallFace(int32 SegmentID, bool bFaceLeft, const FVector& RayOrigin, const FVector& RayDirection, float& OutAlongCm) const;
+
+	/**
+	 * One frame of a 3D drag of the selected opening: the cursor ray meets the selected face's plane and the opening's centre follows
+	 * that point along the wall, minus GrabOffsetCm (where on the opening it was grabbed). A local preview, exactly as the 2D drag
+	 * (DragSelectedOpeningToWorldPos); the release commits it.
+	 */
+	bool DragSelectedOpeningAlongRay(const FVector& RayOrigin, const FVector& RayDirection, float GrabOffsetCm);
+
+	/**
+	 * A drag step of a free-standing item (Actor at From) toward To, kept out of the walls: To when its footprint stays clear of every
+	 * wall's solid (doorways are open), else the move along one axis only (sliding along the wall), else From. An item that already
+	 * overlaps a wall at From moves freely (it is never trapped).
+	 */
+	FVector ConstrainDragOutsideWalls(const AActor* Actor, const FVector& From, const FVector& To) const;
+
+	/** True when an oriented footprint (centre, unit X axis, half size) overlaps a wall's solid (walk-through openings excluded). */
+	bool FootprintOverlapsWalls(const FVector2D& Center, const FVector2D& AxisX, const FVector2D& HalfSize) const;
 
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner|Selection")
 	int32 SelectFloorAtWorldPos(const FVector& WorldPos);
@@ -1124,26 +1210,36 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> PlanSymbolMaterial;
 
-	/** Runtime textures referenced by planner materials (kept alive here). */
-	UPROPERTY(Transient)
-	TObjectPtr<UTexture2D> ExteriorSkyTexture;
+	/** The plan's shadows are off (see bHideShadowsInPlan): the viewport whose flag was cleared and the value it had before. */
+	bool bPlanShadowsSuppressed = false;
+	bool bPlanShadowsWereOn = true;
+	TWeakObjectPtr<UGameViewportClient> PlanShadowsViewport;
+	/** Clears the viewport's DynamicShadows flag (remembering its value) or puts that value back. */
+	void SetPlanViewShadowsSuppressed(bool bSuppress);
+
+	/** Rebuilds the 3D selection overlay from the current selection (empty in 2D, when suppressed, or on a dedicated server). */
+	void RebuildSelectionOverlay();
+	/** Drives the tint's pulse (and follows exposure changes) while the overlay shows. */
+	void TickSelectionOverlay();
+	void ClearSelectionOverlayMaterials();
+	void SetSelectionOverlayMaterial(UMeshComponent* Mesh);
+	UMaterialInterface* GetSelectionTintMaterial();
+	UMaterialInterface* GetSelectionFrameMaterial();
 
 	UPROPERTY(Transient)
-	TObjectPtr<UTexture2D> ExteriorGroundTexture;
+	TObjectPtr<UMaterialInstanceDynamic> SelectionTintMID;
 
-	/** Exterior enclosure bookkeeping: rebuilt lazily (only while it can be seen) after layout or look changes. */
-	bool bExteriorBackdropDirty = true;
-	bool ShouldShowExteriorBackdrop() const;
-	void RebuildExteriorBackdrop();
-	void UpdateExteriorBackdropVisibility();
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> SelectionFrameMID;
 
-	/** Horizontal centre, radius and top of the built enclosure (0 radius = not built). */
-	FVector2D ExteriorCenter = FVector2D::ZeroVector;
-	float ExteriorRadius = 0.f;
-	float ExteriorTop = 0.f;
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> SelectionTintTexture;
 
-	/** The enclosure is two-sided and additive: seen from outside it would veil the building, so it shows only around the camera. */
-	bool IsCameraInsideExteriorBackdrop() const;
+	/** The exposure the renderer applied to this world's game view (the tint is scaled by it). Created with the first 3D selection. */
+	TSharedPtr<class FPlannerExposureProbe, ESPMode::ThreadSafe> SelectionExposureProbe;
+
+	/** Mesh components whose overlay material is the selection tint (objects, cabinet sets). */
+	TArray<TWeakObjectPtr<UMeshComponent>> SelectionOverlayMeshes;
 
 	/**
 	 * > 0 while ImportLayoutFromJSON re-creates walls and openings: the per-element RebuildAllWalls / RebuildRooms calls of

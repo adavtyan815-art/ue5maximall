@@ -30,6 +30,7 @@
 #include "Components/LocalLightComponent.h"
 #include "Components/PostProcessComponent.h"
 #include "Engine/World.h"
+#include "Engine/GameViewportClient.h"
 #include "Interfaces/Interface_PostProcessVolume.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -37,6 +38,7 @@
 #include "Constructor/PlannerOpeningBuilder.h"
 #include "Constructor/PlannerOpeningStyles.h"
 #include "Constructor/PlannerDimensions.h"
+#include "Constructor/PlannerSelectionOverlay.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
@@ -161,8 +163,8 @@ ARoomPlannerManager::ARoomPlannerManager()
 	NodeHandleMesh->SetAbsolute(true, true, true);
 	NodeHandleMesh->SetVisibility(false);
 
-	// Exterior view behind doors / windows (3D only): unlit, not a light, invisible to shadows, GI, ray tracing and captures.
-	auto CreateExteriorMesh = [this](const TCHAR* Name)
+	// 3D selection overlay (see the header): drawing aids, not objects — no shadows, no GI, invisible to ray tracing and captures.
+	auto CreateOverlayMesh = [this](const TCHAR* Name)
 	{
 		UProceduralMeshComponent* Mesh = CreateDefaultSubobject<UProceduralMeshComponent>(Name);
 		Mesh->SetupAttachment(SceneRoot);
@@ -178,10 +180,12 @@ ARoomPlannerManager::ARoomPlannerManager()
 		Mesh->SetVisibility(false);
 		return Mesh;
 	};
-	ExteriorSkyMesh = CreateExteriorMesh(TEXT("ExteriorSkyMesh"));
-	ExteriorGroundMesh = CreateExteriorMesh(TEXT("ExteriorGroundMesh"));
+	SelectionTintMesh = CreateOverlayMesh(TEXT("SelectionTintMesh"));
+	SelectionFrameMesh = CreateOverlayMesh(TEXT("SelectionFrameMesh"));
+	SelectionTintMesh->bUseAsyncCooking = false; // never cooks collision: no body setup per rebuild
+	SelectionFrameMesh->bUseAsyncCooking = false;
 
-	// Planner exposure override (see header): disabled until a planner session is open in 3D.
+	// Planner exposure override (see header): only the level's adaptation speeds, only while a planner session is open.
 	PlannerExposure = CreateDefaultSubobject<UPostProcessComponent>(TEXT("PlannerExposure"));
 	PlannerExposure->SetupAttachment(SceneRoot);
 	PlannerExposure->bUnbound = true;
@@ -190,14 +194,8 @@ ARoomPlannerManager::ARoomPlannerManager()
 	PlannerExposure->bEnabled = false;
 	{
 		FPostProcessSettings& PP = PlannerExposure->Settings;
-		PP.bOverride_AutoExposureMethod = true;                     PP.AutoExposureMethod = AEM_Histogram;
-		PP.bOverride_AutoExposureApplyPhysicalCameraExposure = true; PP.AutoExposureApplyPhysicalCameraExposure = false;
-		PP.bOverride_AutoExposureMinBrightness = true;              PP.AutoExposureMinBrightness = PlannerExposureMinEV100;
-		PP.bOverride_AutoExposureMaxBrightness = true;              PP.AutoExposureMaxBrightness = PlannerExposureMaxEV100;
-		PP.bOverride_AutoExposureBias = true;                       PP.AutoExposureBias = PlannerExposureBias;
-		// Min == Max EV100 → fixed exposure; the speeds only matter if the range is widened later.
-		PP.bOverride_AutoExposureSpeedUp = true;                    PP.AutoExposureSpeedUp = 4.f;
-		PP.bOverride_AutoExposureSpeedDown = true;                  PP.AutoExposureSpeedDown = 2.f;
+		PP.bOverride_AutoExposureSpeedUp = true;                    PP.AutoExposureSpeedUp = PlannerExposureAdaptSpeed;
+		PP.bOverride_AutoExposureSpeedDown = true;                  PP.AutoExposureSpeedDown = PlannerExposureAdaptSpeed;
 	}
 
 	PlacedObjectActorClass = APlannerPlacedObjectActor::StaticClass();
@@ -256,17 +254,7 @@ void ARoomPlannerManager::Tick(float DeltaTime)
 	{
 		RebuildRoomLights();
 	}
-	// Exterior view: rebuild when dirty and needed, hide it once the layout no longer qualifies (e.g. cleared while in 3D),
-	// and follow the camera in and out of the enclosure.
-	{
-		const bool bShouldShow = ShouldShowExteriorBackdrop();
-		const bool bCurrentlyVisible = (ExteriorSkyMesh && ExteriorSkyMesh->GetVisibleFlag()) || (ExteriorGroundMesh && ExteriorGroundMesh->GetVisibleFlag());
-		const bool bWantVisible = bShouldShow && IsCameraInsideExteriorBackdrop();
-		if ((bExteriorBackdropDirty && (bShouldShow || bCurrentlyVisible)) || (!bExteriorBackdropDirty && bCurrentlyVisible != bWantVisible))
-		{
-			UpdateExteriorBackdropVisibility();
-		}
-	}
+	TickSelectionOverlay();
 	TickLeafAnimations(DeltaTime);
 
 	if (!BoundPSInput.IsValid())
@@ -807,7 +795,6 @@ void ARoomPlannerManager::ClearWallsAndRooms()
 	FloorSectionMaterials.Empty();
 	CeilingSectionMaterials.Empty();
 	BaseboardSectionMaterials.Empty();
-	bExteriorBackdropDirty = true; // the enclosure follows the layout (hidden by Tick when nothing qualifies)
 	NextNodeID = 1;
 	NextSegmentID = 1;
 	DraggingNodeID = -1;
@@ -1220,7 +1207,6 @@ void ARoomPlannerManager::RebuildRooms()
 	TGuardValue<bool> RebuildingRooms(bRebuildingRooms, true);
 	Rooms.Empty();
 	bRoomLightsDirty = true; // every exit below (including "no closed room") must refresh the room lights
-	bExteriorBackdropDirty = true; // the enclosure follows the layout bounds
 	// The slabs are rebuilt on every frame of a corner drag too. Without collision the synchronous cook path is used, so no body
 	// setup is allocated and no previous cook is aborted per update — the trade-off the wall dressing and the leaves already make.
 	const bool bCookCollision = ShouldCookCollision();
@@ -2568,7 +2554,6 @@ void ARoomPlannerManager::SetViewMode(bool bIn2DMode)
 		}
 	}
 	UpdatePlannerExposure();
-	UpdateExteriorBackdropVisibility();
 
 	if (bIn2DMode && !bWas2D)
 	{
@@ -3139,12 +3124,12 @@ void ARoomPlannerManager::UpdateSelectionVisuals()
 				bHighlightOpening = true;
 			}
 
-			// 3D: the selected face shows the highlight (REQ-13 per-face selection). 2D: the whole wall, as the plan shows wall tops.
-			Pair.Value->SetSelectedFaceHighlight(bHighlightWall, b2DViewMode ? INDEX_NONE
-				: (bSelectedWallFaceLeft ? AProceduralWallActor::LeftFaceSection : AProceduralWallActor::RightFaceSection));
+			// 2D: the whole wall shows the selection material, as the plan shows wall tops. 3D keeps the finish visible: the selected
+			// face gets the selection overlay instead (RebuildSelectionOverlay).
+			Pair.Value->SetSelectedFaceHighlight(bHighlightWall && b2DViewMode, INDEX_NONE);
 			Pair.Value->ClearAllOpeningHighlights();
 
-			if (bHighlightOpening)
+			if (bHighlightOpening && b2DViewMode)
 			{
 				Pair.Value->SetOpeningSelectedHighlight(SelectedOpeningIndex, true, 2);
 			}
@@ -3161,7 +3146,7 @@ void ARoomPlannerManager::UpdateSelectionVisuals()
 			if (SectionIdx < 0 || SectionIdx >= NumSections) continue;
 
 			UMaterialInterface* Mat = nullptr;
-			if (Pair.Key == SelectedRoomID && SelectedRoomSurface == EPlannerSelectionKind::Floor && bShowHighlight && WallSelectionMaterial)
+			if (Pair.Key == SelectedRoomID && SelectedRoomSurface == EPlannerSelectionKind::Floor && bShowHighlight && b2DViewMode && WallSelectionMaterial)
 			{
 				Mat = WallSelectionMaterial;
 			}
@@ -3187,7 +3172,7 @@ void ARoomPlannerManager::UpdateSelectionVisuals()
 			if (SectionIdx < 0 || SectionIdx >= NumSections) continue;
 
 			UMaterialInterface* Mat = nullptr;
-			if (Pair.Key == SelectedRoomID && SelectedRoomSurface == Surface && bShowHighlight && WallSelectionMaterial)
+			if (Pair.Key == SelectedRoomID && SelectedRoomSurface == Surface && bShowHighlight && b2DViewMode && WallSelectionMaterial)
 			{
 				Mat = WallSelectionMaterial;
 			}
@@ -3231,6 +3216,9 @@ void ARoomPlannerManager::UpdateSelectionVisuals()
 			}
 		}
 	}
+
+	// Custom depth is off in this project (r.CustomDepth 0): the outlines above draw nothing. The overlay is what shows.
+	RebuildSelectionOverlay();
 }
 
 float ARoomPlannerManager::GetWallLength(int32 SegmentID) const
@@ -4520,8 +4508,8 @@ bool ARoomPlannerManager::RotateSelectionLocal(float DeltaYawDeg, FString& OutIn
 	OutInstanceID.Empty();
 	bOutCabinetSet = false;
 	OutYawDeg = 0.f;
-	// Moving / rotating is a 2D workflow; a 3D pick (for finishing) selects objects too, and must never turn them.
-	if (!b2DViewMode || (SelectedObjectID.IsEmpty() && SelectedCabinetSetID.IsEmpty())) return false;
+	// 2D and 3D (the ↺ / ↻ buttons, the wheel while an object is dragged); the callers decide when a turn is asked for.
+	if (SelectedObjectID.IsEmpty() && SelectedCabinetSetID.IsEmpty()) return false;
 	if (IsSelectionWallAttached())
 	{
 		BroadcastRejected(WallAttachedRotationMessage);
@@ -6010,6 +5998,8 @@ TArray<FPlannerDimensionLine> ARoomPlannerManager::GetSelectionDimensionLines() 
 	{
 	case EPlannerSelectionKind::Wall:
 	{
+		// 3D: no line on the floor along the face (the panel states the length, and the overlay marks the face); the plan keeps it.
+		if (!b2DViewMode) break;
 		FFaceFrame Frame;
 		if (MakeFrame(SelectedSegmentID, bSelectedWallFaceLeft, Frame))
 		{
@@ -6323,14 +6313,14 @@ EPlannerSelectionKind ARoomPlannerManager::SelectSurfaceFromHit(const FHitResult
 				bSelectedWallFaceLeft = FVector2D::DotProduct(TraceFrom - P1, LeftNormal) >= 0.f;
 			}
 
-			int32 OpIdx = -1;
-			for (int32 i = 0; i < Seg->Openings.Num(); ++i)
+			// A leaf names its opening itself (an open leaf stands away from the wall line); anything else by where it was hit.
+			int32 OpIdx = IsOpeningLeafComponent(HitComp) ? Wall->FindLeafIndex(HitComp) : INDEX_NONE;
+			for (int32 i = 0; OpIdx == INDEX_NONE && i < Seg->Openings.Num(); ++i)
 			{
 				const FWallOpening& Op = Seg->Openings[i];
 				if (FMath::Abs(Along - Op.DistanceFromStart) <= Op.Width * 0.5f + 6.f && Z >= Op.SillHeight - 6.f && Z <= Op.SillHeight + Op.Height + 6.f)
 				{
 					OpIdx = i;
-					break;
 				}
 			}
 
@@ -8163,8 +8153,9 @@ APlannerRoomLightActor* ARoomPlannerManager::GetRoomLight(int32 RoomID) const
 
 void ARoomPlannerManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// Console variables outlive a PIE session: never leave the Lumen override behind.
+	// Console variables outlive a PIE session: never leave the Lumen override behind. Nor the viewport without its shadows.
 	UpdatePlannerLumenMode(false);
+	SetPlanViewShadowsSuppressed(false);
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -8184,27 +8175,67 @@ void ARoomPlannerManager::SetPlannerSessionActive(bool bActive)
 {
 	bPlannerSessionActive = bActive;
 	UpdatePlannerExposure();
-	UpdateExteriorBackdropVisibility();
 }
 
 void ARoomPlannerManager::UpdatePlannerExposure()
 {
 	if (!PlannerExposure) return;
 	FPostProcessSettings& PP = PlannerExposure->Settings;
-	PP.AutoExposureMinBrightness = FMath::Min(PlannerExposureMinEV100, PlannerExposureMaxEV100);
-	PP.AutoExposureMaxBrightness = FMath::Max(PlannerExposureMinEV100, PlannerExposureMaxEV100);
-	PP.AutoExposureBias = PlannerExposureBias;
 	// Session = planner UI open (either flag; bPlannerUIOpen is the widget's existing open/close flag).
 	const bool bSessionOpen = bPlannerSessionActive || bPlannerUIOpen;
-	const bool bWantEnabled = bManagePlannerExposure && bSessionOpen && !b2DViewMode
-		&& GetWorld() && GetWorld()->GetNetMode() != NM_DedicatedServer;
+	const bool bClient = GetWorld() && GetWorld()->GetNetMode() != NM_DedicatedServer;
+
+	// The level's own auto exposure (method, range, bias untouched) shows inside and outside alike — the room light is on the level's
+	// scale. The planner only sets how quickly it adapts: the level's own speeds made the picture crawl after every change of view.
+	PP.bOverride_AutoExposureSpeedUp = true;
+	PP.bOverride_AutoExposureSpeedDown = true;
+	PP.AutoExposureSpeedUp = PlannerExposureAdaptSpeed;
+	PP.AutoExposureSpeedDown = PlannerExposureAdaptSpeed;
+
+	const bool bWantEnabled = bManagePlannerExposure && bSessionOpen && bClient;
 	if (PlannerExposure->bEnabled != bWantEnabled)
 	{
 		PlannerExposure->bEnabled = bWantEnabled;
 	}
 
-	// The Lumen overrides follow the same lifecycle as the exposure override (planner open, 3D, never on a dedicated server).
-	UpdatePlannerLumenMode(bSessionOpen && !b2DViewMode && GetWorld() && GetWorld()->GetNetMode() != NM_DedicatedServer);
+	// The Lumen overrides follow the planner's 3D session (never on a dedicated server).
+	UpdatePlannerLumenMode(bSessionOpen && !b2DViewMode && bClient);
+
+	// The plan's shadows follow the same switches (view mode, session).
+	UpdatePlanViewShadows();
+}
+
+void ARoomPlannerManager::UpdatePlanViewShadows()
+{
+	const UWorld* World = GetWorld();
+	const bool bSessionOpen = bPlannerSessionActive || bPlannerUIOpen;
+	SetPlanViewShadowsSuppressed(bHideShadowsInPlan && b2DViewMode && bSessionOpen && World && World->GetNetMode() != NM_DedicatedServer);
+}
+
+void ARoomPlannerManager::SetPlanViewShadowsSuppressed(bool bSuppress)
+{
+	if (bSuppress == bPlanShadowsSuppressed) return;
+	if (bSuppress)
+	{
+		// This world's own game viewport (each PIE client has its own): only the local player's view loses its shadows.
+		UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+		if (!Viewport) return; // nothing renders here (tests, dedicated server)
+		bPlanShadowsWereOn = Viewport->EngineShowFlags.DynamicShadows;
+		Viewport->EngineShowFlags.SetDynamicShadows(false);
+		PlanShadowsViewport = Viewport;
+		bPlanShadowsSuppressed = true;
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] 2D plan: dynamic shadows off."));
+	}
+	else
+	{
+		if (UGameViewportClient* Viewport = PlanShadowsViewport.Get())
+		{
+			Viewport->EngineShowFlags.SetDynamicShadows(bPlanShadowsWereOn);
+		}
+		PlanShadowsViewport.Reset();
+		bPlanShadowsSuppressed = false;
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] Dynamic shadows back (%s)."), bPlanShadowsWereOn ? TEXT("on") : TEXT("off, as found"));
+	}
 }
 
 namespace PlannerCVarOverrides
@@ -8443,143 +8474,6 @@ UMaterialInterface* ARoomPlannerManager::GetPlanSymbolMaterial()
 	return PlanSymbolMaterial;
 }
 
-namespace
-{
-	/** Exterior colours as absolute luminance (cd/m²) per channel, matched to the planner's fixed EV100 6.8 exposure (scene white ≈ 111 cd/m²; a white wall under the room light ≈ 45–50 cd/m²). */
-	struct FPlannerExteriorPalette
-	{
-		FLinearColor Zenith;
-		FLinearColor Horizon;
-		FLinearColor GroundNear;
-		FLinearColor GroundFar;
-	};
-
-	/** Daylight, the planner's only exterior look. */
-	FPlannerExteriorPalette GetDaylightPalette()
-	{
-		return { FLinearColor(0.28f, 0.48f, 0.92f) * 62.f, FLinearColor(0.84f, 0.90f, 0.98f) * 98.f,
-		         FLinearColor(0.50f, 0.51f, 0.47f) * 50.f, FLinearColor(0.80f, 0.85f, 0.90f) * 70.f };
-	}
-}
-
-void ARoomPlannerManager::SetExteriorBackdropEnabled(bool bEnabled)
-{
-	bShowExteriorBackdrop = bEnabled;
-	UpdateExteriorBackdropVisibility();
-}
-
-bool ARoomPlannerManager::ShouldShowExteriorBackdrop() const
-{
-	const UWorld* World = GetWorld();
-	// Only around closed rooms: without a room there is no planner floor, and the ground would replace the level floor.
-	return bShowExteriorBackdrop && (bPlannerSessionActive || bPlannerUIOpen) && !b2DViewMode && Rooms.Num() > 0
-		&& World && World->GetNetMode() != NM_DedicatedServer;
-}
-
-void ARoomPlannerManager::UpdateExteriorBackdropVisibility()
-{
-	const bool bShow = ShouldShowExteriorBackdrop();
-	if (bShow && bExteriorBackdropDirty)
-	{
-		RebuildExteriorBackdrop();
-	}
-	const bool bVisible = bShow && IsCameraInsideExteriorBackdrop();
-	if (ExteriorSkyMesh) ExteriorSkyMesh->SetVisibility(bVisible && ExteriorSkyMesh->GetNumSections() > 0);
-	if (ExteriorGroundMesh) ExteriorGroundMesh->SetVisibility(bVisible && ExteriorGroundMesh->GetNumSections() > 0);
-}
-
-bool ARoomPlannerManager::IsCameraInsideExteriorBackdrop() const
-{
-	if (ExteriorRadius <= 0.f) return true;
-	const APlayerCameraManager* CameraManager = GetWorld() ? UGameplayStatics::GetPlayerCameraManager(GetWorld(), 0) : nullptr;
-	if (!CameraManager) return true;
-	const FVector Camera = CameraManager->GetCameraLocation();
-	return FVector2D::Distance(FVector2D(Camera.X, Camera.Y), ExteriorCenter) < ExteriorRadius - 20.f && Camera.Z < ExteriorTop - 20.f;
-}
-
-void ARoomPlannerManager::RebuildExteriorBackdrop()
-{
-	bExteriorBackdropDirty = false;
-	if (!ExteriorSkyMesh || !ExteriorGroundMesh) return;
-	ExteriorSkyMesh->ClearAllMeshSections();
-	ExteriorGroundMesh->ClearAllMeshSections();
-	if (Nodes.Num() == 0) return;
-
-	// EmissiveMeshMaterial (unlit, additive, emissive = "Color" × texture "LinearColor") is an engine startup package, so it
-	// is present in cooked builds. Additive over the level (several stops below the planner exposure) shows the gradient as is.
-	UMaterialInterface* Parent = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/EmissiveMeshMaterial.EmissiveMeshMaterial"));
-	if (!Parent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[MaxiMallConstructor] Exterior view: /Engine/EngineMaterials/EmissiveMeshMaterial is not available; doors and windows show the level behind them."));
-		return;
-	}
-
-	// Enclosure around the layout: a sky cylinder with a cap and a ground disc just below the planner floor (floor top Z = 1).
-	FBox2D Bounds(ForceInit);
-	for (const TPair<int32, FWallNode>& Pair : Nodes)
-	{
-		Bounds += Pair.Value.Position;
-	}
-	const FVector2D Center = Bounds.GetCenter();
-	const float Radius = FMath::Max(Bounds.GetExtent().Size() + 900.f, 2200.f);
-	const float SkyBottom = -50.f;
-	const float SkyTop = Radius * 1.1f;
-	const float EyeZ = 160.f;
-	ExteriorCenter = Center;
-	ExteriorRadius = Radius;
-	ExteriorTop = SkyTop;
-
-	FPlannerMeshBuffers Sky;
-	PlannerMeshBuilder::AddInwardCylinder(Sky, Center, Radius, SkyBottom, SkyTop, 96, true);
-	FPlannerMeshBuffers Ground;
-	PlannerMeshBuilder::AddDisc(Ground, Center, Radius - 2.f, 0.4f, 96);
-
-	const FPlannerExteriorPalette Palette = GetDaylightPalette();
-
-	// Sky gradient by elevation angle seen from eye height (texture row 0 = top of the cylinder, V = 0).
-	const int32 Rows = 64;
-	TArray<FLinearColor> SkyPixels;
-	SkyPixels.SetNum(Rows);
-	for (int32 Row = 0; Row < Rows; ++Row)
-	{
-		const float V = (Row + 0.5f) / Rows;
-		const float Z = FMath::Lerp(SkyTop, SkyBottom, V);
-		const float Elevation = FMath::Atan2(Z - EyeZ, Radius);
-		const float T = FMath::Clamp(Elevation / FMath::DegreesToRadians(40.f), 0.f, 1.f);
-		SkyPixels[Row] = FMath::Lerp(Palette.Horizon, Palette.Zenith, FMath::SmoothStep(0.f, 1.f, FMath::Pow(T, 0.65f)));
-		SkyPixels[Row].A = 1.f;
-	}
-	// Ground: near colour around the building fading into the horizon haze at the rim (U = 0 centre, 1 rim).
-	const int32 Cols = 32;
-	TArray<FLinearColor> GroundPixels;
-	GroundPixels.SetNum(Cols);
-	for (int32 Col = 0; Col < Cols; ++Col)
-	{
-		const float U = (Col + 0.5f) / Cols;
-		GroundPixels[Col] = FMath::Lerp(Palette.GroundNear, Palette.GroundFar, FMath::SmoothStep(0.35f, 1.f, U));
-		GroundPixels[Col].A = 1.f;
-	}
-
-	ExteriorSkyTexture = PlannerRuntimeTextures::CreateHdrPixels(1, Rows, SkyPixels);
-	ExteriorGroundTexture = PlannerRuntimeTextures::CreateHdrPixels(Cols, 1, GroundPixels);
-	if (!ExteriorSkyTexture || !ExteriorGroundTexture) return;
-
-	UMaterialInstanceDynamic* SkyMID = UMaterialInstanceDynamic::Create(Parent, this);
-	UMaterialInstanceDynamic* GroundMID = UMaterialInstanceDynamic::Create(Parent, this);
-	if (!SkyMID || !GroundMID) return;
-	for (UMaterialInstanceDynamic* MID : { SkyMID, GroundMID })
-	{
-		MID->SetVectorParameterValue(FName("Color"), FLinearColor::White);
-	}
-	SkyMID->SetTextureParameterValue(FName("LinearColor"), ExteriorSkyTexture);
-	GroundMID->SetTextureParameterValue(FName("LinearColor"), ExteriorGroundTexture);
-
-	ExteriorSkyMesh->CreateMeshSection(0, Sky.Vertices, Sky.Triangles, Sky.Normals, Sky.UVs, TArray<FColor>(), Sky.Tangents, false);
-	ExteriorSkyMesh->SetMaterial(0, SkyMID);
-	ExteriorGroundMesh->CreateMeshSection(0, Ground.Vertices, Ground.Triangles, Ground.Normals, Ground.UVs, TArray<FColor>(), Ground.Tangents, false);
-	ExteriorGroundMesh->SetMaterial(0, GroundMID);
-}
-
 void ARoomPlannerManager::SetAutoCeilingLightsEnabled(bool bEnabled)
 {
 	RoomLightSettings.bEnabled = bEnabled;
@@ -8620,7 +8514,7 @@ static FAutoConsoleCommandWithWorldAndArgs GPlannerCeilingLightsCmd(
 
 static FAutoConsoleCommandWithWorldAndArgs GPlannerExposureCmd(
 	TEXT("planner.Exposure"),
-	TEXT("planner.Exposure [minEV100 maxEV100 [bias]] — bounded auto-exposure used while the planner is open in 3D; 'off' disables the override. No args = print."),
+	TEXT("planner.Exposure [speed|off] — the level's auto exposure adapts at <speed> stops/s while the planner is open; 'off' leaves the level's speeds. No args = print."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 	{
 		ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(World);
@@ -8633,17 +8527,15 @@ static FAutoConsoleCommandWithWorldAndArgs GPlannerExposureCmd(
 		{
 			Manager->bManagePlannerExposure = false;
 		}
-		else if (Args.Num() >= 2)
+		else if (Args.Num() >= 1)
 		{
 			Manager->bManagePlannerExposure = true;
-			Manager->PlannerExposureMinEV100 = FCString::Atof(*Args[0]);
-			Manager->PlannerExposureMaxEV100 = FCString::Atof(*Args[1]);
-			if (Args.Num() >= 3) Manager->PlannerExposureBias = FCString::Atof(*Args[2]);
+			Manager->PlannerExposureAdaptSpeed = FMath::Max(0.5f, FCString::Atof(*Args[0]));
 		}
 		Manager->UpdatePlannerExposure();
-		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.Exposure: managed=%d active=%d EV100 %.1f…%.1f bias %+.1f"),
+		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.Exposure: managed=%d active=%d adapt %.1f stops/s, measured view exposure %.5f"),
 			Manager->bManagePlannerExposure ? 1 : 0, (Manager->PlannerExposure && Manager->PlannerExposure->bEnabled) ? 1 : 0,
-			Manager->PlannerExposureMinEV100, Manager->PlannerExposureMaxEV100, Manager->PlannerExposureBias);
+			Manager->PlannerExposureAdaptSpeed, Manager->GetMeasuredViewExposure());
 
 		// Effective post-process chain at the local camera: the renderer walks World->PostProcessVolumes in ascending
 		// priority and blends every enabled volume that encompasses the camera (unbound = always); the last one to
@@ -8690,28 +8582,6 @@ static FAutoConsoleCommandWithWorldAndArgs GPlannerExposureCmd(
 		{
 			UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.Exposure: EFFECTIVE exposure range comes from %s"), *ExposureOwnerName);
 		}
-	}));
-
-static FAutoConsoleCommandWithWorldAndArgs GPlannerExteriorCmd(
-	TEXT("planner.Exterior"),
-	TEXT("planner.Exterior [on|off] — unlit daylight view behind doors and windows in 3D. No argument = print."),
-	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
-	{
-		ARoomPlannerManager* Manager = ARoomPlannerManager::GetOrCreateInstance(World);
-		if (!Manager)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[MaxiMallConstructor] planner.Exterior: no planner manager in this world (run while playing)."));
-			return;
-		}
-		if (Args.Num() > 0)
-		{
-			const FString& Arg = Args[0];
-			if (Arg.Equals(TEXT("off"), ESearchCase::IgnoreCase)) Manager->SetExteriorBackdropEnabled(false);
-			else if (Arg.Equals(TEXT("on"), ESearchCase::IgnoreCase)) Manager->SetExteriorBackdropEnabled(true);
-		}
-		UE_LOG(LogTemp, Log, TEXT("[MaxiMallConstructor] planner.Exterior: enabled=%d visible=%d"),
-			Manager->bShowExteriorBackdrop ? 1 : 0,
-			(Manager->ExteriorSkyMesh && Manager->ExteriorSkyMesh->IsVisible()) ? 1 : 0);
 	}));
 
 static FAutoConsoleCommandWithWorldAndArgs GPlannerDoorsCmd(

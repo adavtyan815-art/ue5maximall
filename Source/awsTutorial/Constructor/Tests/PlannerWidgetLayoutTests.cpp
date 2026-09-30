@@ -1001,6 +1001,9 @@ bool FPlannerOpeningDimensionLinesTest::RunTest(const FString& Parameters)
 	Manager->SelectedSegmentID = South;
 	Manager->SelectedOpeningIndex = -1;
 	Manager->bSelectedWallFaceLeft = true;
+	// 3D (the manager's initial view): the selection overlay marks the face; no length line runs along the floor.
+	TestEqual(TEXT("3D: no wall length line"), Manager->GetSelectionDimensionLines().Num(), 0);
+	Manager->SetViewMode(true); // the plan: everything below
 	{
 		const TArray<FPlannerDimensionLine> Lines = Manager->GetSelectionDimensionLines();
 		TestEqual(TEXT("A wall selected: one length line"), Lines.Num(), 1);
@@ -1452,6 +1455,7 @@ bool FPlannerDragDimensionsTest::RunTest(const FString& Parameters)
 		FVector2D DraggedTo;
 		Manager->EndNodeDrag(Dragged, DraggedTo);
 		Manager->MoveNode(Dragged, DraggedTo); // the server joins the corners on release
+		Manager->SetViewMode(true); // a selected wall's length line is drawn on the plan (3D marks the face with the overlay)
 		Manager->SelectedSegmentID = West;
 		Manager->SelectedOpeningIndex = -1;
 		Manager->bSelectedWallFaceLeft = true;
@@ -2218,6 +2222,11 @@ bool FPlannerFinishFlyoutPlacementTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("The catalog's column is UI"), IsOverSideCatalog(430.f, Panel, Panel) && IsOverSideCatalog(850.f, Panel, Panel));
 	TestFalse(TEXT("… the panel and the plan are not that column"), IsOverSideCatalog(200.f, Panel, Panel) || IsOverSideCatalog(900.f, Panel, Panel));
 	TestFalse(TEXT("… and there is no column without a catalog"), IsOverSideCatalog(500.f, Panel, 0.f));
+
+	// Default: the catalog opens in place over the panel (as the save dialog): no shift, no extra column, the plan keeps its width.
+	TestEqual(TEXT("Over the panel: not shifted"), FinishCatalogShift(true, Panel), 0.f);
+	TestFalse(TEXT("… so it adds no column beside the panel"), IsOverSideCatalog(500.f, Panel, FinishCatalogShift(true, Panel)));
+	TestEqual(TEXT("Beside the panel (option): shifted by the panel's width"), FinishCatalogShift(false, Panel), Panel);
 	return true;
 }
 

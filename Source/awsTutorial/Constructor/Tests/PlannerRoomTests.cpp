@@ -177,7 +177,9 @@ bool FPlannerRoomFloorsTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("The threshold does not count in the room's area"), Manager->GetRoomData(RoomAt(Manager, 150., 200.), Room) && FMath::IsNearlyEqual(Room.AreaM2, 10.64f, 0.001f));
 	}
 
-	// Picking a floor picks that room only; the selection shows on its floor only.
+	// Picking a floor picks that room only; the selection shows on its floor only (the plan's selection material: 3D keeps the
+	// floor's finish and draws the selection overlay instead, see MaxiMall.Planner.Selection3D.Overlay).
+	Manager->SetViewMode(true);
 	const int32 Picked = Manager->SelectFloorAtWorldPos(FVector(150., 200., 0.));
 	TestEqual(TEXT("A click in the left room picks the left room"), Picked, RoomAt(Manager, 150., 200.));
 	TestEqual(TEXT("Selected room"), Manager->SelectedRoomID, RoomAt(Manager, 150., 200.));

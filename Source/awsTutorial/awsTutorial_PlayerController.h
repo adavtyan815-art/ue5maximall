@@ -6,6 +6,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "Engine/HitResult.h"
 #include "FurnitureConfigurator/Data/FurnitureTypes.h"
 #include "Constructor/RoomPlannerTypes.h"
 #include "awsTutorial_PlayerController.generated.h"
@@ -20,6 +21,15 @@ class ACameraActor;
 class UPixelStreamingInput;
 class ARoomPlannerManager;
 enum class EPlannerWheelTarget : uint8;
+
+/** What a 3D left-button drag in the planner moves. */
+enum class EPlanner3DDragKind : uint8
+{
+	None,
+	Opening,
+	Object,
+	CabinetSet
+};
 
 UCLASS(Blueprintable,
        HideCategories = (Collision, Physics, Rendering, Lighting, HLOD, Navigation, Input, ActorTick, ComponentTick, LOD, Cooking, Replication, Tags, TextureStreaming, RayTracing, PathTracing, AssetUserData))
@@ -234,9 +244,56 @@ public:
 	/** Converts an absolute Slate position into a world ray through this player's viewport. */
 	bool PlannerDeprojectScreenSpace(const FVector2D& ScreenSpacePosition, FVector& OutOrigin, FVector& OutDirection, FVector2D& OutViewportPixels) const;
 
-	/** Line-traces under the cursor and selects the planner wall / opening / floor / object / cabinet set hit (3D mode). */
+	/**
+	 * Line-traces under the cursor and selects the planner wall / opening / floor / object / cabinet set hit (3D mode).
+	 * bToggleLeaves: a hit on a door / window leaf opens or closes it instead (false: the leaf selects its opening).
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
-	EPlannerSelectionKind PlannerPickUnderCursor();
+	EPlannerSelectionKind PlannerPickUnderCursor(bool bToggleLeaves = true);
+
+	// ── Room Planner: 3D pointer ────────────────────────────────────────────────
+	// RMB click selects (RMB held still orbits the camera, as before); LMB press on a door / window and move drags it along its wall;
+	// LMB click on a leaf opens / closes it.
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|3D Input", meta = (ClampMin = "0"))
+	float PlannerClickMaxMovePx = 6.f;
+
+	/** Look input (|yaw| + |pitch|, the camera's own units) an RMB click may receive; more is an orbit. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|3D Input", meta = (ClampMin = "0"))
+	float PlannerClickMaxLookInput = 3.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|3D Input", meta = (ClampMin = "0.05"))
+	float PlannerClickMaxSeconds = 0.6f;
+
+	/** Cursor travel (px) after which an LMB press on a door / window becomes a drag. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|3D Input", meta = (ClampMin = "0"))
+	float PlannerOpeningDragStartPx = 5.f;
+
+	/** True while a door / window / object is dragged in 3D. */
+	bool IsPlanner3DOpeningDragActive() const { return bPlanner3DOpeningDrag; }
+
+	// ── Room Planner: camera on the way in and out ──────────────────────────────
+
+	/** Field of view of the pawn's camera while the planner is open (its 3D view); the main world's own value comes back on exit. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Camera", meta = (ClampMin = "30", ClampMax = "120"))
+	float PlannerCameraFOV = 90.f;
+
+	/** A camera jump longer than this (cm) around opening / closing the planner is a teleport: that frame is a camera cut. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Camera", meta = (ClampMin = "100"))
+	float PlannerCameraJumpCutDistanceCm = 1000.f;
+
+	/** Saves the pawn camera's FOV and sets PlannerCameraFOV (planner open). */
+	void ApplyPlannerCameraFOV();
+	/** Puts the saved FOV back (planner closed). */
+	void RestoreMainCameraFOV();
+
+	/**
+	 * The next Frames frames are camera cuts: exposure goes straight to its target (no dark fade-in or glare after a jump) and temporal
+	 * history restarts. Used for view switches; teleports are caught by WatchPlannerCameraJumps.
+	 */
+	void RequestPlannerCameraCut(int32 Frames = 2);
+	/** For Seconds, every camera jump longer than PlannerCameraJumpCutDistanceCm is a camera cut (the planner's teleports in and out). */
+	void WatchPlannerCameraJumps(float Seconds);
 
 	/** Commits the current planner selection's transform (after a local drag) to the server, with a wheel turn made during the drag. */
 	UFUNCTION(BlueprintCallable, Category = "RoomPlanner")
@@ -247,6 +304,10 @@ public:
 	/** Degrees per wheel notch (the ↺ / ↻ buttons turn 15°). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Wheel Rotation", meta = (DisplayName = "Wheel Rotate Step (deg)", ClampMin = "0.1", ClampMax = "180.0"))
 	float PlannerWheelRotateStepDeg = 15.f;
+
+	/** Degrees per wheel notch while an object is dragged with the left button in 3D (fine adjustment). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Wheel Rotation", meta = (DisplayName = "3D Drag Wheel Rotate Step (deg)", ClampMin = "0.1", ClampMax = "90.0"))
+	float Planner3DWheelRotateStepDeg = 1.f;
 
 	/** Off: scroll up turns counter-clockwise on the plan, like «↺ 15°». On: the other way round. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoomPlanner|Wheel Rotation", meta = (DisplayName = "Invert Wheel Rotation"))
@@ -504,6 +565,56 @@ private:
 
     /** The current LMB press started over the planner's own UI (side panel, status strip, a catalog beside it): the plan ignores it. */
     bool bLMBPressOverPlannerUI = false;
+
+    /** Planner 3D pointer gestures (see PlannerClickMaxMovePx): one call per PlayerTick while the planner is open in 3D. */
+    void TickPlanner3DPointer(class ARoomPlannerManager* Manager, bool bMouseOverMainUI);
+    /** Ends a 3D gesture (view change, planner closed): a running opening drag is committed when bCommit, else left to the manager's backstop. */
+    void EndPlanner3DPointer(class ARoomPlannerManager* Manager, bool bCommit);
+
+    bool bPlannerRMBArmed = false;
+    bool bPlannerRMBHadMousePos = false;
+    float PlannerRMBPressTime = 0.f;
+    FVector2D PlannerRMBPressPos = FVector2D::ZeroVector;
+    /** |yaw| + |pitch| look input received while the RMB press lasts. */
+    float PlannerRMBLookInput = 0.f;
+
+    /** An LMB press landed on a door / window (or a leaf): a move drags it, a release without one clicks it. */
+    bool bPlannerLMBArmed = false;
+    bool bPlanner3DOpeningDrag = false;
+    /** Look input is ignored while an opening is dragged (so the camera cannot turn with the same button); released exactly once. */
+    bool bPlannerLookIgnoredForDrag = false;
+    FHitResult PlannerLMBPressHit;
+    FVector2D PlannerLMBPressPos = FVector2D::ZeroVector;
+    /** What the armed LMB press drags, and its id (opening id, object / cabinet set instance id). */
+    EPlanner3DDragKind Planner3DDragKind = EPlanner3DDragKind::None;
+    FString Planner3DDragItemID;
+    /** Objects: the grabbed point's height (they move in its horizontal plane) and item location minus the grabbed point. */
+    float Planner3DDragPlaneZ = 0.f;
+    FVector Planner3DDragItemOffset = FVector::ZeroVector;
+
+    /**
+     * The 3D view hides (and pins) the cursor while a press captures the mouse; over something draggable it must not, or a drag never
+     * sees the cursor move. Sets the game viewport's flag; remembers that the planner changed it so closing the planner puts it back.
+     */
+    void SetPlannerCursorHiddenDuringCapture(bool bHide);
+    bool bPlannerShowsCursorDuringCapture = false;
+
+    /** Planner camera: FOV while open, camera cuts. */
+    class UCameraComponent* FindPlannerViewCamera() const;
+    void TickPlannerCameraCuts();
+    TWeakObjectPtr<class UCameraComponent> PlannerFOVCamera;
+    float SavedMainCameraFOV = -1.f;
+    float SavedLockedFOV = 0.f;
+    bool bPlannerFOVApplied = false;
+    int32 PlannerCameraCutFrames = 0;
+    double PlannerCameraJumpWatchUntil = 0.;
+    FVector LastPlannerCameraLocation = FVector::ZeroVector;
+    bool bHaveLastPlannerCameraLocation = false;
+    int32 Planner3DDragSegmentID = -1;
+    FString Planner3DDragOpeningID;
+    bool bPlanner3DDragFaceLeft = true;
+    /** Where on the opening it was grabbed: cursor minus opening centre, along the wall (cm). */
+    float Planner3DDragGrabOffset = 0.f;
 
     /** True while dragging a wall control point in 2D Select mode (REQ-02). */
     bool bIs2DDraggingNode = false;
