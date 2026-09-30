@@ -43,3 +43,23 @@ UnrealEditor-Cmd.exe "D:\awsTemplate_GameLift\awsTutorial.uproject" -EnablePlugi
 - Недоступное из Python выполняется через C++: размер кисти (`SetBrushImageSize`), составной шрифт (`SetupCompositeFont`). `SetDesiredSizeOverride` в ассет не сохраняется.
 - У старых кнопок сброшен цветной `ColorAndOpacity`.
 - Офлайн-рендер смешивает полупрозрачные слои в линейном пространстве, поэтому стекло на PNG светлее, чем в игре. Окончательная сверка цвета — в PIE.
+
+# Этап 1 и полный редизайн (30.09.2026)
+
+Отчёт: `../UI_REDESIGN_REPORT.md`. Оба прогона рассчитаны на ассеты **после пилота**: шрифты `F_MaxiMall` уже есть.
+
+| Папка, файл | Что делает |
+|---|---|
+| `phase1/run_phase1.py` → `apply_phase1.py` | `BP_Burger`, панели меню (`WBP_Male_Female`, `WBP_SaveSystem`, `WBP_SaveHistoryItem`, приватная комната), `Maxi_PanelGroup` в меню |
+| `full/run_full.py` → `full_redesign.py` | Остальные 24 виджета: конструктор, каталог цветов, конфигуратор, просмотр, AR, имя над персонажем, аккаунт, друзья, лобби, шаблон. Импортирует 9 белых иконок из `full/icons/` |
+| `*/maxi_ui_lib.py` | Токены и общие функции (кисти, шрифты, кнопки, поля, боковая панель) |
+| `full/inspect_all.py` | Только чтение: дерево и T3D всех виджетов (commandlet) |
+| `full/compare.py` | Сравнение с исходными выгрузками: имена, привязанные события, привязки свойств, цели анимаций |
+| `full/review_saved.py` | Только чтение: рендер скрытых страниц сохранённого `BP_UserSettings_UI` |
+| `full/icons/` | 9 PNG `T_Icon_*_W.png`, белые версии тёмных иконок: альфа исходной текстуры, цвет белый. **В репозитории папки нет** (публикуются только скрипты и документы). Исходные текстуры выгружает `inspect_all.py` в `inspect/tex/`; имена — в `ICON_SOURCES` в `full_redesign.py` |
+
+Переменные окружения: `MAXI_UI_SAVE=0` — пробный прогон без сохранения; `MAXI_UI_ONLY=WBP_A,WBP_B` — только перечисленные виджеты.
+
+Порядок: пилот → `phase1` → `full`. Перед повтором вернуть исходные `.uasset` нужных виджетов из `D:\awsTemplate_GameLift_backups\2026-09-30_ui_full\`: новые элементы `Maxi_*` уникальны, повторный прогон на уже перестилизованном ассете остановится на «name already used».
+
+Нужные C++-классы: `UMaxiUiDesignTools`, `UMaxiVisibilityToggleButton`, `UMaxiPanelGroup`, `UMaxiStyleOverrides`. Оба скрипта в начале проверяют, что нужные классы есть.
