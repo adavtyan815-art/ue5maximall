@@ -111,6 +111,19 @@ int32 UMaxiUiDesignTools::RegisterMissingWidgetGuids(UObject* WidgetBlueprint, b
 	return MissingNames.Num();
 }
 
+bool UMaxiUiDesignTools::SetButtonStyleProperty(UObject* Object, FName PropertyName, const FButtonStyle& Style)
+{
+	FStructProperty* Property = Object ? FindFProperty<FStructProperty>(Object->GetClass(), PropertyName) : nullptr;
+	if (!Property || Property->Struct != FButtonStyle::StaticStruct())
+	{
+		return false;
+	}
+	Object->Modify();
+	*Property->ContainerPtrToValuePtr<FButtonStyle>(Object) = Style;
+	Object->MarkPackageDirty();
+	return true;
+}
+
 FSlateBrush UMaxiUiDesignTools::SetBrushImageSize(const FSlateBrush& Brush, FVector2D ImageSize)
 {
 	FSlateBrush Result = Brush;

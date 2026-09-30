@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "Styling/SlateBrush.h"
+#include "Styling/SlateTypes.h"
 #include "MaxiUiDesignTools.generated.h"
 
 class UFont;
@@ -40,6 +41,13 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MaxiUI|Editor")
 	static int32 RegisterMissingWidgetGuids(UObject* WidgetBlueprint, bool bMakeNewWidgetsNonVariable);
+
+	/**
+	 * Writes Style into the FButtonStyle property PropertyName of Object (e.g. a Blueprint variable default on a class default
+	 * object, which a graph re-applies with SetStyle). Returns false when there is no such property.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaxiUI|Editor")
+	static bool SetButtonStyleProperty(UObject* Object, FName PropertyName, const FButtonStyle& Style);
 
 	/** Returns Brush with its image size set. Editor Python cannot write FSlateBrush::ImageSize directly. */
 	UFUNCTION(BlueprintPure, Category = "MaxiUI|Editor")
